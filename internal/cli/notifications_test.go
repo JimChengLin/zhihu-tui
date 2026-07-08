@@ -207,6 +207,9 @@ func TestMonitorLines(t *testing.T) {
 	if got, want := monitorStatusLine(tm, "no new notifications"), "\r\033[2KLast check: 15:04:05 · no new notifications"; got != want {
 		t.Fatalf("monitorStatusLine=%q, want %q", got, want)
 	}
+	if got, want := monitorStatusLine(tm, "error: API request failed\nwith status 500:"), "\r\033[2KLast check: 15:04:05 · error: API request failed with status 500:"; got != want {
+		t.Fatalf("monitorStatusLine error=%q, want %q", got, want)
+	}
 	if got, want := monitorNewSeparator(tm, 2), "\r\033[2K----- New notifications @ 15:04:05 (2 new) -----\n"; got != want {
 		t.Fatalf("monitorNewSeparator=%q, want %q", got, want)
 	}

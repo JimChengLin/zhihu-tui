@@ -829,6 +829,7 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				continue
 			}
 			newItems := make([]any, 0)
+			newIDs := make([]string, 0)
 			for _, raw := range asSlice(result["data"]) {
 				notification := mapValue(raw)
 				id := notificationID(notification)
@@ -838,18 +839,24 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				if _, ok := seen[id]; ok {
 					continue
 				}
-				seen[id] = struct{}{}
 				newItems = append(newItems, raw)
+				newIDs = append(newIDs, id)
 			}
 			if len(newItems) == 0 {
 				fmt.Fprint(out, monitorStatusLine(checkedAt, "no new notifications"))
 				continue
 			}
+			lines, err := formatNotificationItems(ctx, formatter, oldestFirstNotifications(newItems))
+			if err != nil {
+				fmt.Fprint(out, monitorStatusLine(checkedAt, "error: "+err.Error()))
+				continue
+			}
+			for _, id := range newIDs {
+				seen[id] = struct{}{}
+			}
 			notifyTTY()
 			fmt.Fprint(out, monitorNewSeparator(checkedAt, len(newItems)))
-			if err := printNotificationItems(ctx, out, formatter, oldestFirstNotifications(newItems)); err != nil {
-				return err
-			}
+			writeNotificationLines(out, lines)
 			fmt.Fprint(out, monitorStatusLine(checkedAt, "waiting"))
 		}
 	}
@@ -869,17 +876,33 @@ func printNotifications(ctx context.Context, out io.Writer, formatter *notificat
 }
 
 func printNotificationItems(ctx context.Context, out io.Writer, formatter *notificationFormatter, data []any) error {
-	for i, raw := range data {
+	lines, err := formatNotificationItems(ctx, formatter, data)
+	if err != nil {
+		return err
+	}
+	writeNotificationLines(out, lines)
+	return nil
+}
+
+func formatNotificationItems(ctx context.Context, formatter *notificationFormatter, data []any) ([]string, error) {
+	lines := make([]string, 0, len(data))
+	for _, raw := range data {
 		line, err := formatter.format(ctx, mapValue(raw))
 		if err != nil {
-			return err
+			return nil, err
 		}
+		lines = append(lines, line)
+	}
+	return lines, nil
+}
+
+func writeNotificationLines(out io.Writer, lines []string) {
+	for i, line := range lines {
 		if i > 0 {
 			fmt.Fprintln(out)
 		}
 		fmt.Fprintln(out, line)
 	}
-	return nil
 }
 
 func notifyTTY() {
@@ -896,6 +919,7 @@ func terminalNotificationSequence() string {
 }
 
 func monitorStatusLine(t time.Time, status string) string {
+	status = strings.Join(strings.Fields(status), " ")
 	return fmt.Sprintf("\r\033[2KLast check: %s · %s", t.Format("15:04:05"), status)
 }
 
