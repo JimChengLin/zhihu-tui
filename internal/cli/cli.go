@@ -915,7 +915,7 @@ func notifyTTY() {
 }
 
 func terminalNotificationSequence() string {
-	return "\x1b]9;\a"
+	return "\a"
 }
 
 func monitorStatusLine(t time.Time, status string) string {

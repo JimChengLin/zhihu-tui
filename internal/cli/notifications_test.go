@@ -197,8 +197,8 @@ func TestNotificationTargetLabel(t *testing.T) {
 }
 
 func TestTerminalNotificationSequence(t *testing.T) {
-	if got := terminalNotificationSequence(); got != "\x1b]9;\a" {
-		t.Fatalf("terminalNotificationSequence=%q, want empty OSC 9", got)
+	if got := terminalNotificationSequence(); got != "\a" {
+		t.Fatalf("terminalNotificationSequence=%q, want BEL", got)
 	}
 }
 
