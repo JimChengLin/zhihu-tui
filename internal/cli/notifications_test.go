@@ -650,13 +650,42 @@ func TestShouldSendNotificationBell(t *testing.T) {
 
 func TestMonitorLines(t *testing.T) {
 	tm := time.Date(2026, 7, 8, 15, 4, 5, 0, time.Local)
-	if got, want := monitorStatusLine(tm, "no new notifications"), "\r\033[2KLast check: 15:04:05 · no new notifications"; got != want {
+	if got, want := monitorStatusLineWithColumns(tm, "no new notifications", 100), "\r\033[2KLast check: 15:04:05 · no new notifications"; got != want {
 		t.Fatalf("monitorStatusLine=%q, want %q", got, want)
 	}
-	if got, want := monitorStatusLine(tm, "error: API request failed\nwith status 500:"), "\r\033[2KLast check: 15:04:05 · error: API request failed with status 500:"; got != want {
+	if got, want := monitorStatusLineWithColumns(tm, "error: API request failed\nwith status 500:", 100), "\r\033[2KLast check: 15:04:05 · error: API request failed with status 500:"; got != want {
 		t.Fatalf("monitorStatusLine error=%q, want %q", got, want)
 	}
 	if got, want := monitorNewSeparator(tm, 2), "\r\033[2K\n----- New notifications @ 15:04:05 (2 new) -----\n"; got != want {
 		t.Fatalf("monitorNewSeparator=%q, want %q", got, want)
+	}
+}
+
+func TestMonitorStatusLineTruncatesLongStatus(t *testing.T) {
+	tm := time.Date(2026, 7, 8, 15, 4, 5, 0, time.Local)
+	status := "refresh failed: " + strings.Repeat("x", 80)
+	want := "\r\033[2KLast check: 15:04:05 · refresh failed: xxxxxxxx..."
+	if got := monitorStatusLineWithColumns(tm, status, 50); got != want {
+		t.Fatalf("monitorStatusLine=%q, want %q", got, want)
+	}
+}
+
+func TestMonitorStatusRowsAndClear(t *testing.T) {
+	if got := monitorStatusRowsWithColumns("\r\033[2K12345678901", 10); got != 2 {
+		t.Fatalf("monitorStatusRows=%d, want 2", got)
+	}
+	if got, want := monitorClearStatus(3), "\r\033[2K\033[1A\r\033[2K\033[1A\r\033[2K"; got != want {
+		t.Fatalf("monitorClearStatus=%q, want %q", got, want)
+	}
+}
+
+func TestMonitorOutputClearsPreviousStatusBeforeSeparator(t *testing.T) {
+	var out strings.Builder
+	tm := time.Date(2026, 7, 8, 15, 4, 5, 0, time.Local)
+	monitor := &monitorOutput{out: &out, statusRows: 3}
+	monitor.NewSeparator(tm, 1)
+	want := monitorClearStatus(3) + monitorNewSeparator(tm, 1)
+	if got := out.String(); got != want {
+		t.Fatalf("output=%q, want %q", got, want)
 	}
 }

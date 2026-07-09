@@ -35,6 +35,7 @@ const defaultNotificationLimit = 10
 const notificationHistoryRetention = 90 * 24 * time.Hour
 const notificationActorCacheTTL = 24 * time.Hour
 const notificationBellInterval = time.Hour
+const monitorStatusFallbackColumns = 100
 
 type notificationSeenState struct {
 	signature  string
@@ -854,7 +855,8 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 		return err
 	}
 	fmt.Fprintf(out, "Monitoring notifications every %s. Press Ctrl+C to stop.\n", interval)
-	fmt.Fprint(out, monitorStatusLine(time.Now(), "waiting"))
+	monitorOut := newMonitorOutput(out)
+	monitorOut.Status(time.Now(), "waiting")
 
 	var lastBellAt time.Time
 	ticker := time.NewTicker(interval)
@@ -877,7 +879,7 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				if logErr := debugLog.Log(checkedAt, "refresh_error", map[string]any{"error": err.Error()}); logErr != nil {
 					return logErr
 				}
-				fmt.Fprint(out, monitorStatusLine(checkedAt, "refresh failed: "+err.Error()))
+				monitorOut.Status(checkedAt, "refresh failed: "+err.Error())
 				continue
 			}
 			newItems := make([]any, 0)
@@ -913,7 +915,7 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				rememberNotificationState(newStates, notification, checkedAt)
 			}
 			if len(newItems) == 0 {
-				fmt.Fprint(out, monitorStatusLine(checkedAt, "no new notifications"))
+				monitorOut.Status(checkedAt, "no new notifications")
 				continue
 			}
 			formatter.clearTargetCache()
@@ -922,7 +924,7 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				if logErr := debugLog.Log(checkedAt, "format_error", map[string]any{"error": err.Error(), "new_count": len(newItems)}); logErr != nil {
 					return logErr
 				}
-				fmt.Fprint(out, monitorStatusLine(checkedAt, "error: "+err.Error()))
+				monitorOut.Status(checkedAt, "error: "+err.Error())
 				continue
 			}
 			for key, state := range newStates {
@@ -936,9 +938,9 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				notifyTTY()
 				lastBellAt = checkedAt
 			}
-			fmt.Fprint(out, monitorNewSeparator(checkedAt, len(newItems)))
+			monitorOut.NewSeparator(checkedAt, len(newItems))
 			writeNotificationLines(out, lines)
-			fmt.Fprint(out, monitorStatusLine(checkedAt, "waiting"))
+			monitorOut.Status(checkedAt, "waiting")
 		}
 	}
 }
@@ -1145,9 +1147,106 @@ func shouldSendNotificationBell(now, last time.Time) bool {
 	return last.IsZero() || !now.Before(last.Add(notificationBellInterval))
 }
 
+type monitorOutput struct {
+	out        io.Writer
+	statusRows int
+}
+
+func newMonitorOutput(out io.Writer) *monitorOutput {
+	return &monitorOutput{out: out}
+}
+
+func (m *monitorOutput) Status(t time.Time, status string) {
+	line := monitorStatusLine(t, status)
+	m.clearStatus()
+	fmt.Fprint(m.out, line)
+	m.statusRows = monitorStatusRows(line)
+}
+
+func (m *monitorOutput) NewSeparator(t time.Time, count int) {
+	m.clearStatus()
+	fmt.Fprint(m.out, monitorNewSeparator(t, count))
+}
+
+func (m *monitorOutput) clearStatus() {
+	if m.statusRows <= 0 {
+		return
+	}
+	fmt.Fprint(m.out, monitorClearStatus(m.statusRows))
+	m.statusRows = 0
+}
+
+func monitorClearStatus(rows int) string {
+	if rows <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\r\033[2K")
+	for i := 1; i < rows; i++ {
+		b.WriteString("\033[1A\r\033[2K")
+	}
+	return b.String()
+}
+
+func monitorStatusRows(line string) int {
+	return monitorStatusRowsWithColumns(line, monitorStatusColumns())
+}
+
+func monitorStatusRowsWithColumns(line string, columns int) int {
+	line = strings.TrimPrefix(line, "\r\033[2K")
+	line = strings.TrimLeft(line, "\r")
+	if columns <= 0 {
+		return 1
+	}
+	width := len([]rune(line))
+	if width == 0 {
+		return 1
+	}
+	return (width-1)/columns + 1
+}
+
 func monitorStatusLine(t time.Time, status string) string {
+	return monitorStatusLineWithColumns(t, status, monitorStatusColumns())
+}
+
+func monitorStatusLineWithColumns(t time.Time, status string, columns int) string {
+	return "\r\033[2K" + monitorStatusTextWithColumns(t, status, columns)
+}
+
+func monitorStatusText(t time.Time, status string) string {
+	return monitorStatusTextWithColumns(t, status, monitorStatusColumns())
+}
+
+func monitorStatusTextWithColumns(t time.Time, status string, columns int) string {
 	status = strings.Join(strings.Fields(status), " ")
-	return fmt.Sprintf("\r\033[2KLast check: %s · %s", t.Format("15:04:05"), status)
+	prefix := fmt.Sprintf("Last check: %s · ", t.Format("15:04:05"))
+	status = truncateStatusLine(status, columns-len([]rune(prefix)))
+	return prefix + status
+}
+
+func monitorStatusColumns() int {
+	if columns, ok := terminalColumns(); ok {
+		return columns
+	}
+	columns, err := strconv.Atoi(os.Getenv("COLUMNS"))
+	if err == nil && columns > 0 {
+		return columns
+	}
+	return monitorStatusFallbackColumns
+}
+
+func truncateStatusLine(status string, maxLen int) string {
+	if status == "" || maxLen <= 0 {
+		return ""
+	}
+	runes := []rune(status)
+	if len(runes) <= maxLen {
+		return status
+	}
+	if maxLen <= 3 {
+		return string(runes[:maxLen])
+	}
+	return string(runes[:maxLen-3]) + "..."
 }
 
 func monitorNewSeparator(t time.Time, count int) string {
