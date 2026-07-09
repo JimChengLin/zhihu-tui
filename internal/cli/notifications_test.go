@@ -322,6 +322,67 @@ func TestNotificationTargetLabel(t *testing.T) {
 	}
 }
 
+func TestNotificationGroupKeyIgnoresNotificationID(t *testing.T) {
+	first := map[string]any{
+		"id": "old-notification",
+		"content": map[string]any{
+			"verb": "赞同了你的想法",
+			"target": map[string]any{
+				"link": "https://www.zhihu.com/pin/123",
+			},
+		},
+		"target": map[string]any{
+			"type": "pin",
+			"id":   "123",
+		},
+	}
+	second := map[string]any{
+		"id": "new-notification",
+		"content": map[string]any{
+			"verb": "赞同了你的想法",
+			"target": map[string]any{
+				"link": "https://www.zhihu.com/pin/123",
+			},
+		},
+		"target": map[string]any{
+			"type": "pin",
+			"id":   "123",
+		},
+	}
+	if got, want := notificationGroupKey(first), notificationGroupKey(second); got != want {
+		t.Fatalf("group keys differ: %q != %q", got, want)
+	}
+}
+
+func TestNotificationSignatureTracksMergedActors(t *testing.T) {
+	oneActor := map[string]any{
+		"merge_count": 1,
+		"content": map[string]any{"actors": []any{
+			map[string]any{"url_token": "alice"},
+		}},
+	}
+	twoActors := map[string]any{
+		"merge_count": 2,
+		"content": map[string]any{"actors": []any{
+			map[string]any{"url_token": "bob"},
+			map[string]any{"url_token": "alice"},
+		}},
+	}
+	if notificationSignature(oneActor) == notificationSignature(twoActors) {
+		t.Fatal("signature should change when merged actors change")
+	}
+	reordered := map[string]any{
+		"merge_count": 2,
+		"content": map[string]any{"actors": []any{
+			map[string]any{"url_token": "alice"},
+			map[string]any{"url_token": "bob"},
+		}},
+	}
+	if got, want := notificationSignature(twoActors), notificationSignature(reordered); got != want {
+		t.Fatalf("signature should ignore actor order: %q != %q", got, want)
+	}
+}
+
 func TestTerminalNotificationSequence(t *testing.T) {
 	if got := terminalNotificationSequence(); got != "\a" {
 		t.Fatalf("terminalNotificationSequence=%q, want BEL", got)

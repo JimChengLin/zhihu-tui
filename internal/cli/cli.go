@@ -802,11 +802,12 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 	if err != nil {
 		return err
 	}
-	seen := map[string]struct{}{}
+	seen := map[string]string{}
 	data := asSlice(result["data"])
 	for _, raw := range data {
-		if id := notificationID(mapValue(raw)); id != "" {
-			seen[id] = struct{}{}
+		key, signature := notificationState(mapValue(raw))
+		if key != "" {
+			seen[key] = signature
 		}
 	}
 	if err := printNotifications(ctx, out, formatter, result, false); err != nil {
@@ -829,18 +830,18 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				continue
 			}
 			newItems := make([]any, 0)
-			newIDs := make([]string, 0)
+			newStates := make(map[string]string)
 			for _, raw := range asSlice(result["data"]) {
 				notification := mapValue(raw)
-				id := notificationID(notification)
-				if id == "" {
-					id = formatNotificationBase(notification)
+				key, signature := notificationState(notification)
+				if key == "" {
+					continue
 				}
-				if _, ok := seen[id]; ok {
+				if seenSignature, ok := seen[key]; ok && seenSignature == signature {
 					continue
 				}
 				newItems = append(newItems, raw)
-				newIDs = append(newIDs, id)
+				newStates[key] = signature
 			}
 			if len(newItems) == 0 {
 				fmt.Fprint(out, monitorStatusLine(checkedAt, "no new notifications"))
@@ -851,8 +852,8 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				fmt.Fprint(out, monitorStatusLine(checkedAt, "error: "+err.Error()))
 				continue
 			}
-			for _, id := range newIDs {
-				seen[id] = struct{}{}
+			for key, signature := range newStates {
+				seen[key] = signature
 			}
 			notifyTTY()
 			fmt.Fprint(out, monitorNewSeparator(checkedAt, len(newItems)))
@@ -1503,6 +1504,45 @@ func notificationTargetLabel(rawLink string) string {
 	default:
 		return "内容"
 	}
+}
+
+func notificationState(n map[string]any) (string, string) {
+	key := notificationGroupKey(n)
+	if key == "" {
+		key = notificationID(n)
+	}
+	if key == "" {
+		key = formatNotificationBase(n)
+	}
+	return key, notificationSignature(n)
+}
+
+func notificationGroupKey(n map[string]any) string {
+	content := mapValue(n["content"])
+	contentTarget := mapValue(content["target"])
+	target := mapValue(n["target"])
+	verb := strings.TrimSpace(toString(content["verb"]))
+	targetType := firstNonEmpty(toString(target["type"]), toString(target["resource_type"]))
+	targetID := firstNonEmpty(toString(target["id"]), toString(target["url_token"]), toString(contentTarget["link"]))
+	if verb == "" || targetID == "" {
+		return ""
+	}
+	return strings.Join([]string{verb, targetType, targetID}, "|")
+}
+
+func notificationSignature(n map[string]any) string {
+	content := mapValue(n["content"])
+	actors := asSlice(content["actors"])
+	actorKeys := make([]string, 0, len(actors))
+	for _, raw := range actors {
+		actor := mapValue(raw)
+		actorKey := firstNonEmpty(toString(actor["url_token"]), toString(actor["link"]), toString(actor["name"]))
+		if actorKey != "" {
+			actorKeys = append(actorKeys, actorKey)
+		}
+	}
+	sort.Strings(actorKeys)
+	return strings.Join([]string{toString(n["merge_count"]), strings.Join(actorKeys, ",")}, "|")
 }
 
 func notificationID(n map[string]any) string {
