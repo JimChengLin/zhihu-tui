@@ -354,6 +354,65 @@ func TestNotificationGroupKeyIgnoresNotificationID(t *testing.T) {
 	}
 }
 
+func TestNotificationGroupKeyUsesStableLinkedTarget(t *testing.T) {
+	first := map[string]any{
+		"content": map[string]any{
+			"verb": "赞同了你的回答",
+			"target": map[string]any{
+				"link": "https://www.zhihu.com/question/1/answer/456",
+			},
+		},
+		"target": map[string]any{
+			"type": "answer",
+			"id":   "volatile-id",
+		},
+	}
+	second := map[string]any{
+		"content": map[string]any{
+			"verb": "赞同了你的回答",
+			"target": map[string]any{
+				"link": "https://www.zhihu.com/question/1/answer/456",
+			},
+		},
+		"target": map[string]any{
+			"resource_type": "answer",
+		},
+	}
+	if got, want := notificationGroupKey(first), notificationGroupKey(second); got != want {
+		t.Fatalf("group keys differ: %q != %q", got, want)
+	}
+}
+
+func TestNotificationGroupKeyKeepsDifferentCommentsSeparate(t *testing.T) {
+	first := map[string]any{
+		"content": map[string]any{
+			"verb": "喜欢了你的评论",
+			"target": map[string]any{
+				"link": "https://www.zhihu.com/question/1/answer/456",
+			},
+		},
+		"target": map[string]any{
+			"type": "comment",
+			"id":   "comment-a",
+		},
+	}
+	second := map[string]any{
+		"content": map[string]any{
+			"verb": "喜欢了你的评论",
+			"target": map[string]any{
+				"link": "https://www.zhihu.com/question/1/answer/456",
+			},
+		},
+		"target": map[string]any{
+			"type": "comment",
+			"id":   "comment-b",
+		},
+	}
+	if notificationGroupKey(first) == notificationGroupKey(second) {
+		t.Fatal("different comment notifications should not share a group key")
+	}
+}
+
 func TestNotificationSignatureTracksMergedActors(t *testing.T) {
 	oneActor := map[string]any{
 		"merge_count": 1,
@@ -383,6 +442,70 @@ func TestNotificationSignatureTracksMergedActors(t *testing.T) {
 	}
 }
 
+func TestNotificationSignatureNormalizesSingleActorMergeCount(t *testing.T) {
+	withoutMergeCount := map[string]any{
+		"content": map[string]any{"actors": []any{
+			map[string]any{"url_token": "alice"},
+		}},
+	}
+	withMergeCount := map[string]any{
+		"merge_count": 1,
+		"content": map[string]any{"actors": []any{
+			map[string]any{"url_token": "alice"},
+		}},
+	}
+	if got, want := notificationSignature(withoutMergeCount), notificationSignature(withMergeCount); got != want {
+		t.Fatalf("signatures differ: %q != %q", got, want)
+	}
+}
+
+func TestNotificationSeenStateTracksMultipleActorsForSameGroup(t *testing.T) {
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.Local)
+	notification := func(actor string) map[string]any {
+		return map[string]any{
+			"create_time": 123,
+			"merge_count": 1,
+			"content": map[string]any{
+				"verb": "赞同了你的回答",
+				"target": map[string]any{
+					"link": "https://www.zhihu.com/question/1/answer/456",
+					"text": "问题标题",
+				},
+				"actors": []any{
+					map[string]any{"url_token": actor},
+				},
+			},
+			"target": map[string]any{
+				"type": "answer",
+				"id":   "456",
+			},
+		}
+	}
+	seen := map[string]notificationSeenState{}
+	rememberNotificationState(seen, notification("swz128"), now)
+	rememberNotificationState(seen, notification("z-buffer"), now)
+
+	key, signature := notificationState(notification("swz128"))
+	state, ok := seen[key]
+	if !ok {
+		t.Fatal("state should be stored")
+	}
+	if known, reason := notificationSeenStateContains(state, notification("swz128"), signature); !known || reason != "same_signature" {
+		t.Fatalf("swz128 known=%v reason=%s", known, reason)
+	}
+	_, zSignature := notificationState(notification("z-buffer"))
+	if known, reason := notificationSeenStateContains(state, notification("z-buffer"), zSignature); !known || reason != "same_signature" {
+		t.Fatalf("z-buffer known=%v reason=%s", known, reason)
+	}
+	_, newSignature := notificationState(notification("alice"))
+	if known, reason := notificationSeenStateContains(state, notification("alice"), newSignature); known || reason != "new_actor" {
+		t.Fatalf("alice known=%v reason=%s", known, reason)
+	}
+	if state.mergeCount != 2 {
+		t.Fatalf("mergeCount=%d, want 2", state.mergeCount)
+	}
+}
+
 func TestPruneNotificationHistory(t *testing.T) {
 	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.Local)
 	seen := map[string]notificationSeenState{
@@ -395,7 +518,9 @@ func TestPruneNotificationHistory(t *testing.T) {
 			createTime: now.Add(-91 * 24 * time.Hour).Unix(),
 		},
 	}
-	pruneNotificationHistory(seen, now)
+	if pruned := pruneNotificationHistory(seen, now); pruned != 1 {
+		t.Fatalf("pruned=%d, want 1", pruned)
+	}
 	if _, ok := seen["recent"]; !ok {
 		t.Fatal("recent notification state should be retained")
 	}

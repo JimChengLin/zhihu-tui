@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,6 +36,9 @@ const notificationHistoryRetention = 90 * 24 * time.Hour
 
 type notificationSeenState struct {
 	signature  string
+	signatures map[string]struct{}
+	actors     map[string]struct{}
+	mergeCount int
 	createTime int64
 }
 
@@ -173,7 +178,7 @@ func printCommandHelp(w io.Writer, cmd string) {
 	case "collections":
 		fmt.Fprintln(w, "Usage: zhihu collections [-l LIMIT] [--json]")
 	case "notifications":
-		fmt.Fprintln(w, "Usage: zhihu notifications [-l LIMIT] [--offset OFFSET] [--monitor] [--interval SECONDS] [--json]")
+		fmt.Fprintln(w, "Usage: zhihu notifications [-l LIMIT] [--offset OFFSET] [--monitor] [--interval SECONDS] [--debug-log PATH] [--json]")
 	case "ask":
 		fmt.Fprintln(w, "Usage: zhihu ask TITLE [-d DETAIL] [-t TOPIC] [-i IMAGE]")
 	case "pin":
@@ -760,12 +765,16 @@ func runNotifications(ctx context.Context, args []string, out io.Writer) error {
 		opt("--json", "json", false),
 		opt("--monitor", "monitor", false),
 		opt("--interval", "interval", true),
+		opt("--debug-log", "debug-log", true),
 	))
 	if err != nil {
 		return err
 	}
 	if opts.has("monitor") && opts.has("json") {
 		return fmt.Errorf("notifications --monitor does not support --json")
+	}
+	if opts.has("debug-log") && !opts.has("monitor") {
+		return fmt.Errorf("notifications --debug-log requires --monitor")
 	}
 	c, err := authenticatedClient()
 	if err != nil {
@@ -779,7 +788,14 @@ func runNotifications(ctx context.Context, args []string, out io.Writer) error {
 		if interval <= 0 {
 			return fmt.Errorf("--interval must be greater than 0")
 		}
-		return runNotificationsMonitor(ctx, c, formatter, out, limit, interval)
+		debugLog, err := openNotificationDebugLog(opts.str("debug-log", ""))
+		if err != nil {
+			return err
+		}
+		if debugLog != nil {
+			defer debugLog.Close()
+		}
+		return runNotificationsMonitor(ctx, c, formatter, out, limit, interval, debugLog)
 	}
 	result, err := c.GetNotifications(ctx, limit, opts.int("offset", 0), "all")
 	if err != nil {
@@ -803,16 +819,29 @@ func runNotifications(ctx context.Context, args []string, out io.Writer) error {
 	return nil
 }
 
-func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *notificationFormatter, out io.Writer, limit int, interval time.Duration) error {
+func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *notificationFormatter, out io.Writer, limit int, interval time.Duration, debugLog *notificationDebugLogger) error {
 	result, err := c.GetNotifications(ctx, limit, 0, "all")
 	if err != nil {
 		return err
 	}
 	seen := map[string]notificationSeenState{}
 	startedAt := time.Now()
+	if err := debugLog.Log(startedAt, "monitor_start", map[string]any{
+		"limit":    limit,
+		"interval": interval.String(),
+	}); err != nil {
+		return err
+	}
 	data := asSlice(result["data"])
-	for _, raw := range data {
-		rememberNotificationState(seen, mapValue(raw), startedAt)
+	for i, raw := range data {
+		notification := mapValue(raw)
+		key, signature := notificationState(notification)
+		if key != "" {
+			rememberNotificationState(seen, notification, startedAt)
+		}
+		if err := debugLog.LogNotification(startedAt, "initial", i, notification, key, signature, "seed", "initial_fetch", notificationSeenState{}, false); err != nil {
+			return err
+		}
 	}
 	if err := printNotifications(ctx, out, formatter, result, false); err != nil {
 		return err
@@ -828,25 +857,52 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 			return ctx.Err()
 		case <-ticker.C:
 			checkedAt := time.Now()
-			pruneNotificationHistory(seen, checkedAt)
+			pruned := pruneNotificationHistory(seen, checkedAt)
+			if err := debugLog.Log(checkedAt, "refresh_start", map[string]any{
+				"seen_count": len(seen),
+				"pruned":     pruned,
+			}); err != nil {
+				return err
+			}
 			result, err := c.GetNotifications(ctx, limit, 0, "all")
 			if err != nil {
+				if logErr := debugLog.Log(checkedAt, "refresh_error", map[string]any{"error": err.Error()}); logErr != nil {
+					return logErr
+				}
 				fmt.Fprint(out, monitorStatusLine(checkedAt, "refresh failed: "+err.Error()))
 				continue
 			}
 			newItems := make([]any, 0)
 			newStates := make(map[string]notificationSeenState)
-			for _, raw := range asSlice(result["data"]) {
+			for i, raw := range asSlice(result["data"]) {
 				notification := mapValue(raw)
 				key, signature := notificationState(notification)
 				if key == "" {
+					if err := debugLog.LogNotification(checkedAt, "refresh", i, notification, key, signature, "skip", "empty_key", notificationSeenState{}, false); err != nil {
+						return err
+					}
 					continue
 				}
-				if seenState, ok := seen[key]; ok && seenState.signature == signature {
-					continue
+				seenState, ok := notificationKnownState(seen, newStates, key)
+				if ok {
+					known, reason := notificationSeenStateContains(seenState, notification, signature)
+					decision := "new"
+					if known {
+						decision = "seen"
+					}
+					if err := debugLog.LogNotification(checkedAt, "refresh", i, notification, key, signature, decision, reason, seenState, true); err != nil {
+						return err
+					}
+					if known {
+						continue
+					}
+				} else {
+					if err := debugLog.LogNotification(checkedAt, "refresh", i, notification, key, signature, "new", "missing_key", notificationSeenState{}, false); err != nil {
+						return err
+					}
 				}
 				newItems = append(newItems, raw)
-				newStates[key] = newNotificationSeenState(notification, signature, checkedAt)
+				rememberNotificationState(newStates, notification, checkedAt)
 			}
 			if len(newItems) == 0 {
 				fmt.Fprint(out, monitorStatusLine(checkedAt, "no new notifications"))
@@ -854,11 +910,17 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 			}
 			lines, err := formatNotificationItems(ctx, formatter, oldestFirstNotifications(newItems))
 			if err != nil {
+				if logErr := debugLog.Log(checkedAt, "format_error", map[string]any{"error": err.Error(), "new_count": len(newItems)}); logErr != nil {
+					return logErr
+				}
 				fmt.Fprint(out, monitorStatusLine(checkedAt, "error: "+err.Error()))
 				continue
 			}
 			for key, state := range newStates {
-				seen[key] = state
+				seen[key] = mergeNotificationSeenState(seen[key], state)
+			}
+			if err := debugLog.Log(checkedAt, "new_notifications", map[string]any{"count": len(newItems)}); err != nil {
+				return err
 			}
 			notifyTTY()
 			fmt.Fprint(out, monitorNewSeparator(checkedAt, len(newItems)))
@@ -866,6 +928,148 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 			fmt.Fprint(out, monitorStatusLine(checkedAt, "waiting"))
 		}
 	}
+}
+
+type notificationDebugLogger struct {
+	path string
+	file *os.File
+	enc  *json.Encoder
+}
+
+func openNotificationDebugLog(path string) (*notificationDebugLogger, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, nil
+	}
+	expanded, err := expandHomePath(path)
+	if err != nil {
+		return nil, err
+	}
+	if dir := filepath.Dir(expanded); dir != "." {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, fmt.Errorf("create debug log directory: %w", err)
+		}
+	}
+	file, err := os.OpenFile(expanded, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open notification debug log: %w", err)
+	}
+	if err := file.Chmod(0o600); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("chmod notification debug log: %w", err)
+	}
+	return &notificationDebugLogger{path: expanded, file: file, enc: json.NewEncoder(file)}, nil
+}
+
+func expandHomePath(path string) (string, error) {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("get home directory: %w", err)
+	}
+	if path == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, path[2:]), nil
+}
+
+func (l *notificationDebugLogger) Close() error {
+	if l == nil {
+		return nil
+	}
+	return l.file.Close()
+}
+
+func (l *notificationDebugLogger) Log(ts time.Time, event string, fields map[string]any) error {
+	if l == nil {
+		return nil
+	}
+	record := map[string]any{
+		"ts":    ts.Format(time.RFC3339Nano),
+		"event": event,
+	}
+	for key, value := range fields {
+		record[key] = value
+	}
+	if err := l.enc.Encode(record); err != nil {
+		return fmt.Errorf("write notification debug log %s: %w", l.path, err)
+	}
+	return nil
+}
+
+func (l *notificationDebugLogger) LogNotification(ts time.Time, phase string, index int, n map[string]any, key, signature, decision, reason string, seenState notificationSeenState, hadSeenState bool) error {
+	if l == nil {
+		return nil
+	}
+	content := mapValue(n["content"])
+	contentTarget := mapValue(content["target"])
+	target := mapValue(n["target"])
+	groupType, groupID := notificationGroupTarget(target, contentTarget)
+	fields := map[string]any{
+		"phase":                    phase,
+		"index":                    index,
+		"decision":                 decision,
+		"reason":                   reason,
+		"key":                      key,
+		"signature":                signature,
+		"notification_id":          toString(n["id"]),
+		"type":                     toString(n["type"]),
+		"create_time":              toString(n["create_time"]),
+		"merge_count":              toString(n["merge_count"]),
+		"verb":                     strings.TrimSpace(toString(content["verb"])),
+		"target_type":              toString(target["type"]),
+		"target_resource_type":     toString(target["resource_type"]),
+		"target_id":                toString(target["id"]),
+		"target_url_token":         toString(target["url_token"]),
+		"content_target_link":      toString(contentTarget["link"]),
+		"content_target_text":      truncateWithDots(compactPlainText(toString(contentTarget["text"])), 200),
+		"group_target_type":        groupType,
+		"group_target_id":          groupID,
+		"actors":                   notificationDebugActors(asSlice(content["actors"])),
+		"seen_state_found":         hadSeenState,
+		"seen_state_signature":     "",
+		"seen_state_signatures":    []string{},
+		"seen_state_actors":        []string{},
+		"seen_state_merge_count":   0,
+		"seen_state_create_time":   int64(0),
+		"seen_state_create_time_s": "",
+	}
+	if hadSeenState {
+		fields["seen_state_signature"] = seenState.signature
+		fields["seen_state_signatures"] = sortedStringSet(seenState.signatures)
+		fields["seen_state_actors"] = sortedStringSet(seenState.actors)
+		fields["seen_state_merge_count"] = seenState.mergeCount
+		fields["seen_state_create_time"] = seenState.createTime
+		if seenState.createTime > 0 {
+			fields["seen_state_create_time_s"] = time.Unix(seenState.createTime, 0).Format(time.RFC3339)
+		}
+	}
+	return l.Log(ts, "notification_state", fields)
+}
+
+func sortedStringSet(values map[string]struct{}) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func notificationDebugActors(actors []any) []map[string]string {
+	out := make([]map[string]string, 0, len(actors))
+	for _, raw := range actors {
+		actor := mapValue(raw)
+		out = append(out, map[string]string{
+			"name":      toString(actor["name"]),
+			"url_token": toString(actor["url_token"]),
+			"id":        toString(actor["id"]),
+			"link":      toString(actor["link"]),
+		})
+	}
+	return out
 }
 
 func printNotifications(ctx context.Context, out io.Writer, formatter *notificationFormatter, result map[string]any, omitEmpty bool) error {
@@ -1527,7 +1731,7 @@ func rememberNotificationState(seen map[string]notificationSeenState, n map[stri
 	if key == "" {
 		return
 	}
-	seen[key] = newNotificationSeenState(n, signature, now)
+	seen[key] = mergeNotificationSeenState(seen[key], newNotificationSeenState(n, signature, now))
 }
 
 func newNotificationSeenState(n map[string]any, signature string, now time.Time) notificationSeenState {
@@ -1535,16 +1739,102 @@ func newNotificationSeenState(n map[string]any, signature string, now time.Time)
 	if createTime == 0 {
 		createTime = now.Unix()
 	}
-	return notificationSeenState{signature: signature, createTime: createTime}
+	actorKeys := notificationActorKeys(n)
+	state := notificationSeenState{
+		signature:  signature,
+		signatures: map[string]struct{}{},
+		actors:     map[string]struct{}{},
+		mergeCount: notificationMergeCountValue(n, len(actorKeys)),
+		createTime: createTime,
+	}
+	if signature != "" {
+		state.signatures[signature] = struct{}{}
+	}
+	for _, actorKey := range actorKeys {
+		state.actors[actorKey] = struct{}{}
+	}
+	if len(state.actors) > state.mergeCount {
+		state.mergeCount = len(state.actors)
+	}
+	return state
 }
 
-func pruneNotificationHistory(seen map[string]notificationSeenState, now time.Time) {
+func mergeNotificationSeenState(current, incoming notificationSeenState) notificationSeenState {
+	if incoming.createTime == 0 {
+		return current
+	}
+	if current.createTime == 0 {
+		return incoming
+	}
+	if current.signatures == nil {
+		current.signatures = map[string]struct{}{}
+	}
+	if current.actors == nil {
+		current.actors = map[string]struct{}{}
+	}
+	if current.signature != "" {
+		current.signatures[current.signature] = struct{}{}
+	}
+	if incoming.signature != "" {
+		current.signature = incoming.signature
+		current.signatures[incoming.signature] = struct{}{}
+	}
+	for signature := range incoming.signatures {
+		current.signatures[signature] = struct{}{}
+	}
+	for actorKey := range incoming.actors {
+		current.actors[actorKey] = struct{}{}
+	}
+	if incoming.mergeCount > current.mergeCount {
+		current.mergeCount = incoming.mergeCount
+	}
+	if len(current.actors) > current.mergeCount {
+		current.mergeCount = len(current.actors)
+	}
+	if incoming.createTime > current.createTime {
+		current.createTime = incoming.createTime
+	}
+	return current
+}
+
+func notificationKnownState(seen, pending map[string]notificationSeenState, key string) (notificationSeenState, bool) {
+	state, ok := seen[key]
+	if pendingState, pendingOK := pending[key]; pendingOK {
+		state = mergeNotificationSeenState(state, pendingState)
+		ok = true
+	}
+	return state, ok
+}
+
+func notificationSeenStateContains(state notificationSeenState, n map[string]any, signature string) (bool, string) {
+	if _, ok := state.signatures[signature]; ok {
+		return true, "same_signature"
+	}
+	actorKeys := notificationActorKeys(n)
+	if len(actorKeys) == 0 {
+		return false, "signature_changed"
+	}
+	for _, actorKey := range actorKeys {
+		if _, ok := state.actors[actorKey]; !ok {
+			return false, "new_actor"
+		}
+	}
+	if mergeCount := notificationMergeCountValue(n, len(actorKeys)); mergeCount > state.mergeCount {
+		return false, "merge_count_changed"
+	}
+	return true, "same_actors"
+}
+
+func pruneNotificationHistory(seen map[string]notificationSeenState, now time.Time) int {
 	cutoff := now.Add(-notificationHistoryRetention).Unix()
+	pruned := 0
 	for key, state := range seen {
 		if state.createTime < cutoff {
 			delete(seen, key)
+			pruned++
 		}
 	}
+	return pruned
 }
 
 func notificationGroupKey(n map[string]any) string {
@@ -1552,15 +1842,30 @@ func notificationGroupKey(n map[string]any) string {
 	contentTarget := mapValue(content["target"])
 	target := mapValue(n["target"])
 	verb := strings.TrimSpace(toString(content["verb"]))
-	targetType := firstNonEmpty(toString(target["type"]), toString(target["resource_type"]))
-	targetID := firstNonEmpty(toString(target["id"]), toString(target["url_token"]), toString(contentTarget["link"]))
+	targetType, targetID := notificationGroupTarget(target, contentTarget)
 	if verb == "" || targetID == "" {
 		return ""
 	}
 	return strings.Join([]string{verb, targetType, targetID}, "|")
 }
 
+func notificationGroupTarget(target, contentTarget map[string]any) (string, string) {
+	targetType := firstNonEmpty(toString(target["type"]), toString(target["resource_type"]))
+	if targetType == "comment" {
+		return targetType, firstNonEmpty(toString(target["id"]), toString(target["url_token"]), toString(contentTarget["link"]))
+	}
+	if parsed, ok := parseNotificationTarget(toString(contentTarget["link"])); ok {
+		return parsed.kind, parsed.id
+	}
+	return targetType, firstNonEmpty(toString(target["id"]), toString(target["url_token"]), toString(contentTarget["link"]))
+}
+
 func notificationSignature(n map[string]any) string {
+	actorKeys := notificationActorKeys(n)
+	return strings.Join([]string{notificationMergeCount(n, len(actorKeys)), strings.Join(actorKeys, ",")}, "|")
+}
+
+func notificationActorKeys(n map[string]any) []string {
 	content := mapValue(n["content"])
 	actors := asSlice(content["actors"])
 	actorKeys := make([]string, 0, len(actors))
@@ -1572,7 +1877,27 @@ func notificationSignature(n map[string]any) string {
 		}
 	}
 	sort.Strings(actorKeys)
-	return strings.Join([]string{toString(n["merge_count"]), strings.Join(actorKeys, ",")}, "|")
+	return actorKeys
+}
+
+func notificationMergeCount(n map[string]any, actorCount int) string {
+	mergeCount := notificationMergeCountValue(n, actorCount)
+	if mergeCount == 0 {
+		return ""
+	}
+	return strconv.Itoa(mergeCount)
+}
+
+func notificationMergeCountValue(n map[string]any, actorCount int) int {
+	mergeCount := toString(n["merge_count"])
+	parsed, err := strconv.Atoi(mergeCount)
+	if err != nil || parsed < 0 {
+		parsed = 0
+	}
+	if actorCount > parsed {
+		return actorCount
+	}
+	return parsed
 }
 
 func notificationID(n map[string]any) string {
