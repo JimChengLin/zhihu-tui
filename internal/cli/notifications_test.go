@@ -656,8 +656,11 @@ func TestMonitorLines(t *testing.T) {
 	if got, want := monitorStatusLineWithColumns(tm, "error: API request failed\nwith status 500:", 100), "\r\033[2KLast check: 15:04:05 · error: API request failed with status 500:"; got != want {
 		t.Fatalf("monitorStatusLine error=%q, want %q", got, want)
 	}
-	if got, want := monitorNewSeparator(tm, 2), "\r\033[2K\n----- New notifications @ 15:04:05 (2 new) -----\n"; got != want {
+	if got, want := monitorNewSeparator(tm, 2, false), "\r\033[2K\n----- New notifications @ 15:04:05 (2 new) -----\n"; got != want {
 		t.Fatalf("monitorNewSeparator=%q, want %q", got, want)
+	}
+	if got, want := monitorNewSeparator(tm, 2, true), "\r\033[2K\n----- 🔔 New notifications @ 15:04:05 (2 new) -----\n"; got != want {
+		t.Fatalf("monitorNewSeparator bell=%q, want %q", got, want)
 	}
 }
 
@@ -683,8 +686,8 @@ func TestMonitorOutputClearsPreviousStatusBeforeSeparator(t *testing.T) {
 	var out strings.Builder
 	tm := time.Date(2026, 7, 8, 15, 4, 5, 0, time.Local)
 	monitor := &monitorOutput{out: &out, statusRows: 3}
-	monitor.NewSeparator(tm, 1)
-	want := monitorClearStatus(3) + monitorNewSeparator(tm, 1)
+	monitor.NewSeparator(tm, 1, true)
+	want := monitorClearStatus(3) + monitorNewSeparator(tm, 1, true)
 	if got := out.String(); got != want {
 		t.Fatalf("output=%q, want %q", got, want)
 	}

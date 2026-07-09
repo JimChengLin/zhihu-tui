@@ -938,7 +938,7 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				notifyTTY()
 				lastBellAt = checkedAt
 			}
-			monitorOut.NewSeparator(checkedAt, len(newItems))
+			monitorOut.NewSeparator(checkedAt, len(newItems), sendBell)
 			writeNotificationLines(out, lines)
 			monitorOut.Status(checkedAt, "waiting")
 		}
@@ -1163,9 +1163,9 @@ func (m *monitorOutput) Status(t time.Time, status string) {
 	m.statusRows = monitorStatusRows(line)
 }
 
-func (m *monitorOutput) NewSeparator(t time.Time, count int) {
+func (m *monitorOutput) NewSeparator(t time.Time, count int, bell bool) {
 	m.clearStatus()
-	fmt.Fprint(m.out, monitorNewSeparator(t, count))
+	fmt.Fprint(m.out, monitorNewSeparator(t, count, bell))
 }
 
 func (m *monitorOutput) clearStatus() {
@@ -1249,8 +1249,12 @@ func truncateStatusLine(status string, maxLen int) string {
 	return string(runes[:maxLen-3]) + "..."
 }
 
-func monitorNewSeparator(t time.Time, count int) string {
-	return fmt.Sprintf("\r\033[2K\n----- New notifications @ %s (%d new) -----\n", t.Format("15:04:05"), count)
+func monitorNewSeparator(t time.Time, count int, bell bool) string {
+	label := "New notifications"
+	if bell {
+		label = "🔔 New notifications"
+	}
+	return fmt.Sprintf("\r\033[2K\n----- %s @ %s (%d new) -----\n", label, t.Format("15:04:05"), count)
 }
 
 func runAsk(ctx context.Context, args []string, out io.Writer) error {
