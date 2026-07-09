@@ -97,6 +97,56 @@ func TestFormatActorWithProfile(t *testing.T) {
 	}
 }
 
+func TestNotificationFormatterActorCacheUsesTTL(t *testing.T) {
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.Local)
+	calls := 0
+	formatter, closeServer := testNotificationFormatter(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v4/members/alice" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		counts := []int{1, 2}
+		if calls >= len(counts) {
+			t.Fatalf("unexpected request %d", calls+1)
+		}
+		count := counts[calls]
+		calls++
+		writeNotificationTestJSON(t, w, http.StatusOK, map[string]any{"follower_count": count})
+	})
+	defer closeServer()
+	formatter.now = func() time.Time { return now }
+	actors := []any{map[string]any{"name": "Alice", "url_token": "alice"}}
+
+	first, err := formatter.formatActors(context.Background(), actors)
+	if err != nil {
+		t.Fatalf("first formatActors: %v", err)
+	}
+	if first != "Alice（粉丝 1）" {
+		t.Fatalf("first=%q", first)
+	}
+	now = now.Add(23 * time.Hour)
+	second, err := formatter.formatActors(context.Background(), actors)
+	if err != nil {
+		t.Fatalf("second formatActors: %v", err)
+	}
+	if second != "Alice（粉丝 1）" {
+		t.Fatalf("second=%q", second)
+	}
+	if calls != 1 {
+		t.Fatalf("calls=%d, want 1 before TTL expires", calls)
+	}
+	now = now.Add(2 * time.Hour)
+	third, err := formatter.formatActors(context.Background(), actors)
+	if err != nil {
+		t.Fatalf("third formatActors: %v", err)
+	}
+	if third != "Alice（粉丝 2）" {
+		t.Fatalf("third=%q", third)
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d, want 2 after TTL expires", calls)
+	}
+}
+
 func TestFormatTargetStats(t *testing.T) {
 	tests := []struct {
 		name string
@@ -135,6 +185,44 @@ func TestFormatTargetStats(t *testing.T) {
 				t.Fatalf("formatTargetStats=%q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestNotificationFormatterClearTargetCacheRefreshesTargetMeta(t *testing.T) {
+	calls := 0
+	formatter, closeServer := testNotificationFormatter(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v4/pins/123" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		counts := []int{26, 27}
+		if calls >= len(counts) {
+			t.Fatalf("unexpected request %d", calls+1)
+		}
+		count := counts[calls]
+		calls++
+		writeNotificationTestJSON(t, w, http.StatusOK, map[string]any{
+			"reaction_count": count,
+			"like_count":     count,
+			"favorite_count": 12,
+		})
+	})
+	defer closeServer()
+
+	link := "https://www.zhihu.com/pin/123"
+	first, err := formatter.formatTargetMeta(context.Background(), link)
+	if err != nil {
+		t.Fatalf("first formatTargetMeta: %v", err)
+	}
+	if first != "赞同 26 · 喜欢 26 · 收藏 12" {
+		t.Fatalf("first=%q", first)
+	}
+	formatter.clearTargetCache()
+	second, err := formatter.formatTargetMeta(context.Background(), link)
+	if err != nil {
+		t.Fatalf("second formatTargetMeta: %v", err)
+	}
+	if second != "赞同 27 · 喜欢 27 · 收藏 12" {
+		t.Fatalf("second=%q", second)
 	}
 }
 

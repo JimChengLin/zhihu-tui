@@ -33,6 +33,7 @@ type parsedOptions struct {
 
 const defaultNotificationLimit = 10
 const notificationHistoryRetention = 90 * 24 * time.Hour
+const notificationActorCacheTTL = 24 * time.Hour
 
 type notificationSeenState struct {
 	signature  string
@@ -40,6 +41,11 @@ type notificationSeenState struct {
 	actors     map[string]struct{}
 	mergeCount int
 	createTime int64
+}
+
+type notificationActorCacheEntry struct {
+	text     string
+	cachedAt time.Time
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -908,6 +914,7 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				fmt.Fprint(out, monitorStatusLine(checkedAt, "no new notifications"))
 				continue
 			}
+			formatter.clearTargetCache()
 			lines, err := formatNotificationItems(ctx, formatter, oldestFirstNotifications(newItems))
 			if err != nil {
 				if logErr := debugLog.Log(checkedAt, "format_error", map[string]any{"error": err.Error(), "new_count": len(newItems)}); logErr != nil {
@@ -1437,16 +1444,22 @@ func printFeed(out io.Writer, result map[string]any) error {
 
 type notificationFormatter struct {
 	client      *client.Client
-	actorCache  map[string]string
+	actorCache  map[string]notificationActorCacheEntry
 	targetCache map[string]string
+	now         func() time.Time
 }
 
 func newNotificationFormatter(c *client.Client) *notificationFormatter {
 	return &notificationFormatter{
 		client:      c,
-		actorCache:  map[string]string{},
+		actorCache:  map[string]notificationActorCacheEntry{},
 		targetCache: map[string]string{},
+		now:         time.Now,
 	}
+}
+
+func (f *notificationFormatter) clearTargetCache() {
+	f.targetCache = map[string]string{}
 }
 
 func (f *notificationFormatter) format(ctx context.Context, n map[string]any) (string, error) {
@@ -1501,6 +1514,7 @@ func (f *notificationFormatter) formatActors(ctx context.Context, actors []any) 
 		return "", nil
 	}
 	parts := make([]string, 0, len(actors))
+	now := f.now()
 	for _, raw := range actors {
 		actor := mapValue(raw)
 		name := toString(actor["name"])
@@ -1512,8 +1526,8 @@ func (f *notificationFormatter) formatActors(ctx context.Context, actors []any) 
 			parts = append(parts, name)
 			continue
 		}
-		if cached, ok := f.actorCache[token]; ok {
-			parts = append(parts, cached)
+		if cached, ok := f.actorCache[token]; ok && now.Sub(cached.cachedAt) < notificationActorCacheTTL {
+			parts = append(parts, cached.text)
 			continue
 		}
 		profile, err := f.client.GetUserProfile(ctx, token)
@@ -1521,7 +1535,7 @@ func (f *notificationFormatter) formatActors(ctx context.Context, actors []any) 
 			return "", err
 		}
 		enriched := formatActorWithProfile(name, profile)
-		f.actorCache[token] = enriched
+		f.actorCache[token] = notificationActorCacheEntry{text: enriched, cachedAt: now}
 		parts = append(parts, enriched)
 	}
 	return strings.Join(parts, ", "), nil
