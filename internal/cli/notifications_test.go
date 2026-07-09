@@ -383,6 +383,39 @@ func TestNotificationSignatureTracksMergedActors(t *testing.T) {
 	}
 }
 
+func TestPruneNotificationHistory(t *testing.T) {
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.Local)
+	seen := map[string]notificationSeenState{
+		"recent": {
+			signature:  "a",
+			createTime: now.Add(-89 * 24 * time.Hour).Unix(),
+		},
+		"old": {
+			signature:  "b",
+			createTime: now.Add(-91 * 24 * time.Hour).Unix(),
+		},
+	}
+	pruneNotificationHistory(seen, now)
+	if _, ok := seen["recent"]; !ok {
+		t.Fatal("recent notification state should be retained")
+	}
+	if _, ok := seen["old"]; ok {
+		t.Fatal("old notification state should be pruned")
+	}
+}
+
+func TestNewNotificationSeenStateUsesNotificationCreateTime(t *testing.T) {
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.Local)
+	state := newNotificationSeenState(map[string]any{"create_time": 123}, "sig", now)
+	if state.signature != "sig" || state.createTime != 123 {
+		t.Fatalf("state=%+v", state)
+	}
+	fallback := newNotificationSeenState(map[string]any{}, "sig", now)
+	if fallback.createTime != now.Unix() {
+		t.Fatalf("fallback createTime=%d, want %d", fallback.createTime, now.Unix())
+	}
+}
+
 func TestTerminalNotificationSequence(t *testing.T) {
 	if got := terminalNotificationSequence(); got != "\a" {
 		t.Fatalf("terminalNotificationSequence=%q, want BEL", got)

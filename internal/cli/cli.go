@@ -30,6 +30,12 @@ type parsedOptions struct {
 }
 
 const defaultNotificationLimit = 10
+const notificationHistoryRetention = 90 * 24 * time.Hour
+
+type notificationSeenState struct {
+	signature  string
+	createTime int64
+}
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
@@ -802,13 +808,11 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 	if err != nil {
 		return err
 	}
-	seen := map[string]string{}
+	seen := map[string]notificationSeenState{}
+	startedAt := time.Now()
 	data := asSlice(result["data"])
 	for _, raw := range data {
-		key, signature := notificationState(mapValue(raw))
-		if key != "" {
-			seen[key] = signature
-		}
+		rememberNotificationState(seen, mapValue(raw), startedAt)
 	}
 	if err := printNotifications(ctx, out, formatter, result, false); err != nil {
 		return err
@@ -824,24 +828,25 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 			return ctx.Err()
 		case <-ticker.C:
 			checkedAt := time.Now()
+			pruneNotificationHistory(seen, checkedAt)
 			result, err := c.GetNotifications(ctx, limit, 0, "all")
 			if err != nil {
 				fmt.Fprint(out, monitorStatusLine(checkedAt, "refresh failed: "+err.Error()))
 				continue
 			}
 			newItems := make([]any, 0)
-			newStates := make(map[string]string)
+			newStates := make(map[string]notificationSeenState)
 			for _, raw := range asSlice(result["data"]) {
 				notification := mapValue(raw)
 				key, signature := notificationState(notification)
 				if key == "" {
 					continue
 				}
-				if seenSignature, ok := seen[key]; ok && seenSignature == signature {
+				if seenState, ok := seen[key]; ok && seenState.signature == signature {
 					continue
 				}
 				newItems = append(newItems, raw)
-				newStates[key] = signature
+				newStates[key] = newNotificationSeenState(notification, signature, checkedAt)
 			}
 			if len(newItems) == 0 {
 				fmt.Fprint(out, monitorStatusLine(checkedAt, "no new notifications"))
@@ -852,8 +857,8 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				fmt.Fprint(out, monitorStatusLine(checkedAt, "error: "+err.Error()))
 				continue
 			}
-			for key, signature := range newStates {
-				seen[key] = signature
+			for key, state := range newStates {
+				seen[key] = state
 			}
 			notifyTTY()
 			fmt.Fprint(out, monitorNewSeparator(checkedAt, len(newItems)))
@@ -1515,6 +1520,31 @@ func notificationState(n map[string]any) (string, string) {
 		key = formatNotificationBase(n)
 	}
 	return key, notificationSignature(n)
+}
+
+func rememberNotificationState(seen map[string]notificationSeenState, n map[string]any, now time.Time) {
+	key, signature := notificationState(n)
+	if key == "" {
+		return
+	}
+	seen[key] = newNotificationSeenState(n, signature, now)
+}
+
+func newNotificationSeenState(n map[string]any, signature string, now time.Time) notificationSeenState {
+	createTime := notificationCreateTime(n)
+	if createTime == 0 {
+		createTime = now.Unix()
+	}
+	return notificationSeenState{signature: signature, createTime: createTime}
+}
+
+func pruneNotificationHistory(seen map[string]notificationSeenState, now time.Time) {
+	cutoff := now.Add(-notificationHistoryRetention).Unix()
+	for key, state := range seen {
+		if state.createTime < cutoff {
+			delete(seen, key)
+		}
+	}
 }
 
 func notificationGroupKey(n map[string]any) string {
