@@ -170,6 +170,10 @@ func (c *Client) GetArticle(ctx context.Context, articleID string) (map[string]a
 	return c.getMap(ctx, c.endpoints.ZhuanlanAPI+"/articles/"+url.PathEscape(articleID), nil)
 }
 
+func (c *Client) GetComment(ctx context.Context, commentID string) (map[string]any, error) {
+	return c.getMap(ctx, c.endpoints.APIV4+"/comments/"+url.PathEscape(commentID), nil)
+}
+
 func (c *Client) GetUserProfile(ctx context.Context, urlToken string) (map[string]any, error) {
 	params := url.Values{"include": {"answer_count,articles_count,follower_count,following_count,voteup_count,thanked_count,favorite_count,favorited_count,gender,badge,description,business,educations,employments,locations,is_following,is_followed"}}
 	return c.getMap(ctx, c.endpoints.APIV4+"/members/"+url.PathEscape(urlToken), params)

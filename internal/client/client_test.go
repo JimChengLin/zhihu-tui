@@ -82,13 +82,15 @@ func TestGetUserProfileIncludesRelationshipFields(t *testing.T) {
 	}
 }
 
-func TestGetPinAndArticle(t *testing.T) {
+func TestGetPinArticleAndComment(t *testing.T) {
 	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v4/pins/123":
 			writeJSON(t, w, http.StatusOK, map[string]any{"id": 123, "reaction_count": 9})
 		case "/zhuanlan/api/articles/456":
 			writeJSON(t, w, http.StatusOK, map[string]any{"id": 456, "voteup_count": 8})
+		case "/api/v4/comments/789":
+			writeJSON(t, w, http.StatusOK, map[string]any{"id": 789, "vote_count": 7})
 		default:
 			t.Fatalf("unexpected path=%s", r.URL.Path)
 		}
@@ -108,6 +110,13 @@ func TestGetPinAndArticle(t *testing.T) {
 	}
 	if article["voteup_count"].(json.Number).String() != "8" {
 		t.Fatalf("article=%#v", article)
+	}
+	comment, err := c.GetComment(context.Background(), "789")
+	if err != nil {
+		t.Fatalf("GetComment: %v", err)
+	}
+	if comment["vote_count"].(json.Number).String() != "7" {
+		t.Fatalf("comment=%#v", comment)
 	}
 }
 

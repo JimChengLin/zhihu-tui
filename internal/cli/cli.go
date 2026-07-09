@@ -924,7 +924,7 @@ func monitorStatusLine(t time.Time, status string) string {
 }
 
 func monitorNewSeparator(t time.Time, count int) string {
-	return fmt.Sprintf("\r\033[2K----- New notifications @ %s (%d new) -----\n", t.Format("15:04:05"), count)
+	return fmt.Sprintf("\r\033[2K\n----- New notifications @ %s (%d new) -----\n", t.Format("15:04:05"), count)
 }
 
 func runAsk(ctx context.Context, args []string, out io.Writer) error {
@@ -1264,7 +1264,7 @@ func (f *notificationFormatter) format(ctx context.Context, n map[string]any) (s
 			lines = append(lines, "  "+targetText)
 		}
 	}
-	if targetMeta, err := f.formatTargetMeta(ctx, toString(target["link"])); err != nil {
+	if targetMeta, err := f.formatNotificationMeta(ctx, n, comment != "", toString(target["link"])); err != nil {
 		return "", err
 	} else if targetMeta != "" {
 		lines = append(lines, "  "+targetMeta)
@@ -1338,6 +1338,67 @@ func formatActorWithProfile(name string, profile map[string]any) string {
 	return name + "（" + strings.Join(details, "，") + "）"
 }
 
+func (f *notificationFormatter) formatNotificationMeta(ctx context.Context, n map[string]any, hasIncomingComment bool, rawLink string) (string, error) {
+	if shouldUseSelfFollowerStats(n) {
+		return f.formatSelfFollowerMeta(ctx)
+	}
+	if shouldUseCommentStats(n, hasIncomingComment) {
+		return f.formatCommentMeta(ctx, n)
+	}
+	return f.formatTargetMeta(ctx, rawLink)
+}
+
+func shouldUseSelfFollowerStats(n map[string]any) bool {
+	return strings.TrimSpace(toString(mapValue(n["content"])["verb"])) == "关注了你"
+}
+
+func (f *notificationFormatter) formatSelfFollowerMeta(ctx context.Context) (string, error) {
+	info, err := f.client.GetSelfInfo(ctx)
+	if err != nil {
+		return "", err
+	}
+	if followerCount := toString(info["follower_count"]); followerCount != "" {
+		return "我的粉丝 " + display.FormatCount(info["follower_count"]), nil
+	}
+	urlToken := toString(info["url_token"])
+	if urlToken == "" {
+		return "", nil
+	}
+	profile, err := f.client.GetUserProfile(ctx, urlToken)
+	if err != nil {
+		return "", err
+	}
+	if followerCount := toString(profile["follower_count"]); followerCount != "" {
+		return "我的粉丝 " + display.FormatCount(profile["follower_count"]), nil
+	}
+	return "", nil
+}
+
+func shouldUseCommentStats(n map[string]any, hasIncomingComment bool) bool {
+	if hasIncomingComment {
+		return false
+	}
+	return toString(mapValue(n["target"])["type"]) == "comment"
+}
+
+func (f *notificationFormatter) formatCommentMeta(ctx context.Context, n map[string]any) (string, error) {
+	commentID := toString(mapValue(n["target"])["id"])
+	if commentID == "" {
+		return "", nil
+	}
+	cacheKey := "comment:" + commentID
+	if cached, ok := f.targetCache[cacheKey]; ok {
+		return cached, nil
+	}
+	data, err := f.client.GetComment(ctx, commentID)
+	if err != nil {
+		return "", err
+	}
+	meta := formatCommentStats(data)
+	f.targetCache[cacheKey] = meta
+	return meta, nil
+}
+
 func (f *notificationFormatter) formatTargetMeta(ctx context.Context, rawLink string) (string, error) {
 	if rawLink == "" {
 		return "", nil
@@ -1384,6 +1445,12 @@ func formatTargetStats(kind string, data map[string]any) string {
 		appendFirstCount(&stats, "喜欢", data["like_count"], data["liked_count"])
 		appendFirstCount(&stats, "收藏", data["favorite_count"], data["favlists_count"])
 	}
+	return strings.Join(stats, " · ")
+}
+
+func formatCommentStats(data map[string]any) string {
+	stats := make([]string, 0, 1)
+	appendFirstCount(&stats, "评论赞同", data["vote_count"], data["like_count"])
 	return strings.Join(stats, " · ")
 }
 

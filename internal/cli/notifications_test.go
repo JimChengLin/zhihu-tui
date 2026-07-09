@@ -1,10 +1,38 @@
 package cli
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"zhihucli2/internal/client"
 )
+
+func testNotificationFormatter(t *testing.T, handler http.HandlerFunc) (*notificationFormatter, func()) {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	c := client.NewWithHTTP(map[string]string{"z_c0": "token"}, server.Client(), client.Endpoints{
+		APIV4:       server.URL + "/api/v4",
+		ZhuanlanAPI: server.URL + "/zhuanlan/api",
+	})
+	return newNotificationFormatter(c), func() {
+		c.Close()
+		server.Close()
+	}
+}
+
+func writeNotificationTestJSON(t *testing.T, w http.ResponseWriter, status int, v any) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		t.Fatalf("write json: %v", err)
+	}
+}
 
 func TestParseNotificationTarget(t *testing.T) {
 	tests := []struct {
@@ -110,6 +138,104 @@ func TestFormatTargetStats(t *testing.T) {
 	}
 }
 
+func TestFormatCommentStats(t *testing.T) {
+	tests := []struct {
+		name string
+		data map[string]any
+		want string
+	}{
+		{
+			name: "vote count",
+			data: map[string]any{"vote_count": 7},
+			want: "评论赞同 7",
+		},
+		{
+			name: "like count fallback",
+			data: map[string]any{"like_count": 3},
+			want: "评论赞同 3",
+		},
+		{
+			name: "zero",
+			data: map[string]any{"vote_count": 0},
+			want: "评论赞同 0",
+		},
+		{
+			name: "missing",
+			data: map[string]any{},
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatCommentStats(tt.data); got != tt.want {
+				t.Fatalf("formatCommentStats=%q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatSelfFollowerMeta(t *testing.T) {
+	formatter, closeServer := testNotificationFormatter(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v4/me" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		writeNotificationTestJSON(t, w, http.StatusOK, map[string]any{"follower_count": 12345})
+	})
+	defer closeServer()
+
+	got, err := formatter.formatSelfFollowerMeta(context.Background())
+	if err != nil {
+		t.Fatalf("formatSelfFollowerMeta: %v", err)
+	}
+	if want := "我的粉丝 1.2万"; got != want {
+		t.Fatalf("formatSelfFollowerMeta=%q, want %q", got, want)
+	}
+}
+
+func TestFormatSelfFollowerMetaFallsBackToProfile(t *testing.T) {
+	formatter, closeServer := testNotificationFormatter(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v4/me":
+			writeNotificationTestJSON(t, w, http.StatusOK, map[string]any{"url_token": "me"})
+		case "/api/v4/members/me":
+			writeNotificationTestJSON(t, w, http.StatusOK, map[string]any{"follower_count": 99})
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	})
+	defer closeServer()
+
+	got, err := formatter.formatSelfFollowerMeta(context.Background())
+	if err != nil {
+		t.Fatalf("formatSelfFollowerMeta: %v", err)
+	}
+	if want := "我的粉丝 99"; got != want {
+		t.Fatalf("formatSelfFollowerMeta=%q, want %q", got, want)
+	}
+}
+
+func TestShouldUseSelfFollowerStats(t *testing.T) {
+	if !shouldUseSelfFollowerStats(map[string]any{"content": map[string]any{"verb": "关注了你"}}) {
+		t.Fatal("follow notification should use self follower stats")
+	}
+	if shouldUseSelfFollowerStats(map[string]any{"content": map[string]any{"verb": "赞同了你的回答"}}) {
+		t.Fatal("non-follow notification should not use self follower stats")
+	}
+}
+
+func TestShouldUseCommentStats(t *testing.T) {
+	n := map[string]any{"target": map[string]any{"type": "comment"}}
+	if !shouldUseCommentStats(n, false) {
+		t.Fatal("comment notification without incoming comment should use comment stats")
+	}
+	if shouldUseCommentStats(n, true) {
+		t.Fatal("incoming comment notification should keep target stats")
+	}
+	if shouldUseCommentStats(map[string]any{"target": map[string]any{"type": "answer"}}, false) {
+		t.Fatal("answer notification should not use comment stats")
+	}
+}
+
 func TestOldestFirstNotifications(t *testing.T) {
 	input := []any{
 		map[string]any{"id": "newest", "create_time": 300},
@@ -210,7 +336,7 @@ func TestMonitorLines(t *testing.T) {
 	if got, want := monitorStatusLine(tm, "error: API request failed\nwith status 500:"), "\r\033[2KLast check: 15:04:05 · error: API request failed with status 500:"; got != want {
 		t.Fatalf("monitorStatusLine error=%q, want %q", got, want)
 	}
-	if got, want := monitorNewSeparator(tm, 2), "\r\033[2K----- New notifications @ 15:04:05 (2 new) -----\n"; got != want {
+	if got, want := monitorNewSeparator(tm, 2), "\r\033[2K\n----- New notifications @ 15:04:05 (2 new) -----\n"; got != want {
 		t.Fatalf("monitorNewSeparator=%q, want %q", got, want)
 	}
 }
