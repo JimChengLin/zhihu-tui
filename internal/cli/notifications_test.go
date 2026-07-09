@@ -635,6 +635,19 @@ func TestTerminalNotificationSequence(t *testing.T) {
 	}
 }
 
+func TestShouldSendNotificationBell(t *testing.T) {
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.Local)
+	if !shouldSendNotificationBell(now, time.Time{}) {
+		t.Fatal("first notification should send bell")
+	}
+	if shouldSendNotificationBell(now.Add(59*time.Minute), now) {
+		t.Fatal("bell should be throttled within one hour")
+	}
+	if !shouldSendNotificationBell(now.Add(time.Hour), now) {
+		t.Fatal("bell should be sent again after one hour")
+	}
+}
+
 func TestMonitorLines(t *testing.T) {
 	tm := time.Date(2026, 7, 8, 15, 4, 5, 0, time.Local)
 	if got, want := monitorStatusLine(tm, "no new notifications"), "\r\033[2KLast check: 15:04:05 · no new notifications"; got != want {

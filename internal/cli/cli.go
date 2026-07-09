@@ -34,6 +34,7 @@ type parsedOptions struct {
 const defaultNotificationLimit = 10
 const notificationHistoryRetention = 90 * 24 * time.Hour
 const notificationActorCacheTTL = 24 * time.Hour
+const notificationBellInterval = time.Hour
 
 type notificationSeenState struct {
 	signature  string
@@ -855,6 +856,7 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 	fmt.Fprintf(out, "Monitoring notifications every %s. Press Ctrl+C to stop.\n", interval)
 	fmt.Fprint(out, monitorStatusLine(time.Now(), "waiting"))
 
+	var lastBellAt time.Time
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -926,10 +928,14 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 			for key, state := range newStates {
 				seen[key] = mergeNotificationSeenState(seen[key], state)
 			}
-			if err := debugLog.Log(checkedAt, "new_notifications", map[string]any{"count": len(newItems)}); err != nil {
+			sendBell := shouldSendNotificationBell(checkedAt, lastBellAt)
+			if err := debugLog.Log(checkedAt, "new_notifications", map[string]any{"count": len(newItems), "bell": sendBell}); err != nil {
 				return err
 			}
-			notifyTTY()
+			if sendBell {
+				notifyTTY()
+				lastBellAt = checkedAt
+			}
 			fmt.Fprint(out, monitorNewSeparator(checkedAt, len(newItems)))
 			writeNotificationLines(out, lines)
 			fmt.Fprint(out, monitorStatusLine(checkedAt, "waiting"))
@@ -1133,6 +1139,10 @@ func notifyTTY() {
 
 func terminalNotificationSequence() string {
 	return "\a"
+}
+
+func shouldSendNotificationBell(now, last time.Time) bool {
+	return last.IsZero() || !now.Before(last.Add(notificationBellInterval))
 }
 
 func monitorStatusLine(t time.Time, status string) string {
