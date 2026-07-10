@@ -154,7 +154,6 @@ func printRootHelp(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  zhihu <command> [options]")
-	fmt.Fprintln(w, "  zhihu --feed-tui")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  login, logout, status, whoami")
@@ -165,13 +164,14 @@ func printRootHelp(w io.Writer) {
 	fmt.Fprintln(w, "  ask, pin, article, delete-question, delete-pin, delete-article, delete-comment")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Interactive:")
-	fmt.Fprintln(w, "  --feed-tui    Browse your following feed in a full-screen terminal UI")
+	fmt.Fprintf(w, "  %-32s %s\n", "zhihu feed --tui", "Browse your following feed in a full-screen terminal UI")
+	fmt.Fprintf(w, "  %-32s %s\n", "zhihu notifications --monitor", "Monitor new notifications continuously")
 }
 
 func printCommandHelp(w io.Writer, cmd string) {
 	switch cmd {
 	case "--feed-tui":
-		fmt.Fprintln(w, "Usage: zhihu --feed-tui")
+		fmt.Fprintln(w, "Usage: zhihu feed --tui")
 	case "login":
 		fmt.Fprintln(w, "Usage: zhihu login [--qrcode] [--cookie COOKIE]")
 	case "search":
@@ -185,7 +185,9 @@ func printCommandHelp(w io.Writer, cmd string) {
 	case "answer":
 		fmt.Fprintln(w, "Usage: zhihu answer ANSWER_ID [-c] [-l LIMIT] [--json]")
 	case "feed":
-		fmt.Fprintln(w, "Usage: zhihu feed [-l LIMIT] [--json]")
+		fmt.Fprintln(w, "Usage:")
+		fmt.Fprintln(w, "  zhihu feed [-l LIMIT] [--json]")
+		fmt.Fprintln(w, "  zhihu feed --tui")
 	case "feeds":
 		fmt.Fprintln(w, "Usage: zhihu feeds [-l LIMIT] [-c COMMENT_LIMIT]")
 	case "topic":
@@ -222,11 +224,11 @@ func printCommandHelp(w io.Writer, cmd string) {
 
 func runFeedTUI(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) != 0 {
-		return fmt.Errorf("usage: zhihu --feed-tui")
+		return fmt.Errorf("usage: zhihu feed --tui")
 	}
 	terminal, ok := out.(*os.File)
 	if !ok {
-		return fmt.Errorf("--feed-tui requires an interactive terminal")
+		return fmt.Errorf("zhihu feed --tui requires an interactive terminal")
 	}
 	c, err := authenticatedClient()
 	if err != nil {
@@ -523,6 +525,9 @@ func runAnswer(ctx context.Context, args []string, out io.Writer) error {
 }
 
 func runFeed(ctx context.Context, args []string, out io.Writer) error {
+	if len(args) > 0 && args[0] == "--tui" {
+		return runFeedTUI(ctx, args[1:], out)
+	}
 	opts, err := parseOptions(args, specs(opt("-l", "limit", true), opt("--limit", "limit", true), opt("--json", "json", false)))
 	if err != nil {
 		return err

@@ -20,6 +20,7 @@ const (
 type styledLine struct {
 	text  string
 	style string
+	raw   bool
 }
 
 type layoutMetrics struct {
@@ -38,9 +39,15 @@ func renderApp(model *app) ([]styledLine, layoutMetrics) {
 	if len(model.items) == 0 {
 		return renderEmpty(model), layoutMetrics{}
 	}
+	if model.width >= 120 && model.height >= 20 {
+		return renderWideApp(model)
+	}
+	return renderSingleApp(model)
+}
 
+func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	item := model.items[model.index]
-	contentWidth := minInt(model.width-6, 100)
+	contentWidth := model.width - 6
 	left := maxInt(2, (model.width-contentWidth)/2)
 	line := func(text, style string) styledLine {
 		return styledLine{text: strings.Repeat(" ", left) + text, style: style}
@@ -71,26 +78,37 @@ func renderApp(model *app) ([]styledLine, layoutMetrics) {
 	}
 	lines = append(lines, line(truncateCells(authorLine, contentWidth), ansiDim))
 	meta := item.stats
-	if item.hasImage {
+	if item.imageCount > 0 {
 		if meta != "" {
 			meta += "  ·  "
 		}
-		meta += "含图片"
+		meta += fmt.Sprintf("图片 %d", item.imageCount)
 	}
 	if meta != "" {
 		lines = append(lines, line(truncateCells(meta, contentWidth), ansiGreen))
 	}
+	body := item.body
+	if model.commentMode {
+		var commentLabel string
+		body, commentLabel = formatCommentView(item, model.currentCommentState(), model.spinner)
+		lines = append(lines, line(truncateCells(commentLabel, contentWidth), ansiBold+ansiCyan))
+	}
 	lines = append(lines, line(strings.Repeat("─", contentWidth), ansiDim))
 
-	body := item.body
 	if body == "" {
 		body = "这条动态没有正文摘要；按 o 在知乎中查看完整内容。"
 	}
 	bodyLines := wrapText(body, contentWidth)
 	fixedBottom := 4
-	bodyHeight := model.height - len(lines) - fixedBottom
+	availableBodyHeight := model.height - len(lines) - fixedBottom
+	bodyHeight := availableBodyHeight
 	if bodyHeight < 1 {
 		bodyHeight = 1
+	}
+	footerAtBottom := true
+	if model.height >= 36 && len(bodyLines) < bodyHeight {
+		bodyHeight = maxInt(1, len(bodyLines))
+		footerAtBottom = false
 	}
 	maxScroll := maxInt(0, len(bodyLines)-bodyHeight)
 	if model.scroll > maxScroll {
@@ -100,12 +118,19 @@ func renderApp(model *app) ([]styledLine, layoutMetrics) {
 	for _, bodyLine := range bodyLines[model.scroll:end] {
 		lines = append(lines, line(bodyLine, ""))
 	}
-	for len(lines) < model.height-fixedBottom {
+	if footerAtBottom {
+		for len(lines) < model.height-fixedBottom {
+			lines = append(lines, styledLine{})
+		}
+	} else {
 		lines = append(lines, styledLine{})
 	}
 
 	lines = append(lines, line(strings.Repeat("─", contentWidth), ansiDim))
 	status := fmt.Sprintf("第 %d / %d 条", model.index+1, len(model.items))
+	if model.commentMode {
+		status += "  ·  评论区"
+	}
 	if len(bodyLines) > bodyHeight {
 		status += fmt.Sprintf("  ·  正文 %d–%d / %d 行", model.scroll+1, end, len(bodyLines))
 	}
@@ -122,7 +147,7 @@ func renderApp(model *app) ([]styledLine, layoutMetrics) {
 		status += "  ·  " + model.message
 	}
 	lines = append(lines, line(truncateCells(status, contentWidth), ansiDim))
-	hints := "j/k 滚动  space/b 翻页  n/p·h/l 切换  o 打开  r 刷新  ? 帮助  q 退出"
+	hints := "j/k 滚动  space/b 翻页  n/p·h/l 切换  c 评论/正文  o 打开  r 刷新  ? 帮助  q 退出"
 	lines = append(lines, line(truncateCells(hints, contentWidth), ansiCyan))
 	lines = append(lines, styledLine{})
 
@@ -131,6 +156,74 @@ func renderApp(model *app) ([]styledLine, layoutMetrics) {
 		bodyLines:  len(bodyLines),
 		maxScroll:  maxScroll,
 	}
+}
+
+func renderWideApp(model *app) ([]styledLine, layoutMetrics) {
+	sidebarWidth := minInt(44, maxInt(30, model.width/4))
+	mainWidth := model.width - sidebarWidth - 3
+	mainModel := *model
+	mainModel.width = mainWidth
+	mainLines, metrics := renderSingleApp(&mainModel)
+	model.scroll = mainModel.scroll
+
+	sidebarLines := renderSidebar(model, sidebarWidth)
+	lines := make([]styledLine, model.height)
+	for row := 0; row < model.height; row++ {
+		lines[row] = mergeColumns(sidebarLines[row], sidebarWidth, mainLines[row], mainWidth)
+	}
+	return lines, metrics
+}
+
+func renderSidebar(model *app, width int) []styledLine {
+	lines := make([]styledLine, model.height)
+	lines[0] = styledLine{text: " 关注动态", style: ansiBold + ansiCyan}
+	lines[1] = styledLine{text: fmt.Sprintf(" 已加载 %d 条 · 当前第 %d 条", len(model.items), model.index+1), style: ansiDim}
+
+	visibleItems := maxInt(1, (model.height-6)/2)
+	visibleItems = minInt(visibleItems, len(model.items))
+	start := model.index - visibleItems/2
+	start = maxInt(0, minInt(start, len(model.items)-visibleItems))
+	separator := strings.Repeat("─", width-1)
+	if start > 0 {
+		prefix := fmt.Sprintf(" ↑ 前面还有 %d 条 ", start)
+		separator = prefix + strings.Repeat("─", maxInt(0, width-1-stringCellWidth(prefix)))
+	}
+	lines[2] = styledLine{text: separator, style: ansiDim}
+	row := 3
+	for index := start; index < start+visibleItems && row+1 < model.height-2; index++ {
+		item := model.items[index]
+		marker := "  "
+		style := ""
+		if index == model.index {
+			marker = "› "
+			style = ansiBold + ansiCyan
+		}
+		titleWidth := maxInt(1, width-stringCellWidth(marker)-4)
+		title := truncateCells(item.title, titleWidth)
+		lines[row] = styledLine{text: fmt.Sprintf("%s%2d %s", marker, index+1, title), style: style}
+		summary := firstNonEmpty(item.action, item.author, typeLabel(item.kind))
+		lines[row+1] = styledLine{text: "     " + truncateCells(summary, maxInt(1, width-6)), style: ansiDim}
+		row += 2
+	}
+	if start+visibleItems < len(model.items) && row < model.height-2 {
+		lines[row] = styledLine{text: fmt.Sprintf("  ↓ 后面还有 %d 条", len(model.items)-start-visibleItems), style: ansiDim}
+	}
+	return lines
+}
+
+func mergeColumns(left styledLine, leftWidth int, right styledLine, rightWidth int) styledLine {
+	leftText := truncateCells(left.text, leftWidth)
+	leftPadding := strings.Repeat(" ", maxInt(0, leftWidth-stringCellWidth(leftText)))
+	rightText := truncateCells(right.text, maxInt(1, rightWidth-1))
+	text := styleText(leftText, left.style) + leftPadding + styleText(" │ ", ansiDim) + styleText(rightText, right.style)
+	return styledLine{text: text, raw: true}
+}
+
+func styleText(text, style string) string {
+	if text == "" || style == "" {
+		return text
+	}
+	return style + text + ansiReset
 }
 
 func renderTooSmall(width, height int) []styledLine {
@@ -180,6 +273,7 @@ func renderHelp(width, height int) []styledLine {
 		{text: pad + "d / u        向下 / 向上翻半页"},
 		{text: pad + "n/p · h/l · ←/→  下一条 / 上一条"},
 		{text: pad + "g / G        第一条 / 最后一条已加载动态"},
+		{text: pad + "c            加载评论 / 返回正文"},
 		{text: pad + "o            用默认浏览器打开当前动态"},
 		{text: pad + "r            从头刷新关注流"},
 		{text: pad + "q / Ctrl-C   退出并恢复终端"},
@@ -213,13 +307,17 @@ func writeFrame(out interface{ Write([]byte) (int, error) }, lines []styledLine,
 	for row := 0; row < height; row++ {
 		builder.WriteString("\033[2K")
 		if row < len(lines) {
-			text := truncateCells(lines[row].text, maxInt(1, width-1))
-			if lines[row].style != "" && text != "" {
-				builder.WriteString(lines[row].style)
-				builder.WriteString(text)
-				builder.WriteString(ansiReset)
+			if lines[row].raw {
+				builder.WriteString(lines[row].text)
 			} else {
-				builder.WriteString(text)
+				text := truncateCells(lines[row].text, maxInt(1, width-1))
+				if lines[row].style != "" && text != "" {
+					builder.WriteString(lines[row].style)
+					builder.WriteString(text)
+					builder.WriteString(ansiReset)
+				} else {
+					builder.WriteString(text)
+				}
 			}
 		}
 		if row+1 < height {

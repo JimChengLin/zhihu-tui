@@ -30,7 +30,7 @@ go build -o zhihu ./cmd/zhihu
 ```bash
 zhihu search "Go 语言" --limit 5
 zhihu hot --limit 20
-zhihu --feed-tui
+zhihu feed --tui
 zhihu notifications --monitor
 zhihu notifications mark-read --all-tabs
 zhihu question 123456
@@ -51,15 +51,16 @@ zhihu article "文章标题" "正文"
 登录后运行：
 
 ```bash
-zhihu --feed-tui
+zhihu feed --tui
 ```
 
-该模式读取 `/api/v3/moments` 关注流，使用全屏终端界面展示回答、问题、文章和想法。接近已加载内容末尾时会自动预取下一页。
+该模式读取 `/api/v3/moments` 关注流，使用全屏终端界面展示回答、问题、文章和想法。正文中的图片会显示为 `▣ 图片 N` 占位，当前动态支持评论时可直接切进评论区。接近已加载内容末尾时会自动预取下一页。终端达到 120 列时会自动切换为动态列表与正文双栏，缩回窄窗口后恢复单栏，窗口尺寸变化时会实时重排。
 
 - `j` / `k` 或方向键：滚动正文；到达正文边缘后切换动态
 - `space` / `b`：向下 / 向上翻页
 - `n` / `p`、`h` / `l` 或左右方向键：直接切换动态
 - `g` / `G`：跳到第一条 / 最后一条已加载动态
+- `c`：在当前动态的正文与评论区之间切换
 - `o`：用默认浏览器打开当前动态
 - `r`：刷新关注流
 - `?`：查看完整帮助

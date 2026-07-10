@@ -257,13 +257,32 @@ func (c *Client) GetTopicHotQuestions(ctx context.Context, topicID string, offse
 }
 
 func (c *Client) GetAnswerComments(ctx context.Context, answerID string, offset, limit int, order string) (map[string]any, error) {
-	params := url.Values{
-		"offset": {strconv.Itoa(offset)},
-		"limit":  {strconv.Itoa(limit)},
-		"order":  {order},
-		"status": {"open"},
+	return c.GetComments(ctx, "answer", answerID, offset, limit, order)
+}
+
+func (c *Client) GetComments(ctx context.Context, resourceType, resourceID string, offset, limit int, order string) (map[string]any, error) {
+	resourceType = strings.TrimSpace(resourceType)
+	resourceID = strings.TrimSpace(resourceID)
+	switch resourceType {
+	case "answer", "article", "pin", "question":
+	default:
+		return nil, DataFetchError{Message: "comments are not supported for resource type: " + resourceType}
 	}
-	return c.getMap(ctx, c.endpoints.APIV4+"/answers/"+url.PathEscape(answerID)+"/comments", params)
+	if resourceID == "" {
+		return nil, DataFetchError{Message: "comment resource ID cannot be empty"}
+	}
+	if order == "" || order == "normal" {
+		order = "score"
+	}
+	params := url.Values{
+		"offset":   {""},
+		"limit":    {strconv.Itoa(limit)},
+		"order_by": {order},
+	}
+	if offset > 0 {
+		params.Set("offset", strconv.Itoa(offset))
+	}
+	return c.getMap(ctx, c.endpoints.APIV4+"/comment_v5/"+resourceType+"s/"+url.PathEscape(resourceID)+"/root_comment", params)
 }
 
 func (c *Client) ReplyComment(ctx context.Context, commentID, content string) (map[string]any, error) {

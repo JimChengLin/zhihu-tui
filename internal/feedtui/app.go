@@ -20,27 +20,32 @@ var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 
 type feedSource interface {
 	GetFollowingFeed(context.Context, string, int) (map[string]any, error)
+	GetComments(context.Context, string, string, int, int, string) (map[string]any, error)
 }
 
 type app struct {
-	source       feedSource
-	items        []feedItem
-	index        int
-	scroll       int
-	width        int
-	height       int
-	nextURL      string
-	end          bool
-	loading      bool
-	refreshing   bool
-	err          error
-	message      string
-	messageUntil time.Time
-	showHelp     bool
-	spinner      int
-	generation   int
-	metrics      layoutMetrics
-	fetches      chan fetchResult
+	source         feedSource
+	items          []feedItem
+	index          int
+	scroll         int
+	width          int
+	height         int
+	nextURL        string
+	end            bool
+	loading        bool
+	refreshing     bool
+	err            error
+	message        string
+	messageUntil   time.Time
+	showHelp       bool
+	spinner        int
+	generation     int
+	metrics        layoutMetrics
+	fetches        chan fetchResult
+	commentMode    bool
+	bodyScroll     int
+	comments       map[string]*commentState
+	commentFetches chan commentFetchResult
 }
 
 type fetchResult struct {
@@ -66,7 +71,7 @@ const (
 // following feed and restores the terminal before returning.
 func Run(ctx context.Context, source feedSource, in, out *os.File) error {
 	if !isTerminal(in) || !isTerminal(out) {
-		return fmt.Errorf("--feed-tui requires an interactive terminal")
+		return fmt.Errorf("zhihu feed --tui requires an interactive terminal")
 	}
 	state, err := makeRaw(in)
 	if err != nil {
@@ -84,10 +89,12 @@ func Run(ctx context.Context, source feedSource, in, out *os.File) error {
 		return fmt.Errorf("read terminal size: %w", err)
 	}
 	model := &app{
-		source:  source,
-		width:   width,
-		height:  height,
-		fetches: make(chan fetchResult, 1),
+		source:         source,
+		width:          width,
+		height:         height,
+		fetches:        make(chan fetchResult, 1),
+		comments:       map[string]*commentState{},
+		commentFetches: make(chan commentFetchResult, 2),
 	}
 	keys := make(chan keyEvent)
 	readErrors := make(chan error, 1)
@@ -140,9 +147,15 @@ func Run(ctx context.Context, source feedSource, in, out *os.File) error {
 			if err := model.render(out); err != nil {
 				return err
 			}
+		case fetched := <-model.commentFetches:
+			model.applyCommentFetch(fetched)
+			if err := model.render(out); err != nil {
+				return err
+			}
 		case now := <-ticker.C:
-			needsRender := model.loading
-			if model.loading {
+			commentLoading := model.currentCommentsLoading()
+			needsRender := model.loading || commentLoading
+			if model.loading || commentLoading {
 				model.spinner++
 			}
 			if model.message != "" && !model.messageUntil.IsZero() && now.After(model.messageUntil) {
@@ -257,8 +270,13 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 	case "?":
 		model.showHelp = true
 	case "r":
+		model.commentMode = false
+		model.bodyScroll = 0
+		model.scroll = 0
 		model.startFetch(ctx, true)
 		model.message = ""
+	case "c":
+		model.toggleComments(ctx)
 	case "n", "l", keyRight:
 		model.moveNext(ctx)
 	case "p", "h", keyLeft:
@@ -277,10 +295,14 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 		model.pageUp(maxInt(1, model.metrics.bodyHeight/2))
 	case "g":
 		if len(model.items) > 0 {
+			model.commentMode = false
+			model.bodyScroll = 0
 			model.index, model.scroll = 0, 0
 		}
 	case "G":
 		if len(model.items) > 0 {
+			model.commentMode = false
+			model.bodyScroll = 0
 			model.index, model.scroll = len(model.items)-1, 0
 		}
 	case "o":
@@ -323,6 +345,8 @@ func (model *app) pageUp(amount int) {
 
 func (model *app) moveNext(ctx context.Context) {
 	if model.index+1 < len(model.items) {
+		model.commentMode = false
+		model.bodyScroll = 0
 		model.index++
 		model.scroll = 0
 		model.message = ""
@@ -341,12 +365,84 @@ func (model *app) movePrevious(atEnd bool) {
 		model.setMessage("已经是第一条动态", 2*time.Second)
 		return
 	}
+	model.commentMode = false
+	model.bodyScroll = 0
 	model.index--
 	model.scroll = 0
 	if atEnd {
 		model.scroll = int(^uint(0) >> 1)
 	}
 	model.message = ""
+}
+
+func (model *app) toggleComments(ctx context.Context) {
+	if len(model.items) == 0 {
+		return
+	}
+	if model.commentMode {
+		model.commentMode = false
+		model.scroll = model.bodyScroll
+		return
+	}
+	item := model.items[model.index]
+	if !supportsComments(item) {
+		model.setMessage("当前动态类型不支持评论", 3*time.Second)
+		return
+	}
+	model.bodyScroll = model.scroll
+	model.scroll = 0
+	model.commentMode = true
+	model.startComments(ctx, item)
+}
+
+func (model *app) startComments(ctx context.Context, item feedItem) {
+	if model.comments == nil {
+		model.comments = map[string]*commentState{}
+	}
+	state := model.comments[item.key]
+	if state == nil {
+		state = &commentState{}
+		model.comments[item.key] = state
+	}
+	if state.loading || state.loaded && state.err == nil {
+		return
+	}
+	state.loading = true
+	state.err = nil
+	model.spinner = 0
+	go func() {
+		response, err := model.source.GetComments(ctx, item.kind, item.id, 0, commentPageSize, "score")
+		select {
+		case model.commentFetches <- commentFetchResult{key: item.key, response: response, err: err}:
+		case <-ctx.Done():
+		}
+	}()
+}
+
+func (model *app) applyCommentFetch(result commentFetchResult) {
+	state := model.comments[result.key]
+	if state == nil {
+		state = &commentState{}
+		model.comments[result.key] = state
+	}
+	state.loading = false
+	state.loaded = true
+	state.err = result.err
+	if result.err == nil {
+		state.items = parseComments(asSlice(result.response["data"]))
+	}
+}
+
+func (model *app) currentCommentState() *commentState {
+	if len(model.items) == 0 || model.comments == nil {
+		return nil
+	}
+	return model.comments[model.items[model.index].key]
+}
+
+func (model *app) currentCommentsLoading() bool {
+	state := model.currentCommentState()
+	return model.commentMode && state != nil && state.loading
 }
 
 func (model *app) openCurrent() {

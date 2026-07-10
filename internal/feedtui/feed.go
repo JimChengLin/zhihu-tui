@@ -12,19 +12,22 @@ import (
 
 var htmlBreakPattern = regexp.MustCompile(`(?i)<(?:br\s*/?|/?(?:p|div|li|blockquote|h[1-6]))[^>]*>`)
 var repeatedBlankLinesPattern = regexp.MustCompile(`\n[\t ]*\n(?:[\t ]*\n)+`)
+var imageTagPattern = regexp.MustCompile(`(?is)<img\b[^>]*>`)
 
 type feedItem struct {
-	key       string
-	kind      string
-	action    string
-	title     string
-	author    string
-	headline  string
-	body      string
-	stats     string
-	createdAt int64
-	url       string
-	hasImage  bool
+	key          string
+	id           string
+	kind         string
+	action       string
+	title        string
+	author       string
+	headline     string
+	body         string
+	stats        string
+	createdAt    int64
+	url          string
+	imageCount   int
+	commentCount int
 }
 
 func parseFeedItems(data []any) []feedItem {
@@ -54,14 +57,24 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 		toString(question["title"]),
 		toString(target["name"]),
 	))
-	body := plainText(firstNonEmpty(
-		toString(target["content"]),
-		toString(target["excerpt_new"]),
-		toString(target["excerpt"]),
-		toString(target["detail"]),
-	))
+	body, imageCount := feedContentText(target["content"])
+	if body == "" {
+		body = plainText(firstNonEmpty(
+			toString(target["excerpt_new"]),
+			toString(target["excerpt"]),
+			toString(target["detail"]),
+		))
+	}
+	if referenced := referencedImageCount(raw, target); referenced > imageCount {
+		body = appendImagePlaceholders(body, imageCount+1, referenced)
+		imageCount = referenced
+	}
 	if title == "" {
-		title = firstNonEmpty(firstParagraph(body), typeLabel(kind), "一条关注动态")
+		bodyTitle := firstParagraph(body)
+		if strings.HasPrefix(bodyTitle, "▣ 图片 ") {
+			bodyTitle = ""
+		}
+		title = firstNonEmpty(bodyTitle, typeLabel(kind), "一条关注动态")
 		if title == firstParagraph(body) {
 			body = strings.TrimSpace(strings.TrimPrefix(body, title))
 		}
@@ -87,18 +100,87 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 	}
 
 	return feedItem{
-		key:       key,
-		kind:      kind,
-		action:    action,
-		title:     title,
-		author:    authorName,
-		headline:  compactLine(plainText(toString(author["headline"]))),
-		body:      body,
-		stats:     feedStats(target),
-		createdAt: createdAt,
-		url:       url,
-		hasImage:  strings.Contains(strings.ToLower(toString(target["content"])), "<img"),
+		key:          key,
+		id:           id,
+		kind:         kind,
+		action:       action,
+		title:        title,
+		author:       authorName,
+		headline:     compactLine(plainText(toString(author["headline"]))),
+		body:         body,
+		stats:        feedStats(target),
+		createdAt:    createdAt,
+		url:          url,
+		imageCount:   imageCount,
+		commentCount: int(toInt64(target["comment_count"])),
 	}, true
+}
+
+func contentText(value string) (string, int) {
+	return contentTextFrom(value, 0)
+}
+
+func contentTextFrom(value string, previousImages int) (string, int) {
+	imageCount := 0
+	value = imageTagPattern.ReplaceAllStringFunc(value, func(string) string {
+		imageCount++
+		return fmt.Sprintf("\n▣ 图片 %d\n", previousImages+imageCount)
+	})
+	return plainText(value), imageCount
+}
+
+func feedContentText(value any) (string, int) {
+	if text, ok := value.(string); ok {
+		return contentText(text)
+	}
+	parts := make([]string, 0)
+	imageCount := 0
+	for _, rawNode := range asSlice(value) {
+		node := mapValue(rawNode)
+		switch strings.ToLower(toString(node["type"])) {
+		case "image":
+			imageCount++
+			parts = append(parts, fmt.Sprintf("▣ 图片 %d", imageCount))
+		default:
+			text, nestedImages := contentTextFrom(toString(node["content"]), imageCount)
+			if text != "" {
+				parts = append(parts, text)
+			}
+			imageCount += nestedImages
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n\n")), imageCount
+}
+
+func referencedImageCount(raw, target map[string]any) int {
+	count := 0
+	for _, key := range []string{"thumbnail", "image_url"} {
+		if toString(target[key]) != "" || toString(raw[key]) != "" {
+			count = maxInt(count, 1)
+		}
+	}
+	count = maxInt(count, len(asSlice(target["content_img"])))
+	childrenWithImages := 0
+	for _, child := range asSlice(raw["children"]) {
+		if toString(mapValue(child)["thumbnail"]) != "" {
+			childrenWithImages++
+		}
+	}
+	return maxInt(count, childrenWithImages)
+}
+
+func appendImagePlaceholders(body string, first, last int) string {
+	if first > last {
+		return body
+	}
+	var placeholders []string
+	for index := first; index <= last; index++ {
+		placeholders = append(placeholders, fmt.Sprintf("▣ 图片 %d", index))
+	}
+	if body == "" {
+		return strings.Join(placeholders, "\n\n")
+	}
+	return body + "\n\n" + strings.Join(placeholders, "\n\n")
 }
 
 func plainText(value string) string {

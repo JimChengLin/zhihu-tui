@@ -2,6 +2,7 @@ package feedtui
 
 import (
 	"bufio"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -38,7 +39,7 @@ func TestParseFeedItemFormatsFollowingActivity(t *testing.T) {
 	if item.title != "测试问题" {
 		t.Fatalf("title=%q", item.title)
 	}
-	if item.body != "第一段。\n\n第二段。" {
+	if item.body != "第一段。\n\n第二段。\n▣ 图片 1" {
 		t.Fatalf("body=%q", item.body)
 	}
 	if item.headline != "第一行 第二行" {
@@ -50,8 +51,38 @@ func TestParseFeedItemFormatsFollowingActivity(t *testing.T) {
 	if item.url != "https://www.zhihu.com/question/123/answer/456" {
 		t.Fatalf("url=%q", item.url)
 	}
-	if !item.hasImage {
-		t.Fatal("hasImage=false")
+	if item.imageCount != 1 {
+		t.Fatalf("imageCount=%d", item.imageCount)
+	}
+}
+
+func TestParseFeedItemFormatsStructuredPinContent(t *testing.T) {
+	raw := map[string]any{
+		"id":          "activity-pin",
+		"action_text": "Alice 发布了想法",
+		"target": map[string]any{
+			"id":   "789",
+			"type": "pin",
+			"content": []any{
+				map[string]any{"type": "text", "content": "想法标题\n\n想法正文"},
+				map[string]any{"type": "image", "url": "https://example.com/image.jpg"},
+			},
+			"author": map[string]any{"name": "Alice"},
+		},
+	}
+
+	item, ok := parseFeedItem(raw)
+	if !ok {
+		t.Fatal("parseFeedItem returned false")
+	}
+	if item.title != "想法标题" {
+		t.Fatalf("title=%q", item.title)
+	}
+	if item.body != "想法正文\n\n▣ 图片 1" {
+		t.Fatalf("body=%q", item.body)
+	}
+	if item.imageCount != 1 {
+		t.Fatalf("imageCount=%d", item.imageCount)
 	}
 }
 
@@ -119,6 +150,66 @@ func TestApplyFetchDeduplicatesOverlappingPages(t *testing.T) {
 	if model.nextURL == "" || model.end {
 		t.Fatalf("nextURL=%q end=%v", model.nextURL, model.end)
 	}
+}
+
+func TestRenderAppUsesResponsiveWideLayout(t *testing.T) {
+	items := make([]feedItem, 20)
+	for index := range items {
+		items[index] = feedItem{
+			key:    toString(index),
+			kind:   "answer",
+			action: "某人赞同了回答",
+			title:  "第 " + toString(index+1) + " 条关注动态",
+			author: "答主",
+			body:   "这是一段用于验证宽屏响应式布局的正文。",
+		}
+	}
+	model := &app{items: items, index: 10, width: 160, height: 32}
+	lines, metrics := renderApp(model)
+	if !lines[0].raw {
+		t.Fatal("wide layout did not merge independently styled columns")
+	}
+	rendered := strings.Join(styledLineTexts(lines), "\n")
+	if !strings.Contains(rendered, "关注动态") || !strings.Contains(rendered, "第 11 条关注动态") {
+		t.Fatalf("wide layout is missing sidebar or current item: %q", rendered)
+	}
+	if metrics.bodyHeight <= 0 {
+		t.Fatalf("bodyHeight=%d", metrics.bodyHeight)
+	}
+	ansiPattern := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	for row, line := range lines {
+		plain := ansiPattern.ReplaceAllString(line.text, "")
+		if width := stringCellWidth(plain); width >= model.width {
+			t.Fatalf("row %d width=%d, terminal width=%d", row, width, model.width)
+		}
+	}
+
+	model.width = 100
+	lines, _ = renderApp(model)
+	if lines[0].raw {
+		t.Fatal("compact layout unexpectedly rendered columns")
+	}
+
+	model.width, model.height = 220, 70
+	lines, _ = renderApp(model)
+	statusRow := -1
+	for row, line := range lines {
+		if strings.Contains(line.text, "第 11 / 20 条") {
+			statusRow = row
+			break
+		}
+	}
+	if statusRow < 0 || statusRow >= model.height/2 {
+		t.Fatalf("short-content status row=%d, want it near the content in a tall terminal", statusRow)
+	}
+}
+
+func styledLineTexts(lines []styledLine) []string {
+	texts := make([]string, len(lines))
+	for index := range lines {
+		texts[index] = lines[index].text
+	}
+	return texts
 }
 
 func feedTestRaw(id, title string) map[string]any {

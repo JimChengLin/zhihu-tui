@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -212,6 +213,36 @@ func TestGetFollowingFeedUsesMomentsAndPagingURL(t *testing.T) {
 	nextURL := server.URL + "/api/v3/moments?after_id=next-page"
 	if _, err := c.GetFollowingFeed(context.Background(), nextURL, 10); err != nil {
 		t.Fatalf("GetFollowingFeed next: %v", err)
+	}
+}
+
+func TestGetCommentsSupportsFeedResourceTypes(t *testing.T) {
+	wantPaths := []string{
+		"/api/v4/comment_v5/answers/1/root_comment",
+		"/api/v4/comment_v5/articles/2/root_comment",
+		"/api/v4/comment_v5/pins/3/root_comment",
+		"/api/v4/comment_v5/questions/4/root_comment",
+	}
+	requestNumber := 0
+	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if requestNumber >= len(wantPaths) || r.URL.Path != wantPaths[requestNumber] {
+			t.Fatalf("request %d path=%s", requestNumber+1, r.URL.Path)
+		}
+		requestNumber++
+		if r.URL.Query().Get("limit") != "20" || r.URL.Query().Get("order_by") != "score" || r.URL.Query().Get("offset") != "" {
+			t.Fatalf("query=%s", r.URL.RawQuery)
+		}
+		writeJSON(t, w, http.StatusOK, map[string]any{"data": []any{}})
+	})
+	defer server.Close()
+
+	for index, resourceType := range []string{"answer", "article", "pin", "question"} {
+		if _, err := c.GetComments(context.Background(), resourceType, strconv.Itoa(index+1), 0, 20, "normal"); err != nil {
+			t.Fatalf("GetComments(%s): %v", resourceType, err)
+		}
+	}
+	if _, err := c.GetComments(context.Background(), "collection", "5", 0, 20, "normal"); err == nil {
+		t.Fatal("GetComments(collection) unexpectedly succeeded")
 	}
 }
 
