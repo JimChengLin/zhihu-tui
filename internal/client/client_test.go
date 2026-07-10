@@ -181,6 +181,40 @@ func TestSearchParams(t *testing.T) {
 	}
 }
 
+func TestGetFollowingFeedUsesMomentsAndPagingURL(t *testing.T) {
+	requestNumber := 0
+	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requestNumber++
+		if r.URL.Path != "/api/v3/moments" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		if requestNumber == 1 {
+			if r.URL.Query().Get("limit") != "10" {
+				t.Fatalf("limit=%q", r.URL.Query().Get("limit"))
+			}
+		} else if r.URL.Query().Get("after_id") != "next-page" {
+			t.Fatalf("after_id=%q", r.URL.Query().Get("after_id"))
+		}
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"data":   []any{map[string]any{"id": requestNumber}},
+			"paging": map[string]any{"is_end": requestNumber == 2},
+		})
+	})
+	defer server.Close()
+
+	first, err := c.GetFollowingFeed(context.Background(), "", 10)
+	if err != nil {
+		t.Fatalf("GetFollowingFeed initial: %v", err)
+	}
+	if len(first["data"].([]any)) != 1 {
+		t.Fatalf("first=%#v", first)
+	}
+	nextURL := server.URL + "/api/v3/moments?after_id=next-page"
+	if _, err := c.GetFollowingFeed(context.Background(), nextURL, 10); err != nil {
+		t.Fatalf("GetFollowingFeed next: %v", err)
+	}
+}
+
 func TestGetAnswerIncludesCounts(t *testing.T) {
 	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v4/answers/123" {

@@ -234,6 +234,19 @@ func (c *Client) GetFeed(ctx context.Context, limit int) (map[string]any, error)
 	return map[string]any{"data": []any{}}, nil
 }
 
+// GetFollowingFeed returns one page from the feed made up of activity from
+// people, questions, topics, and columns the current user follows. Pass the
+// paging.next URL from the previous response to load another page.
+func (c *Client) GetFollowingFeed(ctx context.Context, nextURL string, limit int) (map[string]any, error) {
+	target := nextURL
+	var params url.Values
+	if target == "" {
+		target = c.endpoints.APIV3 + "/moments"
+		params = url.Values{"limit": {strconv.Itoa(limit)}}
+	}
+	return c.getMap(ctx, target, params)
+}
+
 func (c *Client) GetTopic(ctx context.Context, topicID string) (map[string]any, error) {
 	return c.getMap(ctx, c.endpoints.APIV4+"/topics/"+url.PathEscape(topicID), nil)
 }

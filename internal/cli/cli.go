@@ -17,6 +17,7 @@ import (
 	"zhihucli2/internal/client"
 	"zhihucli2/internal/config"
 	"zhihucli2/internal/display"
+	"zhihucli2/internal/feedtui"
 )
 
 type optionSpec struct {
@@ -76,6 +77,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	var err error
 	switch cmd {
+	case "--feed-tui":
+		err = runFeedTUI(ctx, rest, stdout)
 	case "login":
 		err = runLogin(ctx, rest, stdout)
 	case "logout":
@@ -151,6 +154,7 @@ func printRootHelp(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  zhihu <command> [options]")
+	fmt.Fprintln(w, "  zhihu --feed-tui")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  login, logout, status, whoami")
@@ -159,10 +163,15 @@ func printRootHelp(w io.Writer) {
 	fmt.Fprintln(w, "  vote, follow-question, collections, notifications")
 	fmt.Fprintln(w, "  reply-comment")
 	fmt.Fprintln(w, "  ask, pin, article, delete-question, delete-pin, delete-article, delete-comment")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Interactive:")
+	fmt.Fprintln(w, "  --feed-tui    Browse your following feed in a full-screen terminal UI")
 }
 
 func printCommandHelp(w io.Writer, cmd string) {
 	switch cmd {
+	case "--feed-tui":
+		fmt.Fprintln(w, "Usage: zhihu --feed-tui")
 	case "login":
 		fmt.Fprintln(w, "Usage: zhihu login [--qrcode] [--cookie COOKIE]")
 	case "search":
@@ -209,6 +218,22 @@ func printCommandHelp(w io.Writer, cmd string) {
 	default:
 		printRootHelp(w)
 	}
+}
+
+func runFeedTUI(ctx context.Context, args []string, out io.Writer) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: zhihu --feed-tui")
+	}
+	terminal, ok := out.(*os.File)
+	if !ok {
+		return fmt.Errorf("--feed-tui requires an interactive terminal")
+	}
+	c, err := authenticatedClient()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return feedtui.Run(ctx, c, os.Stdin, terminal)
 }
 
 func runLogin(ctx context.Context, args []string, out io.Writer) error {
