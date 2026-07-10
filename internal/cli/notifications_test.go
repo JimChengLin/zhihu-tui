@@ -594,6 +594,58 @@ func TestNotificationSeenStateTracksMultipleActorsForSameGroup(t *testing.T) {
 	}
 }
 
+func TestNotificationSeenStateUsesNotificationIDAlias(t *testing.T) {
+	now := time.Date(2026, 7, 10, 11, 21, 0, 0, time.Local)
+	complete := map[string]any{
+		"id":          "notification-1",
+		"create_time": 123,
+		"merge_count": 1,
+		"content": map[string]any{
+			"verb": "喜欢了你的评论",
+			"target": map[string]any{
+				"link": "https://www.zhihu.com/answer/456",
+				"text": "问题标题",
+			},
+			"actors": []any{
+				map[string]any{"url_token": "lin-zhao-mou"},
+			},
+		},
+		"target": map[string]any{
+			"type":          "comment",
+			"id":            "comment-1",
+			"resource_type": "answer",
+		},
+	}
+	incomplete := map[string]any{
+		"id":          "notification-1",
+		"create_time": 123,
+		"merge_count": 1,
+		"content": map[string]any{
+			"verb": "喜欢了你的评论",
+			"target": map[string]any{
+				"text": "问题标题",
+			},
+			"actors": []any{
+				map[string]any{"url_token": "lin-zhao-mou"},
+			},
+		},
+	}
+	seen := map[string]notificationSeenState{}
+	rememberNotificationState(seen, complete, now)
+
+	key, signature := notificationState(incomplete)
+	if key != "notification-1" {
+		t.Fatalf("incomplete key=%q, want notification id", key)
+	}
+	state, ok := notificationKnownState(seen, nil, key)
+	if !ok {
+		t.Fatal("notification id alias should be known")
+	}
+	if known, reason := notificationSeenStateContains(state, incomplete, signature); !known || reason != "same_signature" {
+		t.Fatalf("known=%v reason=%s", known, reason)
+	}
+}
+
 func TestPruneNotificationHistory(t *testing.T) {
 	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.Local)
 	seen := map[string]notificationSeenState{

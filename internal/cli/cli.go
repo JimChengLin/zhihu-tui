@@ -1963,7 +1963,22 @@ func rememberNotificationState(seen map[string]notificationSeenState, n map[stri
 	if key == "" {
 		return
 	}
-	seen[key] = mergeNotificationSeenState(seen[key], newNotificationSeenState(n, signature, now))
+	state := newNotificationSeenState(n, signature, now)
+	for _, stateKey := range notificationStateKeys(n, key) {
+		seen[stateKey] = mergeNotificationSeenState(seen[stateKey], state)
+	}
+}
+
+func notificationStateKeys(n map[string]any, primary string) []string {
+	keys := make([]string, 0, 2)
+	if primary != "" {
+		keys = append(keys, primary)
+	}
+	id := toString(n["id"])
+	if id != "" && id != primary {
+		keys = append(keys, id)
+	}
+	return keys
 }
 
 func newNotificationSeenState(n map[string]any, signature string, now time.Time) notificationSeenState {
