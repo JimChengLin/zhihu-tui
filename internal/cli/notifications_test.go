@@ -713,14 +713,14 @@ func TestShouldSendNotificationBell(t *testing.T) {
 
 func TestMonitorLines(t *testing.T) {
 	tm := time.Date(2026, 7, 8, 15, 4, 5, 0, time.Local)
-	if got, want := monitorStatusLineWithColumns(tm, "no new notifications", 100), "\r\033[2KLast check: 15:04:05 · ⠋ no new notifications"; got != want {
+	if got, want := monitorStatusLineWithColumns(tm, "no new notifications", "next refresh in 42s", 100), "\r\033[2KLast check: 15:04:05 · next refresh in 42s · no new notifications"; got != want {
 		t.Fatalf("monitorStatusLine=%q, want %q", got, want)
 	}
-	if got, want := monitorStatusLineWithColumns(tm, "error: API request failed\nwith status 500:", 100), "\r\033[2KLast check: 15:04:05 · ⠋ error: API request failed with status 500:"; got != want {
+	if got, want := monitorStatusLineWithColumns(tm, "error: API request failed\nwith status 500:", "next refresh in 42s", 100), "\r\033[2KLast check: 15:04:05 · next refresh in 42s · error: API request failed with status 500:"; got != want {
 		t.Fatalf("monitorStatusLine error=%q, want %q", got, want)
 	}
-	if got, want := monitorStatusLineAtFrameWithColumns(tm, "waiting", 1, 100), "\r\033[2KLast check: 15:04:05 · ⠙ waiting"; got != want {
-		t.Fatalf("monitorStatusLine frame=%q, want %q", got, want)
+	if got, want := monitorStatusLineWithColumns(tm, "waiting", "refreshing", 100), "\r\033[2KLast check: 15:04:05 · refreshing · waiting"; got != want {
+		t.Fatalf("monitorStatusLine refreshing=%q, want %q", got, want)
 	}
 	if got, want := monitorNewSeparator(tm, 2, false), "\r\033[2K\n----- New notifications @ 15:04:05 (2 new) -----\n"; got != want {
 		t.Fatalf("monitorNewSeparator=%q, want %q", got, want)
@@ -733,22 +733,45 @@ func TestMonitorLines(t *testing.T) {
 func TestMonitorStatusLineTruncatesLongStatus(t *testing.T) {
 	tm := time.Date(2026, 7, 8, 15, 4, 5, 0, time.Local)
 	status := "refresh failed: " + strings.Repeat("x", 80)
-	want := "\r\033[2KLast check: 15:04:05 · ⠋ refresh failed: xxxxxx..."
-	if got := monitorStatusLineWithColumns(tm, status, 50); got != want {
+	want := "\r\033[2KLast check: 15:04:05 · next refresh in 42s · refresh failed: xxxxxx..."
+	if got := monitorStatusLineWithColumns(tm, status, "next refresh in 42s", 70); got != want {
 		t.Fatalf("monitorStatusLine=%q, want %q", got, want)
 	}
 }
 
-func TestMonitorOutputTicksSpinner(t *testing.T) {
+func TestMonitorOutputUpdatesCountdown(t *testing.T) {
 	var out strings.Builder
 	tm := time.Date(2026, 7, 8, 15, 4, 5, 0, time.Local)
 	monitor := newMonitorOutput(&out)
-	monitor.Status(tm, "waiting")
-	first := monitorStatusLineAtFrame(tm, "waiting", 0)
-	monitor.Tick()
-	want := first + monitorClearStatus(monitorStatusRows(first)) + monitorStatusLineAtFrame(tm, "waiting", 1)
+	monitor.Status(tm, "waiting", "next refresh in 60s")
+	first := monitorStatusLine(tm, "waiting", "next refresh in 60s")
+	monitor.Tick("next refresh in 59s")
+	want := first + monitorClearStatus(monitorStatusRows(first)) + monitorStatusLine(tm, "waiting", "next refresh in 59s")
 	if got := out.String(); got != want {
 		t.Fatalf("output=%q, want %q", got, want)
+	}
+}
+
+func TestMonitorRefreshStatus(t *testing.T) {
+	now := time.Date(2026, 7, 8, 15, 4, 5, 0, time.Local)
+	tests := []struct {
+		name            string
+		next            time.Time
+		refreshInFlight bool
+		want            string
+	}{
+		{name: "full minute", next: now.Add(time.Minute), want: "next refresh in 60s"},
+		{name: "round up partial second", next: now.Add(59001 * time.Millisecond), want: "next refresh in 60s"},
+		{name: "whole seconds", next: now.Add(59 * time.Second), want: "next refresh in 59s"},
+		{name: "due", next: now, want: "next refresh in 0s"},
+		{name: "refreshing", refreshInFlight: true, want: "refreshing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := monitorRefreshStatus(now, tt.next, tt.refreshInFlight); got != tt.want {
+				t.Fatalf("monitorRefreshStatus=%q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

@@ -36,9 +36,7 @@ const notificationHistoryRetention = 90 * 24 * time.Hour
 const notificationActorCacheTTL = 24 * time.Hour
 const notificationBellInterval = time.Hour
 const monitorStatusFallbackColumns = 100
-const monitorSpinnerInterval = 100 * time.Millisecond
-
-var monitorSpinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+const monitorCountdownInterval = time.Second
 
 type notificationSeenState struct {
 	signature  string
@@ -906,14 +904,15 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 		return err
 	}
 	fmt.Fprintf(out, "Monitoring notifications every %s. Press Ctrl+C to stop.\n", interval)
-	monitorOut := newMonitorOutput(out)
-	monitorOut.Status(time.Now(), "waiting")
-
 	var lastBellAt time.Time
+	tickerStartedAt := time.Now()
+	nextRefreshAt := tickerStartedAt.Add(interval)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	spinnerTicker := time.NewTicker(monitorSpinnerInterval)
-	defer spinnerTicker.Stop()
+	countdownTicker := time.NewTicker(monitorCountdownInterval)
+	defer countdownTicker.Stop()
+	monitorOut := newMonitorOutput(out)
+	monitorOut.Status(tickerStartedAt, "waiting", monitorRefreshStatus(tickerStartedAt, nextRefreshAt, false))
 	type refreshResult struct {
 		checkedAt time.Time
 		result    map[string]any
@@ -925,9 +924,10 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-spinnerTicker.C:
-			monitorOut.Tick()
-		case <-ticker.C:
+		case now := <-countdownTicker.C:
+			monitorOut.Tick(monitorRefreshStatus(now, nextRefreshAt, refreshInFlight))
+		case tickedAt := <-ticker.C:
+			nextRefreshAt = tickedAt.Add(interval)
 			if refreshInFlight {
 				continue
 			}
@@ -940,6 +940,7 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				return err
 			}
 			refreshInFlight = true
+			monitorOut.Tick("refreshing")
 			go func() {
 				result, err := c.GetNotifications(ctx, limit, 0, "all")
 				refreshes <- refreshResult{checkedAt: checkedAt, result: result, err: err}
@@ -951,7 +952,7 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				if logErr := debugLog.Log(checkedAt, "refresh_error", map[string]any{"error": err.Error()}); logErr != nil {
 					return logErr
 				}
-				monitorOut.Status(checkedAt, "refresh failed: "+err.Error())
+				monitorOut.Status(checkedAt, "refresh failed: "+err.Error(), monitorRefreshStatus(time.Now(), nextRefreshAt, false))
 				continue
 			}
 			newItems := make([]any, 0)
@@ -987,7 +988,7 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				rememberNotificationState(newStates, notification, checkedAt)
 			}
 			if len(newItems) == 0 {
-				monitorOut.Status(checkedAt, "no new notifications")
+				monitorOut.Status(checkedAt, "no new notifications", monitorRefreshStatus(time.Now(), nextRefreshAt, false))
 				continue
 			}
 			formatter.clearTargetCache()
@@ -996,7 +997,7 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				if logErr := debugLog.Log(checkedAt, "format_error", map[string]any{"error": err.Error(), "new_count": len(newItems)}); logErr != nil {
 					return logErr
 				}
-				monitorOut.Status(checkedAt, "error: "+err.Error())
+				monitorOut.Status(checkedAt, "error: "+err.Error(), monitorRefreshStatus(time.Now(), nextRefreshAt, false))
 				continue
 			}
 			for key, state := range newStates {
@@ -1023,7 +1024,7 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 					return err
 				}
 			}
-			monitorOut.Status(checkedAt, "waiting")
+			monitorOut.Status(checkedAt, "waiting", monitorRefreshStatus(time.Now(), nextRefreshAt, false))
 		}
 	}
 }
@@ -1231,35 +1232,36 @@ func shouldSendNotificationBell(now, last time.Time) bool {
 }
 
 type monitorOutput struct {
-	out          io.Writer
-	statusRows   int
-	statusAt     time.Time
-	status       string
-	spinnerFrame int
-	hasStatus    bool
+	out        io.Writer
+	statusRows int
+	statusAt   time.Time
+	status     string
+	refresh    string
+	hasStatus  bool
 }
 
 func newMonitorOutput(out io.Writer) *monitorOutput {
 	return &monitorOutput{out: out}
 }
 
-func (m *monitorOutput) Status(t time.Time, status string) {
+func (m *monitorOutput) Status(t time.Time, status, refresh string) {
 	m.statusAt = t
 	m.status = status
+	m.refresh = refresh
 	m.hasStatus = true
 	m.renderStatus()
 }
 
-func (m *monitorOutput) Tick() {
+func (m *monitorOutput) Tick(refresh string) {
 	if !m.hasStatus {
 		return
 	}
-	m.spinnerFrame = (m.spinnerFrame + 1) % len(monitorSpinnerFrames)
+	m.refresh = refresh
 	m.renderStatus()
 }
 
 func (m *monitorOutput) renderStatus() {
-	line := monitorStatusLineAtFrame(m.statusAt, m.status, m.spinnerFrame)
+	line := monitorStatusLine(m.statusAt, m.status, m.refresh)
 	m.clearStatus()
 	fmt.Fprint(m.out, line)
 	m.statusRows = monitorStatusRows(line)
@@ -1308,35 +1310,36 @@ func monitorStatusRowsWithColumns(line string, columns int) int {
 	return (width-1)/columns + 1
 }
 
-func monitorStatusLine(t time.Time, status string) string {
-	return monitorStatusLineAtFrame(t, status, 0)
+func monitorStatusLine(t time.Time, status, refresh string) string {
+	return monitorStatusLineWithColumns(t, status, refresh, monitorStatusColumns())
 }
 
-func monitorStatusLineWithColumns(t time.Time, status string, columns int) string {
-	return monitorStatusLineAtFrameWithColumns(t, status, 0, columns)
+func monitorStatusLineWithColumns(t time.Time, status, refresh string, columns int) string {
+	return "\r\033[2K" + monitorStatusTextWithColumns(t, status, refresh, columns)
 }
 
-func monitorStatusLineAtFrame(t time.Time, status string, frame int) string {
-	return monitorStatusLineAtFrameWithColumns(t, status, frame, monitorStatusColumns())
+func monitorStatusText(t time.Time, status, refresh string) string {
+	return monitorStatusTextWithColumns(t, status, refresh, monitorStatusColumns())
 }
 
-func monitorStatusLineAtFrameWithColumns(t time.Time, status string, frame, columns int) string {
-	return "\r\033[2K" + monitorStatusTextAtFrameWithColumns(t, status, frame, columns)
-}
-
-func monitorStatusText(t time.Time, status string) string {
-	return monitorStatusTextAtFrameWithColumns(t, status, 0, monitorStatusColumns())
-}
-
-func monitorStatusTextWithColumns(t time.Time, status string, columns int) string {
-	return monitorStatusTextAtFrameWithColumns(t, status, 0, columns)
-}
-
-func monitorStatusTextAtFrameWithColumns(t time.Time, status string, frame, columns int) string {
+func monitorStatusTextWithColumns(t time.Time, status, refresh string, columns int) string {
 	status = strings.Join(strings.Fields(status), " ")
-	prefix := fmt.Sprintf("Last check: %s · %s ", t.Format("15:04:05"), monitorSpinnerFrames[frame%len(monitorSpinnerFrames)])
+	refresh = strings.Join(strings.Fields(refresh), " ")
+	prefix := fmt.Sprintf("Last check: %s · %s · ", t.Format("15:04:05"), refresh)
 	status = truncateStatusLine(status, columns-len([]rune(prefix)))
 	return prefix + status
+}
+
+func monitorRefreshStatus(now, next time.Time, refreshInFlight bool) string {
+	if refreshInFlight {
+		return "refreshing"
+	}
+	remaining := next.Sub(now)
+	if remaining <= 0 {
+		return "next refresh in 0s"
+	}
+	seconds := (remaining + time.Second - 1) / time.Second
+	return fmt.Sprintf("next refresh in %ds", seconds)
 }
 
 func monitorStatusColumns() int {
