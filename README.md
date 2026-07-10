@@ -38,6 +38,7 @@ zhihu user url-token
 zhihu user-answers url-token
 zhihu vote 789
 zhihu follow-question 123456
+zhihu reply-comment 789 "回复内容" --resource-type pin --resource-id 123456
 zhihu ask "问题标题" -d "问题描述" -t 100
 zhihu pin "想法标题" -c "正文"
 zhihu article "文章标题" "正文"
@@ -57,6 +58,7 @@ zhihu notifications --monitor --interval 30
 zhihu delete-question 123456 -y
 zhihu delete-pin 123456 -y
 zhihu delete-article 123456 -y
+zhihu delete-comment 123456 -y
 ```
 
 ## 测试

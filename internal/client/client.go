@@ -251,6 +251,40 @@ func (c *Client) GetAnswerComments(ctx context.Context, answerID string, offset,
 	return c.getMap(ctx, c.endpoints.APIV4+"/answers/"+url.PathEscape(answerID)+"/comments", params)
 }
 
+func (c *Client) ReplyComment(ctx context.Context, commentID, content string) (map[string]any, error) {
+	comment, err := c.GetComment(ctx, commentID)
+	if err != nil {
+		return nil, err
+	}
+	target, _ := asMap(comment["target"])
+	resourceType := firstNonEmptyString(toString(target["resource_type"]), toString(target["type"]), toString(comment["resource_type"]))
+	resourceID := firstNonEmptyString(toString(target["id"]), toString(target["url_token"]), toString(comment["resource_id"]))
+	if resourceType == "" || resourceID == "" {
+		return nil, DataFetchError{Message: "comment response missing reply target"}
+	}
+	return c.ReplyCommentToResource(ctx, resourceType, resourceID, commentID, content)
+}
+
+func (c *Client) ReplyCommentToResource(ctx context.Context, resourceType, resourceID, commentID, content string) (map[string]any, error) {
+	resourceType = strings.TrimSpace(resourceType)
+	resourceID = strings.TrimSpace(resourceID)
+	commentID = strings.TrimSpace(commentID)
+	content = strings.TrimSpace(content)
+	if resourceType == "" || resourceID == "" || commentID == "" {
+		return nil, DataFetchError{Message: "comment reply target cannot be empty"}
+	}
+	if content == "" {
+		return nil, DataFetchError{Message: "comment reply content cannot be empty"}
+	}
+	payload := map[string]any{
+		"content":           content,
+		"reply_comment_id":  commentID,
+		"selected_settings": []string{},
+		"unfriendly_check":  "strict",
+	}
+	return c.postJSON(ctx, c.endpoints.APIV4+"/comment_v5/"+url.PathEscape(resourceType)+"s/"+url.PathEscape(resourceID)+"/comment", payload, map[int]bool{http.StatusOK: true, http.StatusCreated: true})
+}
+
 func (c *Client) VoteUp(ctx context.Context, answerID string) (bool, error) {
 	return c.vote(ctx, answerID, "up")
 }
@@ -428,6 +462,10 @@ func (c *Client) DeletePin(ctx context.Context, pinID string) (bool, error) {
 
 func (c *Client) DeleteArticle(ctx context.Context, articleID string) (bool, error) {
 	return c.deleteAccepted(ctx, c.endpoints.ZhuanlanAPI+"/articles/"+url.PathEscape(articleID), "article")
+}
+
+func (c *Client) DeleteComment(ctx context.Context, commentID string) (bool, error) {
+	return c.deleteAccepted(ctx, c.endpoints.APIV4+"/comments/"+url.PathEscape(commentID), "comment")
 }
 
 func (c *Client) GetCollections(ctx context.Context, offset, limit int) (map[string]any, error) {
@@ -788,6 +826,15 @@ func defaultString(v any, fallback string) string {
 		return s
 	}
 	return fallback
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func toInt(v any) int {

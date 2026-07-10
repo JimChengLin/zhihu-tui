@@ -204,6 +204,77 @@ func TestGetAnswerIncludesCounts(t *testing.T) {
 	}
 }
 
+func TestReplyCommentPostsChildComment(t *testing.T) {
+	var calls []string
+	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		switch r.URL.Path {
+		case "/api/v4/comments/789":
+			if r.Method != http.MethodGet {
+				t.Fatalf("method=%s", r.Method)
+			}
+			writeJSON(t, w, http.StatusOK, map[string]any{
+				"id":            789,
+				"resource_type": "pin",
+				"target":        map[string]any{"id": 123, "type": "pin"},
+			})
+		case "/api/v4/comment_v5/pins/123/comment":
+			if r.Method != http.MethodPost {
+				t.Fatalf("method=%s", r.Method)
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["content"] != "Thanks" {
+				t.Fatalf("payload=%#v", payload)
+			}
+			if payload["reply_comment_id"] != "789" {
+				t.Fatalf("payload=%#v", payload)
+			}
+			if payload["unfriendly_check"] != "strict" {
+				t.Fatalf("payload=%#v", payload)
+			}
+			writeJSON(t, w, http.StatusCreated, map[string]any{"id": 456})
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	})
+	defer server.Close()
+
+	result, err := c.ReplyComment(context.Background(), "789", " Thanks ")
+	if err != nil {
+		t.Fatalf("ReplyComment: %v", err)
+	}
+	if result["id"].(json.Number).String() != "456" {
+		t.Fatalf("id=%v", result["id"])
+	}
+	if strings.Join(calls, ", ") != "GET /api/v4/comments/789, POST /api/v4/comment_v5/pins/123/comment" {
+		t.Fatalf("calls=%v", calls)
+	}
+}
+
+func TestDeleteComment(t *testing.T) {
+	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Fatalf("method=%s", r.Method)
+		}
+		if r.URL.Path != "/api/v4/comments/789" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	defer server.Close()
+
+	ok, err := c.DeleteComment(context.Background(), "789")
+	if err != nil {
+		t.Fatalf("DeleteComment: %v", err)
+	}
+	if !ok {
+		t.Fatal("DeleteComment was not accepted")
+	}
+}
+
 func TestGetHotListWrapsListResponse(t *testing.T) {
 	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, http.StatusOK, []any{map[string]any{"title": "hot"}})

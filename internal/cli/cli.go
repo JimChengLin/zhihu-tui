@@ -117,6 +117,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = runCollections(ctx, rest, stdout)
 	case "notifications":
 		err = runNotifications(ctx, rest, stdout)
+	case "reply-comment":
+		err = runReplyComment(ctx, rest, stdout)
 	case "ask":
 		err = runAsk(ctx, rest, stdout)
 	case "pin":
@@ -129,6 +131,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = runDelete(ctx, rest, stdout, "pin")
 	case "delete-article":
 		err = runDelete(ctx, rest, stdout, "article")
+	case "delete-comment":
+		err = runDelete(ctx, rest, stdout, "comment")
 	default:
 		fmt.Fprintln(stderr, display.Error("unknown command: "+cmd))
 		printRootHelp(stderr)
@@ -152,7 +156,8 @@ func printRootHelp(w io.Writer) {
 	fmt.Fprintln(w, "  search, hot, question, answers, answer, feed, feeds, topic")
 	fmt.Fprintln(w, "  user, user-answers, user-articles, followers, following")
 	fmt.Fprintln(w, "  vote, follow-question, collections, notifications")
-	fmt.Fprintln(w, "  ask, pin, article, delete-question, delete-pin, delete-article")
+	fmt.Fprintln(w, "  reply-comment")
+	fmt.Fprintln(w, "  ask, pin, article, delete-question, delete-pin, delete-article, delete-comment")
 }
 
 func printCommandHelp(w io.Writer, cmd string) {
@@ -187,13 +192,15 @@ func printCommandHelp(w io.Writer, cmd string) {
 		fmt.Fprintln(w, "Usage: zhihu collections [-l LIMIT] [--json]")
 	case "notifications":
 		fmt.Fprintln(w, "Usage: zhihu notifications [-l LIMIT] [--offset OFFSET] [--monitor] [--interval SECONDS] [--debug-log PATH] [--json]")
+	case "reply-comment":
+		fmt.Fprintln(w, "Usage: zhihu reply-comment COMMENT_ID CONTENT [--resource-type TYPE --resource-id ID] [--json]")
 	case "ask":
 		fmt.Fprintln(w, "Usage: zhihu ask TITLE [-d DETAIL] [-t TOPIC] [-i IMAGE]")
 	case "pin":
 		fmt.Fprintln(w, "Usage: zhihu pin TITLE [-c CONTENT] [-i IMAGE]")
 	case "article":
 		fmt.Fprintln(w, "Usage: zhihu article TITLE CONTENT [-t TOPIC] [-i IMAGE]")
-	case "delete-question", "delete-pin", "delete-article":
+	case "delete-question", "delete-pin", "delete-article", "delete-comment":
 		fmt.Fprintf(w, "Usage: zhihu %s ID -y\n", cmd)
 	default:
 		printRootHelp(w)
@@ -1257,6 +1264,50 @@ func monitorNewSeparator(t time.Time, count int, bell bool) string {
 	return fmt.Sprintf("\r\033[2K\n----- %s @ %s (%d new) -----\n", label, t.Format("15:04:05"), count)
 }
 
+func runReplyComment(ctx context.Context, args []string, out io.Writer) error {
+	opts, err := parseOptions(args, specs(opt("--json", "json", false), opt("--resource-type", "resource-type", true), opt("--resource-id", "resource-id", true)))
+	if err != nil {
+		return err
+	}
+	if len(opts.positionals) < 2 {
+		return fmt.Errorf("usage: zhihu reply-comment COMMENT_ID CONTENT")
+	}
+	commentID := strings.TrimSpace(opts.positionals[0])
+	content := strings.TrimSpace(strings.Join(opts.positionals[1:], " "))
+	if commentID == "" || content == "" {
+		return fmt.Errorf("usage: zhihu reply-comment COMMENT_ID CONTENT")
+	}
+	c, err := authenticatedClient()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	var result map[string]any
+	resourceType, hasResourceType := opts.value("resource-type")
+	resourceID, hasResourceID := opts.value("resource-id")
+	switch {
+	case hasResourceType && hasResourceID:
+		result, err = c.ReplyCommentToResource(ctx, resourceType, resourceID, commentID, content)
+	case hasResourceType || hasResourceID:
+		return fmt.Errorf("--resource-type and --resource-id must be provided together")
+	default:
+		result, err = c.ReplyComment(ctx, commentID, content)
+	}
+	if err != nil {
+		return err
+	}
+	if opts.has("json") {
+		return printJSON(out, result)
+	}
+	id := firstNonEmpty(toString(result["id"]), toString(mapValue(result["data"])["id"]))
+	if id == "" {
+		fmt.Fprintln(out, display.Success("comment reply posted"))
+		return nil
+	}
+	fmt.Fprintf(out, "%s\n", display.Success("comment reply posted; ID: "+id))
+	return nil
+}
+
 func runAsk(ctx context.Context, args []string, out io.Writer) error {
 	opts, err := parseOptions(args, specs(opt("-d", "detail", true), opt("--detail", "detail", true), opt("-t", "topic", true), opt("--topic", "topic", true), opt("-i", "image", true), opt("--image", "image", true)))
 	if err != nil {
@@ -1372,6 +1423,8 @@ func runDelete(ctx context.Context, args []string, out io.Writer, kind string) e
 		ok, err = c.DeletePin(ctx, opts.positionals[0])
 	case "article":
 		ok, err = c.DeleteArticle(ctx, opts.positionals[0])
+	case "comment":
+		ok, err = c.DeleteComment(ctx, opts.positionals[0])
 	}
 	if err != nil {
 		return err
