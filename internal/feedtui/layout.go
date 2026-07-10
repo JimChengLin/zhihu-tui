@@ -8,13 +8,16 @@ import (
 )
 
 const (
-	ansiReset = "\033[0m"
-	ansiBold  = "\033[1m"
-	ansiDim   = "\033[2m"
-	ansiCyan  = "\033[36m"
-	ansiBlue  = "\033[38;5;75m"
-	ansiGreen = "\033[38;5;114m"
-	ansiRed   = "\033[38;5;203m"
+	ansiReset         = "\033[0m"
+	ansiBold          = "\033[1m"
+	ansiDim           = "\033[2m"
+	ansiCyan          = "\033[36m"
+	ansiBlue          = "\033[38;5;75m"
+	ansiGreen         = "\033[38;5;114m"
+	ansiRed           = "\033[38;5;203m"
+	minReadingWidth   = 96
+	maxReadingWidth   = 112
+	paragraphGapLines = 2
 )
 
 type styledLine struct {
@@ -39,7 +42,7 @@ func renderApp(model *app) ([]styledLine, layoutMetrics) {
 	if len(model.items) == 0 {
 		return renderEmpty(model), layoutMetrics{}
 	}
-	if model.width >= 120 && model.height >= 20 {
+	if !model.zenMode && model.width >= 120 && model.height >= 20 {
 		return renderWideApp(model)
 	}
 	return renderSingleApp(model)
@@ -47,15 +50,12 @@ func renderApp(model *app) ([]styledLine, layoutMetrics) {
 
 func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	item := model.items[model.index]
-	contentWidth := model.width - 6
+	contentWidth := adaptiveReadingWidth(model.width)
 	left := maxInt(2, (model.width-contentWidth)/2)
 	line := func(text, style string) styledLine {
 		return styledLine{text: strings.Repeat(" ", left) + text, style: style}
 	}
-	lines := []styledLine{
-		{text: headerText(model), style: ansiBold + ansiCyan},
-		{},
-	}
+	lines := []styledLine{line(headerText(model), ansiBold+ansiCyan), {}}
 
 	action := item.action
 	if relative := formatRelativeTime(item.createdAt, time.Now()); relative != "" {
@@ -98,7 +98,7 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	if body == "" {
 		body = "这条动态没有正文摘要；按 o 在知乎中查看完整内容。"
 	}
-	bodyLines := wrapText(body, contentWidth)
+	bodyLines := addParagraphSpacing(wrapText(body, contentWidth))
 	fixedBottom := 4
 	availableBodyHeight := model.height - len(lines) - fixedBottom
 	bodyHeight := availableBodyHeight
@@ -106,7 +106,7 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		bodyHeight = 1
 	}
 	footerAtBottom := true
-	if model.height >= 36 && len(bodyLines) < bodyHeight {
+	if len(bodyLines) < bodyHeight {
 		bodyHeight = maxInt(1, len(bodyLines))
 		footerAtBottom = false
 	}
@@ -147,7 +147,10 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		status += "  ·  " + model.message
 	}
 	lines = append(lines, line(truncateCells(status, contentWidth), ansiDim))
-	hints := "j/k 滚动  space/b 翻页  n/p·h/l 切换  c 评论/正文  o 打开  r 刷新  ? 帮助  q 退出"
+	hints := "j/k 滚动  space/b 翻页  n/p 切换  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
+	if model.zenMode {
+		hints = "j/k 滚动  space/b 翻页  n/p 切换  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
+	}
 	lines = append(lines, line(truncateCells(hints, contentWidth), ansiCyan))
 	lines = append(lines, styledLine{})
 
@@ -156,6 +159,30 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		bodyLines:  len(bodyLines),
 		maxScroll:  maxScroll,
 	}
+}
+
+func adaptiveReadingWidth(viewportWidth int) int {
+	available := maxInt(1, viewportWidth-6)
+	target := viewportWidth * 3 / 4
+	target = maxInt(minReadingWidth, minInt(maxReadingWidth, target))
+	return minInt(available, target)
+}
+
+func addParagraphSpacing(lines []string) []string {
+	result := make([]string, 0, len(lines)+len(lines)/4)
+	for _, line := range lines {
+		if line != "" {
+			result = append(result, line)
+			continue
+		}
+		if len(result) == 0 || result[len(result)-1] == "" {
+			continue
+		}
+		for range paragraphGapLines {
+			result = append(result, "")
+		}
+	}
+	return result
 }
 
 func renderWideApp(model *app) ([]styledLine, layoutMetrics) {
@@ -179,7 +206,7 @@ func renderSidebar(model *app, width int) []styledLine {
 	lines[0] = styledLine{text: " 关注动态", style: ansiBold + ansiCyan}
 	lines[1] = styledLine{text: fmt.Sprintf(" 已加载 %d 条 · 当前第 %d 条", len(model.items), model.index+1), style: ansiDim}
 
-	visibleItems := maxInt(1, (model.height-6)/2)
+	visibleItems := maxInt(1, (model.height-5)/3)
 	visibleItems = minInt(visibleItems, len(model.items))
 	start := model.index - visibleItems/2
 	start = maxInt(0, minInt(start, len(model.items)-visibleItems))
@@ -203,7 +230,7 @@ func renderSidebar(model *app, width int) []styledLine {
 		lines[row] = styledLine{text: fmt.Sprintf("%s%2d %s", marker, index+1, title), style: style}
 		summary := firstNonEmpty(item.action, item.author, typeLabel(item.kind))
 		lines[row+1] = styledLine{text: "     " + truncateCells(summary, maxInt(1, width-6)), style: ansiDim}
-		row += 2
+		row += 3
 	}
 	if start+visibleItems < len(model.items) && row < model.height-2 {
 		lines[row] = styledLine{text: fmt.Sprintf("  ↓ 后面还有 %d 条", len(model.items)-start-visibleItems), style: ansiDim}
@@ -274,6 +301,7 @@ func renderHelp(width, height int) []styledLine {
 		{text: pad + "n/p · h/l · ←/→  下一条 / 上一条"},
 		{text: pad + "g / G        第一条 / 最后一条已加载动态"},
 		{text: pad + "c            加载评论 / 返回正文"},
+		{text: pad + "z            专注阅读 / 恢复双栏"},
 		{text: pad + "o            用默认浏览器打开当前动态"},
 		{text: pad + "r            从头刷新关注流"},
 		{text: pad + "q / Ctrl-C   退出并恢复终端"},

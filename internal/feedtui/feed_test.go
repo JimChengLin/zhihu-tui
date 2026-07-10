@@ -202,6 +202,38 @@ func TestRenderAppUsesResponsiveWideLayout(t *testing.T) {
 	if statusRow < 0 || statusRow >= model.height/2 {
 		t.Fatalf("short-content status row=%d, want it near the content in a tall terminal", statusRow)
 	}
+
+	model.width, model.height = 160, 32
+	model.zenMode = true
+	model.items[10].body = strings.Repeat("中", 100)
+	lines, metrics = renderApp(model)
+	if lines[0].raw {
+		t.Fatal("zen mode unexpectedly rendered the sidebar")
+	}
+	if metrics.bodyLines != 2 {
+		t.Fatalf("zen bodyLines=%d, want 2 with an adaptive reading width", metrics.bodyLines)
+	}
+	if width := adaptiveReadingWidth(160); width != maxReadingWidth {
+		t.Fatalf("adaptiveReadingWidth(160)=%d, want %d", width, maxReadingWidth)
+	}
+	if width := adaptiveReadingWidth(100); width != 94 {
+		t.Fatalf("adaptiveReadingWidth(100)=%d, want 94", width)
+	}
+
+	model.zenMode = false
+	sidebar := renderSidebar(model, 40)
+	if sidebar[5].text != "" {
+		t.Fatalf("sidebar items do not have a spacer row: %#v", sidebar[5])
+	}
+}
+
+func TestAddParagraphSpacingPreservesAuthorLayout(t *testing.T) {
+	lines := []string{"第一段第一行", "第一段第二行", "", "第二段"}
+	want := []string{"第一段第一行", "第一段第二行", "", "", "第二段"}
+	got := addParagraphSpacing(lines)
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("addParagraphSpacing()=%q, want %q", got, want)
+	}
 }
 
 func styledLineTexts(lines []styledLine) []string {

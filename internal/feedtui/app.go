@@ -38,6 +38,7 @@ type app struct {
 	message        string
 	messageUntil   time.Time
 	showHelp       bool
+	zenMode        bool
 	spinner        int
 	generation     int
 	metrics        layoutMetrics
@@ -277,6 +278,13 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 		model.message = ""
 	case "c":
 		model.toggleComments(ctx)
+	case "z":
+		model.zenMode = !model.zenMode
+		if model.zenMode {
+			model.setMessage("已进入专注模式", 2*time.Second)
+		} else {
+			model.setMessage("已恢复双栏模式", 2*time.Second)
+		}
 	case "n", "l", keyRight:
 		model.moveNext(ctx)
 	case "p", "h", keyLeft:
