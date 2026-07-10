@@ -72,6 +72,8 @@ type Client struct {
 	pollMaxRounds int
 }
 
+var notificationReadTabs = []string{"default", "follow", "vote_thank"}
+
 func New(cookies map[string]string) *Client {
 	return NewWithHTTP(cookies, &http.Client{Timeout: config.DefaultTimeout}, DefaultEndpoints())
 }
@@ -484,6 +486,37 @@ func (c *Client) GetCollections(ctx context.Context, offset, limit int) (map[str
 func (c *Client) GetNotifications(ctx context.Context, limit, offset int, entryName string) (map[string]any, error) {
 	params := url.Values{"limit": {strconv.Itoa(limit)}, "entry_name": {entryName}, "offset": {strconv.Itoa(offset)}}
 	return c.getMap(ctx, c.endpoints.APIV4+"/notifications/v2/recent", params)
+}
+
+func (c *Client) MarkNotificationsRead(ctx context.Context, tab string) error {
+	tab = strings.TrimSpace(tab)
+	if !isNotificationReadTab(tab) {
+		return fmt.Errorf("unsupported notification tab %q; use one of: %s", tab, strings.Join(notificationReadTabs, ", "))
+	}
+	resp, err := c.do(ctx, http.MethodPost, c.endpoints.APIV4+"/notifications/v2/"+url.PathEscape(tab)+"/actions/readall", nil, nil)
+	if err != nil {
+		return DataFetchError{Message: fmt.Sprintf("request failed: %v", err)}
+	}
+	defer resp.Body.Close()
+	return checkExpectedStatus(resp, map[int]bool{http.StatusOK: true, http.StatusNoContent: true}, "mark notifications read")
+}
+
+func (c *Client) MarkAllNotificationsRead(ctx context.Context) error {
+	for _, tab := range notificationReadTabs {
+		if err := c.MarkNotificationsRead(ctx, tab); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isNotificationReadTab(tab string) bool {
+	for _, candidate := range notificationReadTabs {
+		if tab == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) vote(ctx context.Context, answerID, voteType string) (bool, error) {

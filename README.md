@@ -31,6 +31,7 @@ go build -o zhihu ./cmd/zhihu
 zhihu search "Go 语言" --limit 5
 zhihu hot --limit 20
 zhihu notifications --monitor
+zhihu notifications mark-read --all-tabs
 zhihu question 123456
 zhihu answers 123456 --limit 5
 zhihu answer 789 --comments --limit 10
@@ -50,7 +51,11 @@ zhihu article "文章标题" "正文"
 zhihu notifications --monitor
 zhihu notifications --monitor -l 50
 zhihu notifications --monitor --interval 30
+zhihu notifications mark-read --tab default
+zhihu notifications mark-read --all-tabs
 ```
+
+监控模式发现新通知并发送终端响铃后，会自动执行等价于 `zhihu notifications mark-read --all-tabs` 的操作，把 `default`、`follow`、`vote_thank` 三个通知页签标记为已读。
 
 删除命令必须显式传 `-y`：
 

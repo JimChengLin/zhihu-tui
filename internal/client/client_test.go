@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -272,6 +273,65 @@ func TestDeleteComment(t *testing.T) {
 	}
 	if !ok {
 		t.Fatal("DeleteComment was not accepted")
+	}
+}
+
+func TestMarkNotificationsReadPostsReadAll(t *testing.T) {
+	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method=%s", r.Method)
+		}
+		if r.URL.Path != "/api/v4/notifications/v2/default/actions/readall" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		if r.Header.Get("x-xsrftoken") != "xsrf" {
+			t.Fatalf("x-xsrftoken=%q", r.Header.Get("x-xsrftoken"))
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(body) != 0 {
+			t.Fatalf("body=%q, want empty", string(body))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	defer server.Close()
+
+	if err := c.MarkNotificationsRead(context.Background(), " default "); err != nil {
+		t.Fatalf("MarkNotificationsRead: %v", err)
+	}
+}
+
+func TestMarkAllNotificationsReadPostsEveryTab(t *testing.T) {
+	var calls []string
+	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+	})
+	defer server.Close()
+
+	if err := c.MarkAllNotificationsRead(context.Background()); err != nil {
+		t.Fatalf("MarkAllNotificationsRead: %v", err)
+	}
+	want := "/api/v4/notifications/v2/default/actions/readall, /api/v4/notifications/v2/follow/actions/readall, /api/v4/notifications/v2/vote_thank/actions/readall"
+	if got := strings.Join(calls, ", "); got != want {
+		t.Fatalf("calls=%s, want %s", got, want)
+	}
+}
+
+func TestMarkNotificationsReadRejectsUnknownTab(t *testing.T) {
+	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+	})
+	defer server.Close()
+
+	err := c.MarkNotificationsRead(context.Background(), "recent")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "unsupported notification tab") {
+		t.Fatalf("err=%v", err)
 	}
 }
 

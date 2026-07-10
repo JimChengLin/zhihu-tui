@@ -191,7 +191,10 @@ func printCommandHelp(w io.Writer, cmd string) {
 	case "collections":
 		fmt.Fprintln(w, "Usage: zhihu collections [-l LIMIT] [--json]")
 	case "notifications":
-		fmt.Fprintln(w, "Usage: zhihu notifications [-l LIMIT] [--offset OFFSET] [--monitor] [--interval SECONDS] [--debug-log PATH] [--json]")
+		fmt.Fprintln(w, "Usage:")
+		fmt.Fprintln(w, "  zhihu notifications [-l LIMIT] [--offset OFFSET] [--monitor] [--interval SECONDS] [--debug-log PATH] [--json]")
+		fmt.Fprintln(w, "  zhihu notifications mark-read --tab default|follow|vote_thank")
+		fmt.Fprintln(w, "  zhihu notifications mark-read --all-tabs")
 	case "reply-comment":
 		fmt.Fprintln(w, "Usage: zhihu reply-comment COMMENT_ID CONTENT [--resource-type TYPE --resource-id ID] [--json]")
 	case "ask":
@@ -773,6 +776,9 @@ func runCollections(ctx context.Context, args []string, out io.Writer) error {
 }
 
 func runNotifications(ctx context.Context, args []string, out io.Writer) error {
+	if len(args) > 0 && args[0] == "mark-read" {
+		return runNotificationsMarkRead(ctx, args[1:], out)
+	}
 	opts, err := parseOptions(args, specs(
 		opt("-l", "limit", true),
 		opt("--limit", "limit", true),
@@ -831,6 +837,41 @@ func runNotifications(ctx context.Context, args []string, out io.Writer) error {
 			}
 		}
 	}
+	return nil
+}
+
+func runNotificationsMarkRead(ctx context.Context, args []string, out io.Writer) error {
+	opts, err := parseOptions(args, specs(
+		opt("--tab", "tab", true),
+		opt("--all-tabs", "all-tabs", false),
+	))
+	if err != nil {
+		return err
+	}
+	if len(opts.positionals) != 0 {
+		return fmt.Errorf("usage: zhihu notifications mark-read --tab default|follow|vote_thank OR --all-tabs")
+	}
+	_, hasTab := opts.value("tab")
+	if opts.has("all-tabs") == hasTab {
+		return fmt.Errorf("choose exactly one: --tab default|follow|vote_thank OR --all-tabs")
+	}
+	c, err := authenticatedClient()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	if opts.has("all-tabs") {
+		if err := c.MarkAllNotificationsRead(ctx); err != nil {
+			return err
+		}
+		fmt.Fprintln(out, display.Success("marked all notification tabs read"))
+		return nil
+	}
+	tab := opts.str("tab", "")
+	if err := c.MarkNotificationsRead(ctx, tab); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, display.Success("marked notification tab read: "+tab))
 	return nil
 }
 
@@ -947,6 +988,17 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 			}
 			monitorOut.NewSeparator(checkedAt, len(newItems), sendBell)
 			writeNotificationLines(out, lines)
+			if sendBell {
+				if err := c.MarkAllNotificationsRead(ctx); err != nil {
+					if logErr := debugLog.Log(checkedAt, "mark_read_error", map[string]any{"error": err.Error()}); logErr != nil {
+						return logErr
+					}
+					return fmt.Errorf("mark notifications read after bell: %w", err)
+				}
+				if err := debugLog.Log(checkedAt, "mark_read_all_tabs", map[string]any{"reason": "bell"}); err != nil {
+					return err
+				}
+			}
 			monitorOut.Status(checkedAt, "waiting")
 		}
 	}
