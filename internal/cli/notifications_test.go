@@ -366,6 +366,17 @@ func TestIncomingCommentSnippet(t *testing.T) {
 			want: strings.Repeat("字", 140) + "...",
 		},
 		{
+			name: "hidden URL prefix",
+			n: map[string]any{
+				"content": map[string]any{"verb": "回复了你的评论"},
+				"target": map[string]any{
+					"type":    "comment",
+					"content": `用啥<a href="https://link.zhihu.com/" class="external"><span class="invisible">https://</span><span class="visible">1.6</span><span class="invisible"></span></a> 上<a href="https://link.zhihu.com/" class="external"><span class="invisible">https://</span><span class="visible">2.0</span></a> lite`,
+				},
+			},
+			want: "用啥1.6 上2.0 lite",
+		},
+		{
 			name: "like my comment",
 			n: map[string]any{
 				"content": map[string]any{"verb": "喜欢了你的评论"},
@@ -702,11 +713,14 @@ func TestShouldSendNotificationBell(t *testing.T) {
 
 func TestMonitorLines(t *testing.T) {
 	tm := time.Date(2026, 7, 8, 15, 4, 5, 0, time.Local)
-	if got, want := monitorStatusLineWithColumns(tm, "no new notifications", 100), "\r\033[2KLast check: 15:04:05 · no new notifications"; got != want {
+	if got, want := monitorStatusLineWithColumns(tm, "no new notifications", 100), "\r\033[2KLast check: 15:04:05 · ⠋ no new notifications"; got != want {
 		t.Fatalf("monitorStatusLine=%q, want %q", got, want)
 	}
-	if got, want := monitorStatusLineWithColumns(tm, "error: API request failed\nwith status 500:", 100), "\r\033[2KLast check: 15:04:05 · error: API request failed with status 500:"; got != want {
+	if got, want := monitorStatusLineWithColumns(tm, "error: API request failed\nwith status 500:", 100), "\r\033[2KLast check: 15:04:05 · ⠋ error: API request failed with status 500:"; got != want {
 		t.Fatalf("monitorStatusLine error=%q, want %q", got, want)
+	}
+	if got, want := monitorStatusLineAtFrameWithColumns(tm, "waiting", 1, 100), "\r\033[2KLast check: 15:04:05 · ⠙ waiting"; got != want {
+		t.Fatalf("monitorStatusLine frame=%q, want %q", got, want)
 	}
 	if got, want := monitorNewSeparator(tm, 2, false), "\r\033[2K\n----- New notifications @ 15:04:05 (2 new) -----\n"; got != want {
 		t.Fatalf("monitorNewSeparator=%q, want %q", got, want)
@@ -719,9 +733,22 @@ func TestMonitorLines(t *testing.T) {
 func TestMonitorStatusLineTruncatesLongStatus(t *testing.T) {
 	tm := time.Date(2026, 7, 8, 15, 4, 5, 0, time.Local)
 	status := "refresh failed: " + strings.Repeat("x", 80)
-	want := "\r\033[2KLast check: 15:04:05 · refresh failed: xxxxxxxx..."
+	want := "\r\033[2KLast check: 15:04:05 · ⠋ refresh failed: xxxxxx..."
 	if got := monitorStatusLineWithColumns(tm, status, 50); got != want {
 		t.Fatalf("monitorStatusLine=%q, want %q", got, want)
+	}
+}
+
+func TestMonitorOutputTicksSpinner(t *testing.T) {
+	var out strings.Builder
+	tm := time.Date(2026, 7, 8, 15, 4, 5, 0, time.Local)
+	monitor := newMonitorOutput(&out)
+	monitor.Status(tm, "waiting")
+	first := monitorStatusLineAtFrame(tm, "waiting", 0)
+	monitor.Tick()
+	want := first + monitorClearStatus(monitorStatusRows(first)) + monitorStatusLineAtFrame(tm, "waiting", 1)
+	if got := out.String(); got != want {
+		t.Fatalf("output=%q, want %q", got, want)
 	}
 }
 

@@ -10,12 +10,14 @@ import (
 )
 
 var tagPattern = regexp.MustCompile(`<[^>]+>`)
+var invisibleSpanPattern = regexp.MustCompile(`(?is)<span\b[^>]*\bclass\s*=\s*(?:"(?:[^"]*\s)?invisible(?:\s[^"]*)?"|'(?:[^']*\s)?invisible(?:\s[^']*)?')[^>]*>.*?</span\s*>`)
 
 func StripHTML(text string) string {
 	if text == "" {
 		return ""
 	}
-	clean := tagPattern.ReplaceAllString(text, "")
+	clean := invisibleSpanPattern.ReplaceAllString(text, "")
+	clean = tagPattern.ReplaceAllString(clean, "")
 	return strings.TrimSpace(html.UnescapeString(clean))
 }
 

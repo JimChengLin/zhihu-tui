@@ -13,6 +13,8 @@ func TestStripHTML(t *testing.T) {
 		"<a href='#'>click &gt; here</a>": "click > here",
 		"  <p> padded </p>  ":             "padded",
 		"line1<br/>line2":                 "line1line2",
+		`用啥<a href="https://link.zhihu.com/" class="external"><span class="invisible">https://</span><span class="visible">1.6</span><span class="invisible"></span></a>`: "用啥1.6",
+		`<span class="not-invisible">keep me</span>`: "keep me",
 	}
 	for in, want := range tests {
 		if got := StripHTML(in); got != want {
