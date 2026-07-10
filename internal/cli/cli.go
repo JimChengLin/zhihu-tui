@@ -36,7 +36,7 @@ const notificationHistoryRetention = 90 * 24 * time.Hour
 const notificationActorCacheTTL = 24 * time.Hour
 const notificationBellInterval = time.Hour
 const monitorStatusFallbackColumns = 100
-const monitorSpinnerInterval = time.Second
+const monitorSpinnerInterval = 100 * time.Millisecond
 
 var monitorSpinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
