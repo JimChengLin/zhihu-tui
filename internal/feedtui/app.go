@@ -28,6 +28,7 @@ type app struct {
 	items                []feedItem
 	index                int
 	scroll               int
+	sidebarStart         int
 	width                int
 	height               int
 	nextURL              string
@@ -226,6 +227,7 @@ func (model *app) applyFetch(result fetchResult) {
 		model.items = nil
 		model.index = 0
 		model.scroll = 0
+		model.sidebarStart = 0
 		model.end = false
 		model.nextURL = ""
 		model.viewedThrough = 0

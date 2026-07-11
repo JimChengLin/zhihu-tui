@@ -21,9 +21,11 @@ const (
 )
 
 type styledLine struct {
-	text  string
-	style string
-	raw   bool
+	text        string
+	style       string
+	suffix      string
+	suffixStyle string
+	raw         bool
 }
 
 type layoutMetrics struct {
@@ -110,8 +112,20 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		model.scroll = maxScroll
 	}
 	end := minInt(len(bodyLines), model.scroll+bodyHeight)
-	for _, bodyLine := range bodyLines[model.scroll:end] {
-		lines = append(lines, line(bodyLine, ""))
+	thumbStart, thumbSize := scrollbarThumb(bodyHeight, len(bodyLines), model.scroll, maxScroll)
+	for row, bodyLine := range bodyLines[model.scroll:end] {
+		if maxScroll == 0 {
+			lines = append(lines, line(bodyLine, ""))
+			continue
+		}
+		bar := "┊"
+		if row >= thumbStart && row < thumbStart+thumbSize {
+			bar = "┃"
+		}
+		body := line(padCells(bodyLine, contentWidth)+" ", "")
+		body.suffix = bar
+		body.suffixStyle = ansiDim
+		lines = append(lines, body)
 	}
 	for len(lines) < model.height-fixedBottom {
 		lines = append(lines, styledLine{})
@@ -154,6 +168,21 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		bodyLines:  len(bodyLines),
 		maxScroll:  maxScroll,
 	}
+}
+
+func scrollbarThumb(trackHeight, contentHeight, scroll, maxScroll int) (int, int) {
+	if maxScroll <= 0 || trackHeight <= 0 || contentHeight <= 0 {
+		return 0, 0
+	}
+	thumbSize := maxInt(1, trackHeight*trackHeight/contentHeight)
+	thumbSize = minInt(trackHeight, thumbSize)
+	thumbStart := (trackHeight - thumbSize) * scroll / maxScroll
+	return thumbStart, thumbSize
+}
+
+func padCells(text string, width int) string {
+	text = truncateCells(text, width)
+	return text + strings.Repeat(" ", maxInt(0, width-stringCellWidth(text)))
 }
 
 func adaptiveReadingWidth(viewportWidth int) int {
@@ -210,8 +239,13 @@ func renderSidebar(model *app, width int) []styledLine {
 
 	visibleItems := maxInt(1, (model.height-5)/3)
 	visibleItems = minInt(visibleItems, len(model.items))
-	start := model.index - visibleItems/2
-	start = maxInt(0, minInt(start, len(model.items)-visibleItems))
+	start := maxInt(0, minInt(model.sidebarStart, len(model.items)-visibleItems))
+	if model.index < start {
+		start = model.index
+	} else if model.index >= start+visibleItems {
+		start = model.index - visibleItems + 1
+	}
+	model.sidebarStart = start
 	separator := strings.Repeat("─", width-1)
 	if start > 0 {
 		prefix := fmt.Sprintf(" ↑ 前面还有 %d 条 ", start)
@@ -257,11 +291,18 @@ func renderSidebar(model *app, width int) []styledLine {
 }
 
 func mergeColumns(left styledLine, leftWidth int, right styledLine, rightWidth int) styledLine {
-	leftText := truncateCells(left.text, leftWidth)
-	leftPadding := strings.Repeat(" ", maxInt(0, leftWidth-stringCellWidth(leftText)))
-	rightText := truncateCells(right.text, maxInt(1, rightWidth-1))
-	text := styleText(leftText, left.style) + leftPadding + styleText(" │ ", ansiDim) + styleText(rightText, right.style)
+	leftText, leftTextWidth := renderStyledLine(left, leftWidth)
+	leftPadding := strings.Repeat(" ", maxInt(0, leftWidth-leftTextWidth))
+	rightText, _ := renderStyledLine(right, maxInt(1, rightWidth-1))
+	text := leftText + leftPadding + styleText(" │ ", ansiDim) + rightText
 	return styledLine{text: text, raw: true}
+}
+
+func renderStyledLine(line styledLine, maxWidth int) (string, int) {
+	suffix := truncateCells(line.suffix, maxWidth)
+	suffixWidth := stringCellWidth(suffix)
+	text := truncateCells(line.text, maxInt(0, maxWidth-suffixWidth))
+	return styleText(text, line.style) + styleText(suffix, line.suffixStyle), stringCellWidth(text) + suffixWidth
 }
 
 func styleText(text, style string) string {
@@ -356,14 +397,8 @@ func writeFrame(out interface{ Write([]byte) (int, error) }, lines []styledLine,
 			if lines[row].raw {
 				builder.WriteString(lines[row].text)
 			} else {
-				text := truncateCells(lines[row].text, maxInt(1, width-1))
-				if lines[row].style != "" && text != "" {
-					builder.WriteString(lines[row].style)
-					builder.WriteString(text)
-					builder.WriteString(ansiReset)
-				} else {
-					builder.WriteString(text)
-				}
+				text, _ := renderStyledLine(lines[row], maxInt(1, width-1))
+				builder.WriteString(text)
 			}
 		}
 		if row+1 < height {

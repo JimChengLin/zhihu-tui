@@ -310,6 +310,35 @@ func TestRenderAppUsesResponsiveWideLayout(t *testing.T) {
 	}
 }
 
+func TestSidebarSelectionStaysPutWhenNextPageArrives(t *testing.T) {
+	items := make([]feedItem, 10)
+	for index := range items {
+		items[index] = feedItem{key: toString(index), title: "动态 " + toString(index+1)}
+	}
+	model := &app{items: items, index: 7, height: 32}
+	before := selectedSidebarRow(renderSidebar(model, 40))
+	if before < 0 {
+		t.Fatal("selected item is missing before pagination")
+	}
+
+	for index := 10; index < 20; index++ {
+		model.items = append(model.items, feedItem{key: toString(index), title: "动态 " + toString(index+1)})
+	}
+	after := selectedSidebarRow(renderSidebar(model, 40))
+	if before != after {
+		t.Fatalf("selected sidebar row moved from %d to %d after pagination", before, after)
+	}
+}
+
+func selectedSidebarRow(lines []styledLine) int {
+	for row, line := range lines {
+		if strings.HasPrefix(line.text, "› ") {
+			return row
+		}
+	}
+	return -1
+}
+
 func TestAddParagraphSpacingPreservesAuthorLayout(t *testing.T) {
 	lines := []string{"第一段第一行", "第一段第二行", "", "第二段"}
 	want := []string{"第一段第一行", "第一段第二行", "", "", "第二段"}
@@ -340,10 +369,59 @@ func TestReadingHeaderDoesNotRepeatImageCount(t *testing.T) {
 	}
 }
 
+func TestLongBodyScrollbarTracksReadingPosition(t *testing.T) {
+	model := &app{
+		items: []feedItem{{
+			kind:   "answer",
+			action: "某人赞同了回答",
+			title:  "长文",
+			author: "答主",
+			body:   strings.Repeat("这是一段用于测试长文滚动位置的正文。", 80),
+		}},
+		width:  100,
+		height: 24,
+	}
+	lines, metrics := renderSingleApp(model)
+	bar := scrollbarLines(lines)
+	if len(bar) != metrics.bodyHeight {
+		t.Fatalf("scrollbar height=%d, want body height %d", len(bar), metrics.bodyHeight)
+	}
+	if bar[0].suffix != "┃" {
+		t.Fatalf("top scrollbar does not start with the thumb: %q", bar[0].suffix)
+	}
+	if bar[0].suffixStyle != ansiDim {
+		t.Fatalf("scrollbar style=%q, want dim", bar[0].suffixStyle)
+	}
+	var output strings.Builder
+	if err := writeFrame(&output, []styledLine{bar[0]}, model.width, 1); err != nil {
+		t.Fatalf("writeFrame(): %v", err)
+	}
+	if !strings.Contains(output.String(), ansiDim+"┃"+ansiReset) {
+		t.Fatalf("rendered scrollbar is not dim: %q", output.String())
+	}
+
+	model.scroll = metrics.maxScroll
+	lines, _ = renderSingleApp(model)
+	bar = scrollbarLines(lines)
+	if bar[len(bar)-1].suffix != "┃" {
+		t.Fatalf("bottom scrollbar does not end with the thumb: %q", bar[len(bar)-1].suffix)
+	}
+}
+
+func scrollbarLines(lines []styledLine) []styledLine {
+	var result []styledLine
+	for _, line := range lines {
+		if line.suffix == "┊" || line.suffix == "┃" {
+			result = append(result, line)
+		}
+	}
+	return result
+}
+
 func styledLineTexts(lines []styledLine) []string {
 	texts := make([]string, len(lines))
 	for index := range lines {
-		texts[index] = lines[index].text
+		texts[index] = lines[index].text + lines[index].suffix
 	}
 	return texts
 }
