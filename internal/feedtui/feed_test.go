@@ -159,6 +159,14 @@ func TestParseFeedItemsExpandsServerFoldedGroup(t *testing.T) {
 	if !strings.Contains(groupPreview, "同一个问题") || !strings.Contains(groupPreview, "另一位用户 赞同了 匿名用户 的回答") || !strings.Contains(groupPreview, "  正文") {
 		t.Fatalf("collapsed group has no useful content preview: %q", groupPreview)
 	}
+	for _, line := range groupLines {
+		if strings.Contains(line.text, "还有 1 个动态被收起") && line.style != ansiDim {
+			t.Fatalf("folded group title style=%q, want neutral dim text", line.style)
+		}
+		if strings.Contains(line.text, "同一个问题") && line.style != ansiBlue {
+			t.Fatalf("folded child title style=%q, want content-title blue", line.style)
+		}
+	}
 	if strings.Contains(groupPreview, "知乎收起\n") || strings.Contains(groupPreview, "展开到左栏") {
 		t.Fatalf("collapsed group still renders redundant labels or instructions: %q", groupPreview)
 	}
@@ -194,6 +202,11 @@ func TestFoldedPreviewMarksOnlyTruncatedExcerpts(t *testing.T) {
 	}
 	if strings.Contains(rendered, "（全文）") {
 		t.Fatalf("folded preview still renders the redundant full-text marker: %q", rendered)
+	}
+	for _, line := range lines {
+		if strings.Contains(line.text, "令人感叹") && line.style != "" {
+			t.Fatalf("folded answer excerpt style=%q, want normal body text", line.style)
+		}
 	}
 }
 

@@ -18,7 +18,6 @@ const (
 	ansiGreen         = "\033[38;5;114m"
 	ansiRed           = "\033[38;5;203m"
 	ansiCode          = "\033[38;5;245m"
-	ansiPreview       = "\033[38;5;250m"
 	minReadingWidth   = 96
 	maxReadingWidth   = 112
 	paragraphGapLines = 2
@@ -90,8 +89,12 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		titleLines = titleLines[:3]
 		titleLines[2] = truncateCells(strings.TrimSuffix(titleLines[2], "…")+"…", contentWidth)
 	}
+	titleStyle := ansiBold + ansiBlue
+	if len(item.foldedItems) > 0 {
+		titleStyle = ansiDim
+	}
 	for _, titleLine := range titleLines {
-		lines = append(lines, line(titleLine, ansiBold+ansiBlue))
+		lines = append(lines, line(titleLine, titleStyle))
 	}
 
 	authorLine := item.author
@@ -331,7 +334,7 @@ func layoutFoldedGroupPreview(children []feedItem, width int) []styledLine {
 			excerptLines[last] = truncateCells(strings.TrimSuffix(excerptLines[last], "…")+"…", excerptWidth)
 		}
 		for _, excerptLine := range excerptLines {
-			lines = append(lines, styledLine{text: "  " + excerptLine, style: ansiPreview})
+			lines = append(lines, styledLine{text: "  " + excerptLine})
 		}
 	}
 	return lines
