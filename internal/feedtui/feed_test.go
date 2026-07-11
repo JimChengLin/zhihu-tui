@@ -2,6 +2,7 @@ package feedtui
 
 import (
 	"bufio"
+	"context"
 	"regexp"
 	"strings"
 	"testing"
@@ -127,6 +128,59 @@ func TestReadKeyRecognizesNavigationSequences(t *testing.T) {
 		if got != test.want {
 			t.Fatalf("readKey(%q)=%q, want %q", test.input, got, test.want)
 		}
+	}
+}
+
+func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
+	ctx := context.Background()
+	model := &app{
+		items:   []feedItem{{key: "1"}, {key: "2"}},
+		metrics: layoutMetrics{bodyHeight: 8, maxScroll: 8},
+	}
+
+	model.scroll = model.metrics.maxScroll
+	model.handleKey(ctx, "j")
+	if model.index != 0 || model.scroll != model.metrics.maxScroll {
+		t.Fatalf("j changed item or crossed the body boundary: index=%d scroll=%d", model.index, model.scroll)
+	}
+	model.index, model.scroll = 1, 0
+	model.handleKey(ctx, "k")
+	if model.index != 1 || model.scroll != 0 {
+		t.Fatalf("k changed item or crossed the body boundary: index=%d scroll=%d", model.index, model.scroll)
+	}
+
+	model.index, model.scroll = 0, 0
+	model.handleKey(ctx, " ")
+	if model.scroll != 4 || model.index != 0 {
+		t.Fatalf("first space did not move down half a page: index=%d scroll=%d", model.index, model.scroll)
+	}
+	model.handleKey(ctx, " ")
+	if model.scroll != 8 || model.index != 0 || model.boundarySwitchKey != " " {
+		t.Fatalf("space did not stop and arm at the bottom: index=%d scroll=%d key=%q", model.index, model.scroll, model.boundarySwitchKey)
+	}
+	if !strings.Contains(model.message, "再按一次 space") {
+		t.Fatalf("bottom confirmation message=%q", model.message)
+	}
+	model.handleKey(ctx, " ")
+	if model.index != 1 || model.scroll != 0 {
+		t.Fatalf("confirmed space did not switch to the next item: index=%d scroll=%d", model.index, model.scroll)
+	}
+
+	model.scroll = 8
+	model.handleKey(ctx, "b")
+	if model.scroll != 4 || model.index != 1 {
+		t.Fatalf("first b did not move up half a page: index=%d scroll=%d", model.index, model.scroll)
+	}
+	model.handleKey(ctx, "b")
+	if model.scroll != 0 || model.index != 1 || model.boundarySwitchKey != "b" {
+		t.Fatalf("b did not stop and arm at the top: index=%d scroll=%d key=%q", model.index, model.scroll, model.boundarySwitchKey)
+	}
+	if !strings.Contains(model.message, "再按一次 b") {
+		t.Fatalf("top confirmation message=%q", model.message)
+	}
+	model.handleKey(ctx, "b")
+	if model.index != 0 || model.scroll == 0 {
+		t.Fatalf("confirmed b did not switch to the previous item bottom: index=%d scroll=%d", model.index, model.scroll)
 	}
 }
 

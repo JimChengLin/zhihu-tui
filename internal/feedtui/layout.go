@@ -156,9 +156,9 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	}
 	status := strings.Join(statusParts, "  ·  ")
 	lines = append(lines, line(truncateCells(status, contentWidth), ansiDim))
-	hints := "j/k 滚动  space/b 翻页  n/p 切换  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
+	hints := "j/k 滚动  space/b 半页/确认切换  n/p 直接切换  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
 	if model.zenMode {
-		hints = "j/k 滚动  space/b 翻页  n/p 切换  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
+		hints = "j/k 滚动  space/b 半页/确认切换  n/p 直接切换  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
 	}
 	lines = append(lines, line(truncateCells(hints, contentWidth), ansiCyan))
 	lines = append(lines, styledLine{})
@@ -352,11 +352,11 @@ func renderHelp(width, height int) []styledLine {
 	lines := []styledLine{
 		{text: pad + "知乎关注 · 快捷键", style: ansiBold + ansiCyan},
 		{},
-		{text: pad + "j / ↓       向下滚动；正文到底后进入下一条"},
-		{text: pad + "k / ↑       向上滚动；正文顶部时回到上一条"},
-		{text: pad + "space / f    向下翻一页；页尾后进入下一条"},
-		{text: pad + "b / PageUp   向上翻一页"},
-		{text: pad + "d / u        向下 / 向上翻半页"},
+		{text: pad + "j / ↓       向下滚动；正文底部停止"},
+		{text: pad + "k / ↑       向上滚动；正文顶部停止"},
+		{text: pad + "space        向下半页；到底后再按一次切换下一条"},
+		{text: pad + "b            向上半页；到顶后再按一次切换上一条"},
+		{text: pad + "d / u        向下 / 向上半页，不切换动态"},
 		{text: pad + "n/p · h/l · ←/→  下一条 / 上一条"},
 		{text: pad + "g / G        第一条 / 最后一条已加载动态"},
 		{text: pad + "c            加载评论 / 返回正文"},

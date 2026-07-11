@@ -38,6 +38,8 @@ type app struct {
 	err                  error
 	message              string
 	messageUntil         time.Time
+	boundarySwitchKey    keyEvent
+	boundarySwitchUntil  time.Time
 	showHelp             bool
 	zenMode              bool
 	hideFeedHeader       bool
@@ -288,6 +290,9 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 		}
 		return false
 	}
+	if key != model.boundarySwitchKey {
+		model.clearBoundarySwitch()
+	}
 	switch key {
 	case "?":
 		model.showHelp = true
@@ -312,17 +317,17 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 	case "p", "h", keyLeft:
 		model.movePrevious(false)
 	case "j", keyDown:
-		model.lineDown(ctx)
+		model.lineDown()
 	case "k", keyUp:
 		model.lineUp()
-	case " ", "f", keyPageDown, "\r":
-		model.pageDown(ctx, maxInt(1, model.metrics.bodyHeight-1))
-	case "b", keyPageUp:
-		model.pageUp(maxInt(1, model.metrics.bodyHeight-1))
-	case "d":
-		model.pageDown(ctx, maxInt(1, model.metrics.bodyHeight/2))
-	case "u":
-		model.pageUp(maxInt(1, model.metrics.bodyHeight/2))
+	case " ":
+		model.pageDownWithConfirmation(ctx, maxInt(1, model.metrics.bodyHeight/2))
+	case "b":
+		model.pageUpWithConfirmation(maxInt(1, model.metrics.bodyHeight/2))
+	case "f", keyPageDown, "\r", "d":
+		model.scrollDown(maxInt(1, model.metrics.bodyHeight/2))
+	case keyPageUp, "u":
+		model.scrollUp(maxInt(1, model.metrics.bodyHeight/2))
 	case "g":
 		if len(model.items) > 0 {
 			model.commentMode = false
@@ -364,36 +369,99 @@ func (model *app) trackRefreshBoundary(item feedItem) {
 	model.newItemKeys[item.key] = struct{}{}
 }
 
-func (model *app) lineDown(ctx context.Context) {
+func (model *app) lineDown() {
 	if model.scroll < model.metrics.maxScroll {
 		model.scroll++
+		model.clearMessage()
 		return
 	}
-	model.moveNext(ctx)
+	model.setMessage("已到正文底部", 2*time.Second)
 }
 
 func (model *app) lineUp() {
 	if model.scroll > 0 {
 		model.scroll--
+		model.clearMessage()
 		return
 	}
-	model.movePrevious(true)
+	model.setMessage("已到正文顶部", 2*time.Second)
 }
 
-func (model *app) pageDown(ctx context.Context, amount int) {
+func (model *app) pageDownWithConfirmation(ctx context.Context, amount int) {
+	if model.scroll < model.metrics.maxScroll {
+		model.clearBoundarySwitch()
+		model.scroll = minInt(model.metrics.maxScroll, model.scroll+amount)
+		model.clearMessage()
+		if model.scroll == model.metrics.maxScroll {
+			model.armBoundarySwitch(" ", "已到正文底部，再按一次 space 切换下一条")
+		}
+		return
+	}
+	if model.consumeBoundarySwitch(" ") {
+		model.moveNext(ctx)
+		return
+	}
+	model.armBoundarySwitch(" ", "已到正文底部，再按一次 space 切换下一条")
+}
+
+func (model *app) pageUpWithConfirmation(amount int) {
+	if model.scroll > 0 {
+		model.clearBoundarySwitch()
+		model.scroll = maxInt(0, model.scroll-amount)
+		model.clearMessage()
+		if model.scroll == 0 {
+			model.armBoundarySwitch("b", "已到正文顶部，再按一次 b 切换上一条")
+		}
+		return
+	}
+	if model.consumeBoundarySwitch("b") {
+		model.movePrevious(true)
+		return
+	}
+	model.armBoundarySwitch("b", "已到正文顶部，再按一次 b 切换上一条")
+}
+
+func (model *app) scrollDown(amount int) {
 	if model.scroll < model.metrics.maxScroll {
 		model.scroll = minInt(model.metrics.maxScroll, model.scroll+amount)
+		model.clearMessage()
 		return
 	}
-	model.moveNext(ctx)
+	model.setMessage("已到正文底部", 2*time.Second)
 }
 
-func (model *app) pageUp(amount int) {
+func (model *app) scrollUp(amount int) {
 	if model.scroll > 0 {
 		model.scroll = maxInt(0, model.scroll-amount)
+		model.clearMessage()
 		return
 	}
-	model.movePrevious(true)
+	model.setMessage("已到正文顶部", 2*time.Second)
+}
+
+func (model *app) armBoundarySwitch(key keyEvent, message string) {
+	model.boundarySwitchKey = key
+	model.boundarySwitchUntil = time.Now().Add(4 * time.Second)
+	model.setMessage(message, 4*time.Second)
+}
+
+func (model *app) consumeBoundarySwitch(key keyEvent) bool {
+	confirmed := model.boundarySwitchKey == key && time.Now().Before(model.boundarySwitchUntil)
+	model.clearBoundarySwitch()
+	return confirmed
+}
+
+func (model *app) clearBoundarySwitch() {
+	if model.boundarySwitchKey != "" {
+		model.clearMessage()
+	}
+	model.boundarySwitchKey = ""
+	model.boundarySwitchUntil = time.Time{}
+}
+
+func (model *app) clearMessage() {
+	model.message = ""
+	model.messageUntil = time.Time{}
 }
 
 func (model *app) moveNext(ctx context.Context) {
