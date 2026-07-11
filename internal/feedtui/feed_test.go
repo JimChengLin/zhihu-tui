@@ -184,7 +184,7 @@ func TestPinLinkCardLoadsAndRendersReferencedPin(t *testing.T) {
 		"▣ 引用想法",
 		"北大才女用算法贩毒一年赚 1 亿美金，最终被判30年",
 		"赞同 69  ·  收藏 40  ·  评论 47",
-		"▣ 封面图片",
+		"▣ 图片",
 	} {
 		if !strings.Contains(items[0].body, expected) {
 			t.Fatalf("pin body has no %q: %q", expected, items[0].body)
@@ -416,6 +416,76 @@ func TestFoldedGroupRefreshDoesNotDuplicateOrBlockReadBottom(t *testing.T) {
 	if len(model.items) != 3 {
 		t.Fatalf("second refresh accumulated duplicate folded group: %#v", model.items)
 	}
+}
+
+func TestRefreshMergesTopLevelAndFoldedRepresentationsByLeafKey(t *testing.T) {
+	groupRaw := func(id string, children ...map[string]any) map[string]any {
+		list := make([]any, len(children))
+		for index := range children {
+			list[index] = children[index]
+		}
+		return map[string]any{
+			"id":         id,
+			"group_text": "还有 {LIST_COUNT} 个用户的动态被收起",
+			"list":       list,
+		}
+	}
+	response := func(items ...any) map[string]any {
+		return map[string]any{"data": items, "paging": map[string]any{"is_end": true}}
+	}
+	refresh := func(previous []any, next map[string]any) *app {
+		model := &app{
+			generation:           1,
+			items:                parseFeedItems(previous),
+			pendingRefreshTopKey: "refresh",
+		}
+		model.applyFetch(fetchResult{response: next, reset: true, generation: 1})
+		return model
+	}
+
+	t.Run("top level to folded", func(t *testing.T) {
+		activity := feedTestRaw("same", "同一条动态")
+		model := refresh([]any{activity}, response(groupRaw("group", activity)))
+		if len(model.items) != 1 || len(model.items[0].foldedItems) != 1 {
+			t.Fatalf("top-level activity was retained beside its folded representation: %#v", model.items)
+		}
+	})
+
+	t.Run("folded to top level", func(t *testing.T) {
+		activity := feedTestRaw("same", "同一条动态")
+		model := refresh([]any{groupRaw("group", activity)}, response(activity))
+		if len(model.items) != 1 || len(model.items[0].foldedItems) != 0 || model.items[0].key != "answer:same" {
+			t.Fatalf("folded activity was retained beside its top-level representation: %#v", model.items)
+		}
+	})
+
+	t.Run("same group keeps only omitted children", func(t *testing.T) {
+		oldA := feedTestRaw("old-a", "旧动态 A")
+		oldB := feedTestRaw("old-b", "旧动态 B")
+		newC := feedTestRaw("new-c", "新动态 C")
+		model := refresh(
+			[]any{groupRaw("group", oldA, oldB)},
+			response(groupRaw("group", oldA, newC)),
+		)
+		if len(model.items) != 1 || len(model.items[0].foldedItems) != 3 {
+			t.Fatalf("same folded group was duplicated or lost omitted children: %#v", model.items)
+		}
+		if model.items[0].title != "还有 3 个用户的动态被收起" {
+			t.Fatalf("merged folded group title=%q", model.items[0].title)
+		}
+		keys := make(map[string]int)
+		for _, child := range model.items[0].foldedItems {
+			keys[child.key]++
+		}
+		for _, key := range []string{"answer:old-a", "answer:old-b", "answer:new-c"} {
+			if keys[key] != 1 {
+				t.Fatalf("leaf %q occurs %d times in %#v", key, keys[key], model.items)
+			}
+		}
+		if _, isNew := model.newItemKeys["answer:new-c"]; !isNew {
+			t.Fatalf("new folded child was not marked new: %#v", model.newItemKeys)
+		}
+	})
 }
 
 func TestCollapsedGroupInheritsAndExpandedGroupDistributesReadState(t *testing.T) {

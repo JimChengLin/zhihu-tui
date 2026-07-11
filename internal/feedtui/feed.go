@@ -286,7 +286,7 @@ func formatPinLinkCard(node map[string]any) string {
 	}
 	for _, rawNode := range asSlice(detail["content"]) {
 		if strings.EqualFold(toString(mapValue(rawNode)["type"]), "image") {
-			lines = append(lines, "▣ 封面图片")
+			lines = append(lines, "▣ 图片")
 			break
 		}
 	}

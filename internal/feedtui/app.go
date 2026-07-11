@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -17,6 +19,7 @@ import (
 const feedPageSize = 10
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+var foldedGroupCountPattern = regexp.MustCompile(`^(还有\s*)\d+`)
 
 type feedSource interface {
 	pinSource
@@ -258,35 +261,47 @@ func (model *app) applyFetch(result fetchResult) {
 			model.newItemKeys = make(map[string]struct{})
 		}
 	}
-	seen := make(map[string]struct{}, len(model.items)+len(newItems))
-	for _, item := range model.items {
-		seen[item.key] = struct{}{}
-	}
 	added := 0
-	for _, item := range newItems {
-		if _, exists := seen[item.key]; exists {
-			continue
+	if result.reset {
+		representedLeaves := make(map[string]struct{})
+		for _, item := range newItems {
+			item, leafCount, kept := takeUnrepresentedFeedLeaves(item, representedLeaves)
+			if !kept {
+				continue
+			}
+			model.items = appendOrMergeFeedGroup(model.items, item)
+			if refreshingExistingFeed {
+				markUnseenFeedItemKeys(item, previousKeys, model.newItemKeys)
+				added += countUnseenFeedItemKeys(item, previousKeys)
+			} else {
+				added += leafCount
+			}
 		}
-		seen[item.key] = struct{}{}
-		model.items = append(model.items, item)
-		if !result.reset {
-			added++
-			continue
+	} else {
+		seen := make(map[string]struct{}, len(model.items)+len(newItems))
+		for _, item := range model.items {
+			seen[item.key] = struct{}{}
 		}
-		if _, existed := previousKeys[item.key]; !existed {
-			added++
-		}
-		if refreshingExistingFeed {
-			markUnseenFeedItemKeys(item, previousKeys, model.newItemKeys)
-		}
-	}
-	if refreshingExistingFeed {
-		for _, item := range previousItems {
+		for _, item := range newItems {
 			if _, exists := seen[item.key]; exists {
 				continue
 			}
 			seen[item.key] = struct{}{}
 			model.items = append(model.items, item)
+			added++
+		}
+	}
+	if refreshingExistingFeed {
+		representedLeaves := make(map[string]struct{})
+		for _, item := range model.items {
+			collectFeedItemKeys(item, representedLeaves)
+		}
+		for _, item := range previousItems {
+			item, _, kept := takeUnrepresentedFeedLeaves(item, representedLeaves)
+			if !kept {
+				continue
+			}
+			model.items = appendOrMergeFeedGroup(model.items, item)
 		}
 	}
 
@@ -402,10 +417,77 @@ func collapsedFeedItems(items []feedItem) []feedItem {
 }
 
 func collectFeedItemKeys(item feedItem, keys map[string]struct{}) {
-	keys[item.key] = struct{}{}
+	if len(item.foldedItems) == 0 {
+		keys[item.key] = struct{}{}
+		return
+	}
 	for _, child := range item.foldedItems {
 		collectFeedItemKeys(child, keys)
 	}
+}
+
+func takeUnrepresentedFeedLeaves(item feedItem, represented map[string]struct{}) (feedItem, int, bool) {
+	if len(item.foldedItems) == 0 {
+		if _, exists := represented[item.key]; exists {
+			return feedItem{}, 0, false
+		}
+		represented[item.key] = struct{}{}
+		return item, 1, true
+	}
+
+	children := make([]feedItem, 0, len(item.foldedItems))
+	leaves := 0
+	for _, child := range item.foldedItems {
+		child, childLeaves, kept := takeUnrepresentedFeedLeaves(child, represented)
+		if !kept {
+			continue
+		}
+		child.foldedParent = item.key
+		children = append(children, child)
+		leaves += childLeaves
+	}
+	if len(children) == 0 {
+		return feedItem{}, 0, false
+	}
+	item.foldedItems = children
+	item.groupOpen = false
+	item.title = updateFoldedGroupCount(item.title, len(children))
+	return item, leaves, true
+}
+
+func appendOrMergeFeedGroup(items []feedItem, item feedItem) []feedItem {
+	if len(item.foldedItems) == 0 {
+		return append(items, item)
+	}
+	for index := range items {
+		if items[index].key != item.key || len(items[index].foldedItems) == 0 {
+			continue
+		}
+		items[index].foldedItems = append(items[index].foldedItems, item.foldedItems...)
+		items[index].title = updateFoldedGroupCount(items[index].title, len(items[index].foldedItems))
+		return items
+	}
+	return append(items, item)
+}
+
+func updateFoldedGroupCount(title string, count int) string {
+	return foldedGroupCountPattern.ReplaceAllStringFunc(title, func(match string) string {
+		return strings.TrimRight(match, "0123456789") + strconv.Itoa(count)
+	})
+}
+
+func countUnseenFeedItemKeys(item feedItem, previous map[string]struct{}) int {
+	if len(item.foldedItems) == 0 {
+		if _, existed := previous[item.key]; existed {
+			return 0
+		}
+		return 1
+	}
+	count := 0
+	for _, child := range item.foldedItems {
+		count += countUnseenFeedItemKeys(child, previous)
+	}
+	return count
 }
 
 func markUnseenFeedItemKeys(item feedItem, previous, unseen map[string]struct{}) {
