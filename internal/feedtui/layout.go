@@ -137,6 +137,17 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	thumbStart, thumbSize := scrollbarThumb(bodyHeight, len(bodyLines), model.scroll, maxScroll)
 	for row, bodyLine := range bodyLines[model.scroll:end] {
 		if maxScroll == 0 {
+			if model.pageAnchorVisible && row == model.pageAnchorLine {
+				anchorText := bodyLine.text
+				if strings.TrimSpace(anchorText) == "" {
+					anchorText = strings.Repeat("┄", contentWidth)
+				}
+				lines = append(lines, styledLine{
+					text:  strings.Repeat(" ", maxInt(0, left-2)) + "▸ " + anchorText,
+					style: ansiBlue,
+				})
+				continue
+			}
 			lines = append(lines, line(bodyLine.text, bodyLine.style))
 			continue
 		}
@@ -186,9 +197,9 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	}
 	status := strings.Join(statusParts, "  ·  ")
 	lines = append(lines, line(truncateCells(status, contentWidth), ansiDim))
-	hints := "j/k 滚动  space/b 7/8页  n/p 切换  e 展开  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
+	hints := "j/k 滚动  space/b 翻页  n/p 切换  e 展开  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
 	if model.zenMode {
-		hints = "j/k 滚动  space/b 7/8页  n/p 切换  e 展开  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
+		hints = "j/k 滚动  space/b 翻页  n/p 切换  e 展开  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
 	}
 	lines = append(lines, line(truncateCells(hints, contentWidth), ansiCyan))
 	lines = append(lines, styledLine{})
@@ -442,23 +453,27 @@ func renderSidebar(model *app, width int) []styledLine {
 	row := 3
 	for index := start; index < start+visibleItems && row+1 < model.height-2; index++ {
 		item := model.items[index]
+		hierarchyIndent := ""
+		if item.foldedParent != "" {
+			hierarchyIndent = "    "
+		}
 		marker := "  "
 		style := ""
-		summaryPrefix := "  "
+		summaryPrefix := "  " + hierarchyIndent
 		summaryStyle := ansiDim
 		isNew, isReadTop, isReadBottom := sidebarItemState(model, item)
 		isReadBoundary := isReadTop || isReadBottom
 		if isReadTop && isReadBottom {
 			style = ansiCyan
-			summaryPrefix = "  上次读到↓↑ · "
+			summaryPrefix = "  " + hierarchyIndent + "上次读到↓↑ · "
 			summaryStyle = ansiCyan
 		} else if isReadTop {
 			style = ansiCyan
-			summaryPrefix = "  上次读到↓ · "
+			summaryPrefix = "  " + hierarchyIndent + "上次读到↓ · "
 			summaryStyle = ansiCyan
 		} else if isReadBottom {
 			style = ansiCyan
-			summaryPrefix = "  上次读到↑ · "
+			summaryPrefix = "  " + hierarchyIndent + "上次读到↑ · "
 			summaryStyle = ansiCyan
 		} else if isNew {
 			style = ansiGreen
@@ -479,7 +494,7 @@ func renderSidebar(model *app, width int) []styledLine {
 				titlePrefix = "▸ "
 			}
 		} else if item.foldedParent != "" {
-			titlePrefix = "  "
+			titlePrefix = hierarchyIndent
 		}
 		titleWidth := maxInt(1, width-stringCellWidth(marker)-1)
 		title := truncateCells(titlePrefix+item.title, titleWidth)
@@ -491,8 +506,6 @@ func renderSidebar(model *app, width int) []styledLine {
 			} else {
 				summary = "e/Enter 展开"
 			}
-		} else if item.serverFolded {
-			summary = "知乎收起 · " + firstNonEmpty(item.author, "匿名用户") + " · " + summary
 		}
 		lines[row+1] = styledLine{text: summaryPrefix + truncateCells(summary, maxInt(1, width-stringCellWidth(summaryPrefix)-1)), style: summaryStyle}
 		row += 3
@@ -580,8 +593,8 @@ func renderHelp(width, height int) []styledLine {
 		{},
 		{text: pad + "j / ↓       向下滚动；正文底部停止"},
 		{text: pad + "k / ↑       向上滚动；正文顶部停止"},
-		{text: pad + "space        向下 7/8 页；到底后再按一次切换下一条"},
-		{text: pad + "b            向上 7/8 页；到顶后再按一次切换上一条"},
+		{text: pad + "space        向下翻页；到底后再按一次切换下一条"},
+		{text: pad + "b            向上翻页；到顶后再按一次切换上一条"},
 		{text: pad + "d / u        向下 / 向上半页，不切换动态"},
 		{text: pad + "n/p · h/l · ←/→  下一条 / 上一条"},
 		{text: pad + "g / G        第一条 / 最后一条已加载动态"},

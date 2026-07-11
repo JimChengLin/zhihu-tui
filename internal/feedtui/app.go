@@ -39,7 +39,6 @@ type app struct {
 	message              string
 	messageUntil         time.Time
 	boundarySwitchKey    keyEvent
-	boundarySwitchUntil  time.Time
 	pageAnchorLine       int
 	pageAnchorVisible    bool
 	showHelp             bool
@@ -561,22 +560,17 @@ func (model *app) scrollUp(amount int) {
 
 func (model *app) armBoundarySwitch(key keyEvent, message string) {
 	model.boundarySwitchKey = key
-	model.boundarySwitchUntil = time.Now().Add(4 * time.Second)
 	model.setMessage(message, 4*time.Second)
 }
 
 func (model *app) consumeBoundarySwitch(key keyEvent) bool {
-	confirmed := model.boundarySwitchKey == key && time.Now().Before(model.boundarySwitchUntil)
+	confirmed := model.boundarySwitchKey == key
 	model.clearBoundarySwitch()
 	return confirmed
 }
 
 func (model *app) clearBoundarySwitch() {
-	if model.boundarySwitchKey != "" {
-		model.clearMessage()
-	}
-	model.boundarySwitchKey = ""
-	model.boundarySwitchUntil = time.Time{}
+	model.clearPageAnchor()
 }
 
 func (model *app) clearMessage() {
@@ -592,6 +586,10 @@ func (model *app) setPageAnchor(line int) {
 func (model *app) clearPageAnchor() {
 	model.pageAnchorLine = 0
 	model.pageAnchorVisible = false
+	if model.boundarySwitchKey != "" {
+		model.boundarySwitchKey = ""
+		model.clearMessage()
+	}
 }
 
 func (model *app) moveNext(ctx context.Context) {

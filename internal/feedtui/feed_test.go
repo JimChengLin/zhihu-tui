@@ -166,7 +166,7 @@ func TestParseFeedItemsExpandsServerFoldedGroup(t *testing.T) {
 		t.Fatalf("group did not expand: %#v", model.items)
 	}
 	sidebar = renderSidebar(model, 48)
-	if !strings.Contains(sidebar[6].text, "▾ 还有 1 个动态被收起") || !strings.Contains(sidebar[10].text, "知乎收起 · 匿名用户 · 另一位用户") {
+	if !strings.Contains(sidebar[6].text, "▾ 还有 1 个动态被收起") || sidebar[9].text != "      同一个问题" || sidebar[10].text != "      另一位用户 赞同了回答" {
 		t.Fatalf("expanded group or child is not identified: %#v", sidebar)
 	}
 	model.index = 2
@@ -312,7 +312,7 @@ func TestCollapsedGroupInheritsAndExpandedGroupDistributesReadState(t *testing.T
 	if strings.Contains(sidebar[7].text, "上次读到") {
 		t.Fatalf("expanded group kept inherited boundary: %#v", sidebar[7])
 	}
-	if !strings.HasPrefix(sidebar[10].text, "  上次读到↓ · ") || !strings.HasPrefix(sidebar[13].text, "  上次读到↑ · ") {
+	if !strings.HasPrefix(sidebar[10].text, "      上次读到↓ · ") || !strings.HasPrefix(sidebar[13].text, "      上次读到↑ · ") {
 		t.Fatalf("expanded children did not recover exact boundaries: %#v", sidebar)
 	}
 }
@@ -618,16 +618,33 @@ func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 func TestSpaceOnOneScreenBodyRequiresConfirmation(t *testing.T) {
 	ctx := context.Background()
 	model := &app{
-		items:   []feedItem{{key: "1"}, {key: "2"}},
-		metrics: layoutMetrics{bodyHeight: 8, bodyLines: 4, maxScroll: 0},
+		items: []feedItem{
+			{key: "1", kind: "answer", title: "短回答", body: "第一段\n\n最后一行"},
+			{key: "2", kind: "answer", title: "下一条", body: "正文"},
+		},
+		width:  100,
+		height: 20,
+	}
+	_, model.metrics = renderSingleApp(model)
+	if model.metrics.maxScroll != 0 {
+		t.Fatalf("test body unexpectedly needs scrolling: %#v", model.metrics)
 	}
 
 	model.handleKey(ctx, " ")
 	if model.index != 0 || model.boundarySwitchKey != " " {
 		t.Fatalf("first space switched a one-screen body: index=%d key=%q", model.index, model.boundarySwitchKey)
 	}
-	if model.pageAnchorLine != 3 || !model.pageAnchorVisible || !strings.Contains(model.message, "再按一次 space") {
+	if model.pageAnchorLine != model.metrics.bodyLines-1 || !model.pageAnchorVisible || !strings.Contains(model.message, "再按一次 space") {
 		t.Fatalf("one-screen bottom state anchor=(%d, %v) message=%q", model.pageAnchorLine, model.pageAnchorVisible, model.message)
+	}
+	lines, _ := renderSingleApp(model)
+	anchors := pageAnchorLines(lines)
+	if len(anchors) != 1 || anchors[0].style != ansiBlue || !strings.Contains(anchors[0].text, "最后一行") {
+		t.Fatalf("one-screen bottom focus was not rendered on the final line: %#v", anchors)
+	}
+	model.clearMessage()
+	if model.boundarySwitchKey != " " || !model.pageAnchorVisible {
+		t.Fatalf("message expiry cleared the visible boundary state: key=%q anchor=%v", model.boundarySwitchKey, model.pageAnchorVisible)
 	}
 
 	model.handleKey(ctx, " ")
