@@ -285,6 +285,28 @@ func (c *Client) GetComments(ctx context.Context, resourceType, resourceID strin
 	return c.getMap(ctx, c.endpoints.APIV4+"/comment_v5/"+resourceType+"s/"+url.PathEscape(resourceID)+"/root_comment", params)
 }
 
+func (c *Client) GetCommentsPage(ctx context.Context, resourceType, resourceID, cursor string, limit int, order string) (map[string]any, error) {
+	resourceType = strings.TrimSpace(resourceType)
+	resourceID = strings.TrimSpace(resourceID)
+	switch resourceType {
+	case "answer", "article", "pin", "question":
+	default:
+		return nil, DataFetchError{Message: "comments are not supported for resource type: " + resourceType}
+	}
+	if resourceID == "" {
+		return nil, DataFetchError{Message: "comment resource ID cannot be empty"}
+	}
+	if order == "" || order == "normal" {
+		order = "score"
+	}
+	params := url.Values{
+		"offset":   {cursor},
+		"limit":    {strconv.Itoa(limit)},
+		"order_by": {order},
+	}
+	return c.getMap(ctx, c.endpoints.APIV4+"/comment_v5/"+resourceType+"s/"+url.PathEscape(resourceID)+"/root_comment", params)
+}
+
 func (c *Client) GetChildComments(ctx context.Context, commentID string, offset, limit int) (map[string]any, error) {
 	commentID = strings.TrimSpace(commentID)
 	if commentID == "" {

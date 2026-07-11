@@ -246,6 +246,28 @@ func TestGetCommentsSupportsFeedResourceTypes(t *testing.T) {
 	}
 }
 
+func TestGetCommentsPagePreservesOpaqueCursor(t *testing.T) {
+	const cursor = "601800174_11417294455_0"
+	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v4/comment_v5/answers/123/root_comment" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		if r.URL.Query().Get("offset") != cursor || r.URL.Query().Get("limit") != "20" || r.URL.Query().Get("order_by") != "score" {
+			t.Fatalf("query=%s", r.URL.RawQuery)
+		}
+		writeJSON(t, w, http.StatusOK, map[string]any{"data": []any{map[string]any{"id": 456}}})
+	})
+	defer server.Close()
+
+	result, err := c.GetCommentsPage(context.Background(), "answer", "123", cursor, 20, "score")
+	if err != nil {
+		t.Fatalf("GetCommentsPage: %v", err)
+	}
+	if len(result["data"].([]any)) != 1 {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
 func TestGetChildComments(t *testing.T) {
 	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v4/comment_v5/comment/789/child_comment" {

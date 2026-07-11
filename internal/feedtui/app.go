@@ -26,7 +26,7 @@ var foldedGroupCountPattern = regexp.MustCompile(`^(还有\s*)\d+`)
 type feedSource interface {
 	linkCardSource
 	GetFollowingFeed(context.Context, string, int) (map[string]any, error)
-	GetComments(context.Context, string, string, int, int, string) (map[string]any, error)
+	GetCommentsPage(context.Context, string, string, string, int, string) (map[string]any, error)
 	GetChildComments(context.Context, string, int, int) (map[string]any, error)
 	GetUserProfile(context.Context, string) (map[string]any, error)
 	CreateComment(context.Context, string, string, string) (map[string]any, error)
@@ -884,16 +884,16 @@ func (model *app) startCommentPage(ctx context.Context, item feedItem, state *co
 		state.err = nil
 	}
 	model.spinner = 0
-	offset := 0
+	cursor := ""
 	if appendPage {
-		offset = state.nextOffset
+		cursor = state.nextCursor
 	}
 	go func() {
 		requestCtx, cancel := context.WithTimeout(ctx, commentPageTimeout)
 		defer cancel()
-		response, err := model.source.GetComments(requestCtx, item.kind, item.id, offset, commentPageSize, "score")
+		response, err := model.source.GetCommentsPage(requestCtx, item.kind, item.id, cursor, commentPageSize, "score")
 		select {
-		case model.commentFetches <- commentFetchResult{key: item.key, response: response, err: err, append: appendPage, offset: offset}:
+		case model.commentFetches <- commentFetchResult{key: item.key, response: response, err: err, append: appendPage, cursor: cursor}:
 		case <-ctx.Done():
 		}
 	}()
@@ -916,23 +916,28 @@ func (model *app) applyCommentFetch(result commentFetchResult) {
 		return
 	}
 	page := parseComments(asSlice(result.response["data"]))
-	nextOffset, end := commentPaging(result.response, result.offset, len(page))
+	nextCursor, end := commentPaging(result.response)
+	var pageErr error
+	if !end && nextCursor == "" {
+		pageErr = errors.New("知乎评论分页没有返回有效游标")
+	}
 	if result.append {
 		previousCount := len(state.items)
 		state.items = appendUniqueComments(state.items, page)
-		if !end && (len(state.items) == previousCount || nextOffset <= result.offset) {
-			state.loaded = true
-			state.err = nil
-			state.moreErr = errors.New("知乎评论分页没有返回新内容")
-			return
+		if !end && (len(state.items) == previousCount || nextCursor == result.cursor) {
+			pageErr = errors.New("知乎评论分页没有返回新内容")
 		}
 	} else {
 		state.items = page
 	}
 	state.loaded = true
 	state.err = nil
+	if pageErr != nil {
+		state.moreErr = pageErr
+		return
+	}
 	state.moreErr = nil
-	state.nextOffset, state.end = nextOffset, end
+	state.nextCursor, state.end = nextCursor, end
 }
 
 func appendUniqueComments(existing, incoming []feedComment) []feedComment {

@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+const testCommentCursor = "601800174_11417294455_0"
+
 type commentTestSource struct {
 	calls chan string
 	posts chan string
@@ -16,7 +18,7 @@ type commentTestSource struct {
 
 type commentPagingTestSource struct {
 	commentTestSource
-	offsets chan int
+	cursors chan string
 }
 
 type blockingRelationSource struct {
@@ -36,7 +38,7 @@ type blockingCommentPageSource struct {
 	started chan struct{}
 }
 
-func (source *blockingCommentPageSource) GetComments(ctx context.Context, _, _ string, _, _ int, _ string) (map[string]any, error) {
+func (source *blockingCommentPageSource) GetCommentsPage(ctx context.Context, _, _, _ string, _ int, _ string) (map[string]any, error) {
 	source.started <- struct{}{}
 	<-ctx.Done()
 	return nil, ctx.Err()
@@ -58,18 +60,26 @@ func (source *blockingChildSource) GetChildComments(context.Context, string, int
 	}}}, nil
 }
 
-func (source *commentPagingTestSource) GetComments(_ context.Context, _, _ string, offset, _ int, _ string) (map[string]any, error) {
-	source.offsets <- offset
+func (source *commentPagingTestSource) GetCommentsPage(_ context.Context, _, _, cursor string, _ int, _ string) (map[string]any, error) {
+	source.cursors <- cursor
+	page := "第一页"
+	id := "1"
+	end := false
+	if cursor == testCommentCursor {
+		page = "第二页"
+		id = "2"
+		end = true
+	}
 	response := map[string]any{
 		"data": []any{map[string]any{
-			"id":      offset + 1,
+			"id":      id,
 			"author":  map[string]any{"name": "用户"},
-			"content": "第 " + strconv.Itoa(offset) + " 页",
+			"content": page,
 		}},
-		"paging": map[string]any{"is_end": offset > 0},
+		"paging": map[string]any{"is_end": end},
 	}
-	if offset == 0 {
-		response["paging"].(map[string]any)["next"] = "https://www.zhihu.com/api/v4/comments?offset=10"
+	if cursor == "" {
+		response["paging"].(map[string]any)["next"] = "https://www.zhihu.com/api/v4/comments?offset=" + testCommentCursor
 	}
 	return response, nil
 }
@@ -86,7 +96,7 @@ func (source *commentTestSource) GetAnswer(context.Context, string) (map[string]
 	return nil, nil
 }
 
-func (source *commentTestSource) GetComments(_ context.Context, resourceType, resourceID string, _, _ int, _ string) (map[string]any, error) {
+func (source *commentTestSource) GetCommentsPage(_ context.Context, resourceType, resourceID, _ string, _ int, _ string) (map[string]any, error) {
 	source.calls <- resourceType + ":" + resourceID
 	return map[string]any{
 		"data": []any{map[string]any{
@@ -543,7 +553,7 @@ func TestDropLastTextUnitKeepsEmojiClusterIntact(t *testing.T) {
 }
 
 func TestCommentSpaceLoadsNextPageBeforeSwitchingFeed(t *testing.T) {
-	source := &commentPagingTestSource{offsets: make(chan int, 2)}
+	source := &commentPagingTestSource{cursors: make(chan string, 2)}
 	model := &app{
 		source:         source,
 		items:          []feedItem{{key: "answer:42", id: "42", kind: "answer"}, {key: "answer:43", id: "43", kind: "answer"}},
@@ -553,15 +563,15 @@ func TestCommentSpaceLoadsNextPageBeforeSwitchingFeed(t *testing.T) {
 		metrics:        layoutMetrics{bodyHeight: 10, bodyLines: 10},
 	}
 	model.startComments(context.Background(), model.items[0])
-	waitForCommentOffset(t, source.offsets, 0)
+	waitForCommentCursor(t, source.cursors, "")
 	model.applyCommentFetch(waitForCommentFetch(t, model.commentFetches))
 	state := model.currentCommentState()
-	if state.end || state.nextOffset != 10 {
+	if state.end || state.nextCursor != testCommentCursor {
 		t.Fatalf("initial paging state=%#v", state)
 	}
 
 	model.pageDownWithConfirmation(context.Background(), 8)
-	waitForCommentOffset(t, source.offsets, 10)
+	waitForCommentCursor(t, source.cursors, testCommentCursor)
 	if model.boundarySwitchKey != "" || model.index != 0 || !state.loading {
 		t.Fatalf("boundary=%q index=%d loading=%v", model.boundarySwitchKey, model.index, state.loading)
 	}
@@ -597,11 +607,11 @@ func TestCommentPageTimeoutLeavesLoadingState(t *testing.T) {
 }
 
 func TestFailedCommentPageWaitsForExplicitRetry(t *testing.T) {
-	source := &commentPagingTestSource{offsets: make(chan int, 1)}
+	source := &commentPagingTestSource{cursors: make(chan string, 1)}
 	state := &commentState{
 		items:      []feedComment{{id: "1", author: "用户", content: "评论"}},
 		loaded:     true,
-		nextOffset: 10,
+		nextCursor: testCommentCursor,
 		moreErr:    errors.New("请求失败"),
 	}
 	model := &app{
@@ -615,8 +625,8 @@ func TestFailedCommentPageWaitsForExplicitRetry(t *testing.T) {
 	}
 	model.maybePrefetchComments(context.Background())
 	select {
-	case offset := <-source.offsets:
-		t.Fatalf("failed page was retried automatically at offset %d", offset)
+	case cursor := <-source.cursors:
+		t.Fatalf("failed page was retried automatically at cursor %q", cursor)
 	case <-time.After(30 * time.Millisecond):
 	}
 	if state.loading || state.moreErr == nil {
@@ -626,37 +636,55 @@ func TestFailedCommentPageWaitsForExplicitRetry(t *testing.T) {
 	if !model.ensureMoreComments(context.Background()) {
 		t.Fatal("space retry was not accepted")
 	}
-	waitForCommentOffset(t, source.offsets, 10)
+	waitForCommentCursor(t, source.cursors, testCommentCursor)
 	if !state.loading || state.moreErr != nil {
 		t.Fatalf("explicit retry did not start cleanly: %#v", state)
 	}
 }
 
-func TestDuplicateCommentPageStopsWithoutAdvancingOffset(t *testing.T) {
+func TestDuplicateCommentPageStopsWithoutAdvancingCursor(t *testing.T) {
 	state := &commentState{
 		items:      []feedComment{{id: "1", author: "用户", content: "已有评论"}},
 		loaded:     true,
 		loading:    true,
-		nextOffset: 14,
+		nextCursor: testCommentCursor,
 	}
 	model := &app{comments: map[string]*commentState{"answer:42": state}}
 	model.applyCommentFetch(commentFetchResult{
 		key:    "answer:42",
 		append: true,
-		offset: 14,
+		cursor: testCommentCursor,
 		response: map[string]any{
 			"data": []any{map[string]any{"id": "1", "author": map[string]any{"name": "用户"}, "content": "重复评论"}},
 			"paging": map[string]any{
 				"is_end": false,
-				"next":   "https://www.zhihu.com/api/v4/comments?offset=14",
+				"next":   "https://www.zhihu.com/api/v4/comments?offset=" + testCommentCursor,
 			},
 		},
 	})
 	if state.loading || state.moreErr == nil {
 		t.Fatalf("duplicate page did not stop loading: %#v", state)
 	}
-	if state.nextOffset != 14 || len(state.items) != 1 {
+	if state.nextCursor != testCommentCursor || len(state.items) != 1 {
 		t.Fatalf("duplicate page advanced state: %#v", state)
+	}
+}
+
+func TestInitialCommentPageWithoutOpaqueCursorFailsFast(t *testing.T) {
+	state := &commentState{loading: true}
+	model := &app{comments: map[string]*commentState{"answer:42": state}}
+	model.applyCommentFetch(commentFetchResult{
+		key: "answer:42",
+		response: map[string]any{
+			"data": []any{map[string]any{"id": "1", "author": map[string]any{"name": "用户"}, "content": "评论"}},
+			"paging": map[string]any{
+				"is_end": false,
+				"next":   "https://www.zhihu.com/api/v4/comments",
+			},
+		},
+	})
+	if !state.loaded || state.loading || len(state.items) != 1 || state.moreErr == nil {
+		t.Fatalf("invalid first page did not fail fast: %#v", state)
 	}
 }
 
@@ -852,6 +880,29 @@ func TestSiblingCommentsHaveConnectedBreathingRoom(t *testing.T) {
 	}
 }
 
+func TestRootCommentsHaveTwoBlankRowsBetweenThem(t *testing.T) {
+	state := &commentState{
+		items: []feedComment{
+			{id: "100", author: "A", content: "第一条"},
+			{id: "200", author: "B", content: "第二条"},
+		},
+		loaded: true,
+	}
+	view, _ := formatCommentView(feedItem{}, state, 0)
+	lines := layoutBodyLines(view, 80)
+	first := firstLineWithCommentID(lines, "100")
+	second := firstLineWithCommentID(lines, "200")
+	blankRows := 0
+	for _, line := range lines[first+1 : second] {
+		if line.commentID == "" && styledLineText(line) == "" {
+			blankRows++
+		}
+	}
+	if blankRows != 2 {
+		t.Fatalf("root comment gap=%d, want 2: %#v", blankRows, lines)
+	}
+}
+
 func TestParentAndFirstChildHaveConnectedBreathingRoom(t *testing.T) {
 	state := &commentState{
 		items: []feedComment{{
@@ -901,12 +952,12 @@ func waitForCommentPost(t *testing.T, posts <-chan string, want string) {
 	}
 }
 
-func waitForCommentOffset(t *testing.T, offsets <-chan int, want int) {
+func waitForCommentCursor(t *testing.T, cursors <-chan string, want string) {
 	t.Helper()
 	select {
-	case got := <-offsets:
+	case got := <-cursors:
 		if got != want {
-			t.Fatalf("comment offset=%d, want %d", got, want)
+			t.Fatalf("comment cursor=%q, want %q", got, want)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("comment request was not made")

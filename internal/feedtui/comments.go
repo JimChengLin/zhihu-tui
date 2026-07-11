@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -42,7 +41,7 @@ type commentState struct {
 	loading          bool
 	loaded           bool
 	end              bool
-	nextOffset       int
+	nextCursor       string
 	err              error
 	moreErr          error
 }
@@ -52,7 +51,7 @@ type commentFetchResult struct {
 	response map[string]any
 	err      error
 	append   bool
-	offset   int
+	cursor   string
 }
 
 type commentComposeTarget struct {
@@ -145,7 +144,7 @@ func formatCommentView(item feedItem, state *commentState, spinner int) (string,
 	var builder strings.Builder
 	for index, comment := range state.items {
 		if index > 0 {
-			builder.WriteString("\n\n")
+			writeCommentRootGap(&builder)
 		}
 		writeCommentMarker(&builder, comment.id)
 		expanded := state.expandedChildren[comment.id]
@@ -174,6 +173,17 @@ func formatCommentView(item feedItem, state *commentState, spinner int) (string,
 		}
 	}
 	return builder.String(), label
+}
+
+func writeCommentRootGap(builder *strings.Builder) {
+	for range 2 {
+		builder.WriteString("\n")
+		builder.WriteString(commentStartMarker)
+		builder.WriteString(commentMarkerEnd)
+		builder.WriteString("\n")
+		writeCommentTreeLine(builder, "", "")
+	}
+	builder.WriteString("\n")
 }
 
 func formatCommentTree(builder *strings.Builder, comments []feedComment, prefix string, hasFollowing bool) {
@@ -216,17 +226,15 @@ func writeCommentMarker(builder *strings.Builder, commentID string) {
 	builder.WriteString("\n")
 }
 
-func commentPaging(response map[string]any, offset, pageItems int) (int, bool) {
+func commentPaging(response map[string]any) (string, bool) {
 	paging := mapValue(response["paging"])
 	nextURL := strings.TrimSpace(toString(paging["next"]))
 	end := truthy(paging["is_end"]) || nextURL == ""
-	nextOffset := offset + pageItems
+	nextCursor := ""
 	if parsed, err := url.Parse(nextURL); err == nil {
-		if value, err := strconv.Atoi(parsed.Query().Get("offset")); err == nil {
-			nextOffset = value
-		}
+		nextCursor = parsed.Query().Get("offset")
 	}
-	return nextOffset, end
+	return nextCursor, end
 }
 
 func countLoadedComments(comments []feedComment) int {
