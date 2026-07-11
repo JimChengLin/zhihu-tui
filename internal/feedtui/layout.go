@@ -314,7 +314,9 @@ func layoutFoldedGroupPreview(children []feedItem, width int) []styledLine {
 	lines := make([]styledLine, 0, len(children)*5)
 	for index, child := range children {
 		if index > 0 {
-			lines = append(lines, styledLine{})
+			for range paragraphGapLines {
+				lines = append(lines, styledLine{})
+			}
 		}
 		for _, titleLine := range wrapText(child.title, width) {
 			lines = append(lines, styledLine{text: titleLine, style: ansiBlue})
@@ -323,7 +325,7 @@ func layoutFoldedGroupPreview(children []feedItem, width int) []styledLine {
 		lines = append(lines, styledLine{text: truncateCells(meta, width), style: ansiDim})
 
 		excerpt, hasMore := foldedItemExcerpt(child)
-		excerptWidth := maxInt(1, width-2)
+		excerptWidth := width
 		excerptLines := wrapText(excerpt, excerptWidth)
 		truncated := len(excerptLines) > 2
 		if len(excerptLines) > 2 {
@@ -334,7 +336,7 @@ func layoutFoldedGroupPreview(children []feedItem, width int) []styledLine {
 			excerptLines[last] = truncateCells(strings.TrimSuffix(excerptLines[last], "…")+"…", excerptWidth)
 		}
 		for _, excerptLine := range excerptLines {
-			lines = append(lines, styledLine{text: "  " + excerptLine})
+			lines = append(lines, styledLine{text: excerptLine})
 		}
 	}
 	return lines

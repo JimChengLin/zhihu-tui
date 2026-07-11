@@ -156,9 +156,10 @@ func TestParseFeedItemsExpandsServerFoldedGroup(t *testing.T) {
 	model.width = 100
 	groupLines, _ := renderSingleApp(model)
 	groupPreview := strings.Join(styledLineTexts(groupLines), "\n")
-	if !strings.Contains(groupPreview, "同一个问题") || !strings.Contains(groupPreview, "另一位用户 赞同了 匿名用户 的回答") || !strings.Contains(groupPreview, "  正文") {
+	if !strings.Contains(groupPreview, "同一个问题") || !strings.Contains(groupPreview, "另一位用户 赞同了 匿名用户 的回答") || !strings.Contains(groupPreview, "正文") {
 		t.Fatalf("collapsed group has no useful content preview: %q", groupPreview)
 	}
+	titleColumn, excerptColumn := -1, -1
 	for _, line := range groupLines {
 		if strings.Contains(line.text, "还有 1 个动态被收起") && line.style != ansiDim {
 			t.Fatalf("folded group title style=%q, want neutral dim text", line.style)
@@ -166,6 +167,16 @@ func TestParseFeedItemsExpandsServerFoldedGroup(t *testing.T) {
 		if strings.Contains(line.text, "同一个问题") && line.style != ansiBlue {
 			t.Fatalf("folded child title style=%q, want content-title blue", line.style)
 		}
+		trimmed := strings.TrimLeft(line.text, " ")
+		switch trimmed {
+		case "同一个问题":
+			titleColumn = stringCellWidth(line.text) - stringCellWidth(trimmed)
+		case "正文":
+			excerptColumn = stringCellWidth(line.text) - stringCellWidth(trimmed)
+		}
+	}
+	if titleColumn < 0 || excerptColumn != titleColumn {
+		t.Fatalf("folded title column=%d excerpt column=%d, want left aligned", titleColumn, excerptColumn)
 	}
 	if strings.Contains(groupPreview, "知乎收起\n") || strings.Contains(groupPreview, "展开到左栏") {
 		t.Fatalf("collapsed group still renders redundant labels or instructions: %q", groupPreview)
@@ -194,7 +205,7 @@ func TestFoldedPreviewMarksOnlyTruncatedExcerpts(t *testing.T) {
 		{kind: "answer", title: "多段回答", author: "乙", action: "某人赞同了回答", body: "第一段\n\n第二段"},
 	}, 40)
 	rendered := strings.Join(styledLineTexts(lines), "\n")
-	if !strings.Contains(rendered, "  令人感叹") || strings.Contains(rendered, "令人感叹…") {
+	if !strings.Contains(rendered, "令人感叹") || strings.Contains(rendered, "令人感叹…") {
 		t.Fatalf("complete short answer has an unnecessary marker: %q", rendered)
 	}
 	if !strings.Contains(rendered, "第一段…") {
@@ -204,9 +215,21 @@ func TestFoldedPreviewMarksOnlyTruncatedExcerpts(t *testing.T) {
 		t.Fatalf("folded preview still renders the redundant full-text marker: %q", rendered)
 	}
 	for _, line := range lines {
-		if strings.Contains(line.text, "令人感叹") && line.style != "" {
-			t.Fatalf("folded answer excerpt style=%q, want normal body text", line.style)
+		if strings.Contains(line.text, "令人感叹") && (line.text != "令人感叹" || line.style != "") {
+			t.Fatalf("folded answer excerpt=%#v, want left-aligned normal body text", line)
 		}
+	}
+	firstExcerpt, secondTitle := -1, -1
+	for index, line := range lines {
+		if line.text == "令人感叹" {
+			firstExcerpt = index
+		}
+		if line.text == "多段回答" {
+			secondTitle = index
+		}
+	}
+	if firstExcerpt < 0 || secondTitle-firstExcerpt-1 != paragraphGapLines {
+		t.Fatalf("folded item gap=%d, want %d blank lines", secondTitle-firstExcerpt-1, paragraphGapLines)
 	}
 }
 
