@@ -54,10 +54,8 @@ type app struct {
 	lastReadBottomKey    string
 	pendingReadTopKey    string
 	pendingReadBottomKey string
-	refreshTopKey        string
 	pendingRefreshTopKey string
 	newItemKeys          map[string]struct{}
-	refreshTopFound      bool
 	firstViewedKey       string
 	furthestViewedKey    string
 	commentMode          bool
@@ -231,6 +229,12 @@ func (model *app) applyFetch(result fetchResult) {
 	}
 
 	newItems := parseFeedItems(asSlice(result.response["data"]))
+	previousItems := collapsedFeedItems(model.items)
+	previousKeys := make(map[string]struct{}, len(previousItems))
+	for _, item := range previousItems {
+		collectFeedItemKeys(item, previousKeys)
+	}
+	refreshingExistingFeed := result.reset && model.pendingRefreshTopKey != ""
 	if result.reset {
 		model.items = nil
 		model.index = 0
@@ -241,12 +245,10 @@ func (model *app) applyFetch(result fetchResult) {
 		if model.pendingRefreshTopKey != "" {
 			model.lastReadTopKey = model.pendingReadTopKey
 			model.lastReadBottomKey = model.pendingReadBottomKey
-			model.refreshTopKey = model.pendingRefreshTopKey
 			model.pendingReadTopKey = ""
 			model.pendingReadBottomKey = ""
 			model.pendingRefreshTopKey = ""
 			model.newItemKeys = make(map[string]struct{})
-			model.refreshTopFound = false
 		}
 	}
 	seen := make(map[string]struct{}, len(model.items)+len(newItems))
@@ -259,9 +261,26 @@ func (model *app) applyFetch(result fetchResult) {
 			continue
 		}
 		seen[item.key] = struct{}{}
-		model.trackRefreshBoundary(item)
 		model.items = append(model.items, item)
-		added++
+		if !result.reset {
+			added++
+			continue
+		}
+		if _, existed := previousKeys[item.key]; !existed {
+			added++
+		}
+		if refreshingExistingFeed {
+			markUnseenFeedItemKeys(item, previousKeys, model.newItemKeys)
+		}
+	}
+	if refreshingExistingFeed {
+		for _, item := range previousItems {
+			if _, exists := seen[item.key]; exists {
+				continue
+			}
+			seen[item.key] = struct{}{}
+			model.items = append(model.items, item)
+		}
 	}
 
 	paging := mapValue(result.response["paging"])
@@ -313,6 +332,8 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 		model.message = ""
 	case "c":
 		model.toggleComments(ctx)
+	case "e":
+		model.toggleFoldedGroup()
 	case "z":
 		model.clearPageAnchor()
 		model.zenMode = !model.zenMode
@@ -333,7 +354,11 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 		model.pageDownWithConfirmation(ctx, maxInt(1, model.metrics.bodyHeight*7/8))
 	case "b":
 		model.pageUpWithConfirmation(maxInt(1, model.metrics.bodyHeight*7/8))
-	case "f", keyPageDown, "\r", "d":
+	case "\r":
+		if !model.toggleFoldedGroup() {
+			model.scrollDown(maxInt(1, model.metrics.bodyHeight/2))
+		}
+	case "f", keyPageDown, "d":
 		model.scrollDown(maxInt(1, model.metrics.bodyHeight/2))
 	case keyPageUp, "u":
 		model.scrollUp(maxInt(1, model.metrics.bodyHeight/2))
@@ -357,6 +382,89 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 	return false
 }
 
+func collapsedFeedItems(items []feedItem) []feedItem {
+	result := make([]feedItem, 0, len(items))
+	for _, item := range items {
+		if item.foldedParent != "" {
+			continue
+		}
+		item.groupOpen = false
+		result = append(result, item)
+	}
+	return result
+}
+
+func collectFeedItemKeys(item feedItem, keys map[string]struct{}) {
+	keys[item.key] = struct{}{}
+	for _, child := range item.foldedItems {
+		collectFeedItemKeys(child, keys)
+	}
+}
+
+func markUnseenFeedItemKeys(item feedItem, previous, unseen map[string]struct{}) {
+	if len(item.foldedItems) == 0 {
+		if _, existed := previous[item.key]; !existed {
+			unseen[item.key] = struct{}{}
+		}
+	}
+	for _, child := range item.foldedItems {
+		markUnseenFeedItemKeys(child, previous, unseen)
+	}
+}
+
+func (model *app) toggleFoldedGroup() bool {
+	if len(model.items) == 0 {
+		return false
+	}
+	groupIndex := model.index
+	if parentKey := model.items[groupIndex].foldedParent; parentKey != "" {
+		for groupIndex >= 0 && model.items[groupIndex].key != parentKey {
+			groupIndex--
+		}
+		if groupIndex < 0 {
+			return false
+		}
+	}
+	group := model.items[groupIndex]
+	if len(group.foldedItems) == 0 {
+		return false
+	}
+	model.clearPageAnchor()
+	model.clearBoundarySwitch()
+	model.commentMode = false
+	model.bodyScroll = 0
+	model.scroll = 0
+	model.index = groupIndex
+	if group.groupOpen {
+		end := groupIndex + 1
+		for end < len(model.items) && model.items[end].foldedParent == group.key {
+			end++
+		}
+		model.items = append(model.items[:groupIndex+1], model.items[end:]...)
+		model.items[groupIndex].groupOpen = false
+		model.setMessage(fmt.Sprintf("已收起 %d 条动态", len(group.foldedItems)), 2*time.Second)
+		return true
+	}
+
+	existing := make(map[string]struct{}, len(model.items))
+	for _, item := range model.items {
+		existing[item.key] = struct{}{}
+	}
+	children := make([]feedItem, 0, len(group.foldedItems))
+	for _, child := range group.foldedItems {
+		if _, duplicate := existing[child.key]; duplicate {
+			continue
+		}
+		children = append(children, child)
+	}
+	model.items[groupIndex].groupOpen = true
+	tail := append([]feedItem(nil), model.items[groupIndex+1:]...)
+	model.items = append(model.items[:groupIndex+1], children...)
+	model.items = append(model.items, tail...)
+	model.setMessage(fmt.Sprintf("已展开 %d 条动态", len(children)), 2*time.Second)
+	return true
+}
+
 func (model *app) captureRefreshBoundary() {
 	model.pendingReadTopKey = ""
 	model.pendingReadBottomKey = ""
@@ -367,17 +475,6 @@ func (model *app) captureRefreshBoundary() {
 	model.pendingReadTopKey = model.firstViewedKey
 	model.pendingReadBottomKey = model.furthestViewedKey
 	model.pendingRefreshTopKey = model.items[0].key
-}
-
-func (model *app) trackRefreshBoundary(item feedItem) {
-	if model.refreshTopKey == "" || model.refreshTopFound {
-		return
-	}
-	if item.key == model.refreshTopKey {
-		model.refreshTopFound = true
-		return
-	}
-	model.newItemKeys[item.key] = struct{}{}
 }
 
 func (model *app) lineDown() {
@@ -408,6 +505,7 @@ func (model *app) pageDownWithConfirmation(ctx context.Context, amount int) {
 		model.setPageAnchor(previousLastLine)
 		model.clearMessage()
 		if model.scroll == model.metrics.maxScroll {
+			model.setPageAnchor(model.metrics.bodyLines - 1)
 			model.armBoundarySwitch(" ", "已到正文底部，再按一次 space 切换下一条")
 		}
 		return
@@ -416,6 +514,7 @@ func (model *app) pageDownWithConfirmation(ctx context.Context, amount int) {
 		model.moveNext(ctx)
 		return
 	}
+	model.setPageAnchor(model.metrics.bodyLines - 1)
 	model.armBoundarySwitch(" ", "已到正文底部，再按一次 space 切换下一条")
 }
 
@@ -427,6 +526,7 @@ func (model *app) pageUpWithConfirmation(amount int) {
 		model.setPageAnchor(previousFirstLine)
 		model.clearMessage()
 		if model.scroll == 0 {
+			model.setPageAnchor(0)
 			model.armBoundarySwitch("b", "已到正文顶部，再按一次 b 切换上一条")
 		}
 		return
@@ -435,6 +535,7 @@ func (model *app) pageUpWithConfirmation(amount int) {
 		model.movePrevious(true)
 		return
 	}
+	model.setPageAnchor(0)
 	model.armBoundarySwitch("b", "已到正文顶部，再按一次 b 切换上一条")
 }
 
@@ -638,21 +739,39 @@ func (model *app) markCurrentViewed() {
 		return
 	}
 	currentKey := model.items[model.index].key
+	positions := logicalFeedPositions(model.items)
+	currentPosition := positions[currentKey]
 	if model.firstViewedKey == "" {
+		model.firstViewedKey = currentKey
+	} else if firstPosition, found := positions[model.firstViewedKey]; found && currentPosition < firstPosition {
 		model.firstViewedKey = currentKey
 	}
 	if model.furthestViewedKey == "" {
 		model.furthestViewedKey = currentKey
 		return
 	}
-	for index, item := range model.items {
-		if item.key == model.furthestViewedKey {
-			if model.index > index {
-				model.furthestViewedKey = currentKey
-			}
-			return
+	if furthestPosition, found := positions[model.furthestViewedKey]; found && currentPosition > furthestPosition {
+		model.furthestViewedKey = currentKey
+	}
+}
+
+func logicalFeedPositions(items []feedItem) map[string]int {
+	positions := make(map[string]int, len(items))
+	position := 0
+	var add func(feedItem)
+	add = func(item feedItem) {
+		positions[item.key] = position
+		position++
+		for _, child := range item.foldedItems {
+			add(child)
 		}
 	}
+	for _, item := range items {
+		if item.foldedParent == "" {
+			add(item)
+		}
+	}
+	return positions
 }
 
 func readKeys(in *os.File, keys chan<- keyEvent, errs chan<- error) {

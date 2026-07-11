@@ -2,6 +2,7 @@ package feedtui
 
 import (
 	"fmt"
+	"html"
 	"regexp"
 	"strconv"
 	"strings"
@@ -13,6 +14,14 @@ import (
 var htmlBreakPattern = regexp.MustCompile(`(?i)<(?:br\s*/?|/?(?:p|div|li|blockquote|h[1-6]))[^>]*>`)
 var repeatedBlankLinesPattern = regexp.MustCompile(`\n[\t ]*\n(?:[\t ]*\n)+`)
 var imageTagPattern = regexp.MustCompile(`(?is)<img\b[^>]*>`)
+var codeBlockPattern = regexp.MustCompile(`(?is)<pre\b[^>]*>(.*?)</pre\s*>`)
+var classCodeBlockPattern = regexp.MustCompile(`(?is)<code\b[^>]*\bclass\s*=\s*(?:"[^"]*"|'[^']*')[^>]*>(.*?)</code\s*>`)
+var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
+
+const (
+	codeBlockStartMarker = "\ue000code-block-start\ue001"
+	codeBlockEndMarker   = "\ue000code-block-end\ue001"
+)
 
 type feedItem struct {
 	key          string
@@ -28,17 +37,64 @@ type feedItem struct {
 	url          string
 	imageCount   int
 	commentCount int
+	serverFolded bool
+	foldedItems  []feedItem
+	foldedParent string
+	groupOpen    bool
 }
 
 func parseFeedItems(data []any) []feedItem {
 	items := make([]feedItem, 0, len(data))
 	for _, raw := range data {
-		item, ok := parseFeedItem(mapValue(raw))
+		activity := mapValue(raw)
+		item, ok := parseFeedItem(activity)
 		if ok {
 			items = append(items, item)
 		}
+		groupedItems := make([]feedItem, 0, len(asSlice(activity["list"])))
+		for _, groupedRaw := range asSlice(activity["list"]) {
+			grouped, ok := parseFeedItem(mapValue(groupedRaw))
+			if !ok {
+				continue
+			}
+			grouped.serverFolded = true
+			groupedItems = append(groupedItems, grouped)
+		}
+		if len(groupedItems) > 0 {
+			items = append(items, foldedGroupItem(activity, groupedItems))
+		}
 	}
 	return items
+}
+
+func foldedGroupItem(raw map[string]any, children []feedItem) feedItem {
+	key := stableFoldedGroupKey(toString(raw["id"]))
+	if key == "" {
+		key = "folded:" + children[0].key
+	}
+	title := plainText(toString(raw["group_text"]))
+	title = strings.ReplaceAll(title, "{LIST_COUNT}", strconv.Itoa(len(children)))
+	if title == "" {
+		title = fmt.Sprintf("还有 %d 条动态被知乎收起", len(children))
+	}
+	for index := range children {
+		children[index].foldedParent = key
+	}
+	return feedItem{
+		key:         key,
+		kind:        "folded_group",
+		title:       title,
+		foldedItems: children,
+	}
+}
+
+func stableFoldedGroupKey(rawID string) string {
+	rawID = strings.TrimSpace(rawID)
+	parts := strings.Split(rawID, "_")
+	if len(parts) == 4 {
+		return "folded:" + parts[2] + ":" + parts[3]
+	}
+	return rawID
 }
 
 func parseFeedItem(raw map[string]any) (feedItem, bool) {
@@ -92,8 +148,11 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 	createdAt := toInt64(firstNonEmptyAny(raw["created_time"], target["created_time"], target["created"], 0))
 	url := feedItemURL(kind, id, toString(question["id"]), toString(target["url"]))
 	key := kind + ":" + id
-	if id == "" {
-		key = toString(raw["id"])
+	if actionIdentity := normalizeAction(toString(raw["action_text"])); actionIdentity != "" {
+		key += ":" + actionIdentity
+	}
+	if key == ":" {
+		key = strings.TrimSpace(toString(raw["id"]))
 	}
 	if key == "" {
 		key = title + ":" + authorName
@@ -122,6 +181,16 @@ func contentText(value string) (string, int) {
 
 func contentTextFrom(value string, previousImages int) (string, int) {
 	imageCount := 0
+	for _, pattern := range []*regexp.Regexp{codeBlockPattern, classCodeBlockPattern} {
+		value = pattern.ReplaceAllStringFunc(value, func(block string) string {
+			match := pattern.FindStringSubmatch(block)
+			code := htmlBreakPattern.ReplaceAllString(match[1], "\n")
+			code = htmlTagPattern.ReplaceAllString(code, "")
+			code = html.UnescapeString(strings.ReplaceAll(code, "\r\n", "\n"))
+			code = strings.Trim(code, "\n\r")
+			return "\n" + codeBlockStartMarker + "\n" + code + "\n" + codeBlockEndMarker + "\n"
+		})
+	}
 	value = imageTagPattern.ReplaceAllStringFunc(value, func(string) string {
 		imageCount++
 		return fmt.Sprintf("\n▣ 图片 %d\n", previousImages+imageCount)
@@ -190,8 +259,20 @@ func plainText(value string) string {
 	value = htmlBreakPattern.ReplaceAllString(value, "\n")
 	value = display.StripHTML(value)
 	lines := strings.Split(strings.ReplaceAll(value, "\r\n", "\n"), "\n")
+	inCodeBlock := false
 	for i := range lines {
-		lines[i] = strings.Join(strings.Fields(lines[i]), " ")
+		switch lines[i] {
+		case codeBlockStartMarker:
+			inCodeBlock = true
+		case codeBlockEndMarker:
+			inCodeBlock = false
+		default:
+			if inCodeBlock {
+				lines[i] = strings.TrimRight(lines[i], " \t")
+			} else {
+				lines[i] = strings.Join(strings.Fields(lines[i]), " ")
+			}
+		}
 	}
 	value = strings.TrimSpace(strings.Join(lines, "\n"))
 	return repeatedBlankLinesPattern.ReplaceAllString(value, "\n\n")

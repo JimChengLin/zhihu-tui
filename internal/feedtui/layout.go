@@ -17,6 +17,8 @@ const (
 	ansiBlue          = "\033[38;5;75m"
 	ansiGreen         = "\033[38;5;114m"
 	ansiRed           = "\033[38;5;203m"
+	ansiCode          = "\033[38;5;245m"
+	ansiPreview       = "\033[38;5;250m"
 	minReadingWidth   = 96
 	maxReadingWidth   = 112
 	paragraphGapLines = 2
@@ -65,12 +67,25 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	}
 
 	action := item.action
+	if item.serverFolded {
+		action = "知乎收起 · " + action
+	}
 	if relative := formatRelativeTime(item.createdAt, time.Now()); relative != "" {
 		action += "  ·  " + relative
 	}
-	lines = append(lines, line(truncateCells(action, contentWidth), ansiDim))
+	if action != "" {
+		lines = append(lines, line(truncateCells(action, contentWidth), ansiDim))
+	}
 
-	titleLines := wrapText(item.title, contentWidth)
+	title := item.title
+	if len(item.foldedItems) > 0 {
+		if item.groupOpen {
+			title = "▾ " + title
+		} else {
+			title = "▸ " + title
+		}
+	}
+	titleLines := wrapText(title, contentWidth)
 	if len(titleLines) > 3 {
 		titleLines = titleLines[:3]
 		titleLines[2] = truncateCells(strings.TrimSuffix(titleLines[2], "…")+"…", contentWidth)
@@ -83,7 +98,9 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	if item.headline != "" {
 		authorLine += "  ·  " + item.headline
 	}
-	lines = append(lines, line(truncateCells(authorLine, contentWidth), ansiDim))
+	if authorLine != "" {
+		lines = append(lines, line(truncateCells(authorLine, contentWidth), ansiDim))
+	}
 	meta := item.stats
 	if meta != "" {
 		lines = append(lines, line(truncateCells(meta, contentWidth), ansiGreen))
@@ -96,10 +113,13 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	}
 	lines = append(lines, line(strings.Repeat("─", contentWidth), ansiDim))
 
-	if body == "" {
+	if body == "" && len(item.foldedItems) == 0 {
 		body = "这条动态没有正文摘要；按 o 在知乎中查看完整内容。"
 	}
-	bodyLines := addParagraphSpacing(wrapText(body, contentWidth))
+	bodyLines := layoutBodyLines(body, contentWidth)
+	if len(item.foldedItems) > 0 && !model.commentMode {
+		bodyLines = layoutFoldedGroupPreview(item.foldedItems, contentWidth)
+	}
 	fixedBottom := 4
 	availableBodyHeight := model.height - len(lines) - fixedBottom
 	bodyHeight := availableBodyHeight
@@ -117,16 +137,16 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	thumbStart, thumbSize := scrollbarThumb(bodyHeight, len(bodyLines), model.scroll, maxScroll)
 	for row, bodyLine := range bodyLines[model.scroll:end] {
 		if maxScroll == 0 {
-			lines = append(lines, line(bodyLine, ""))
+			lines = append(lines, line(bodyLine.text, bodyLine.style))
 			continue
 		}
 		bar := "┊"
 		if row >= thumbStart && row < thumbStart+thumbSize {
 			bar = "┃"
 		}
-		body := line(padCells(bodyLine, contentWidth)+" ", "")
+		body := line(padCells(bodyLine.text, contentWidth)+" ", bodyLine.style)
 		if model.pageAnchorVisible && model.scroll+row == model.pageAnchorLine {
-			anchorText := bodyLine
+			anchorText := bodyLine.text
 			if strings.TrimSpace(anchorText) == "" {
 				anchorText = strings.Repeat("┄", contentWidth)
 			}
@@ -166,9 +186,9 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	}
 	status := strings.Join(statusParts, "  ·  ")
 	lines = append(lines, line(truncateCells(status, contentWidth), ansiDim))
-	hints := "j/k 滚动  space/b 7/8页/确认切换  n/p 直接切换  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
+	hints := "j/k 滚动  space/b 7/8页  n/p 切换  e 展开  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
 	if model.zenMode {
-		hints = "j/k 滚动  space/b 7/8页/确认切换  n/p 直接切换  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
+		hints = "j/k 滚动  space/b 7/8页  n/p 切换  e 展开  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
 	}
 	lines = append(lines, line(truncateCells(hints, contentWidth), ansiCyan))
 	lines = append(lines, styledLine{})
@@ -219,6 +239,167 @@ func addParagraphSpacing(lines []string) []string {
 	return result
 }
 
+func layoutBodyLines(body string, width int) []styledLine {
+	var result []styledLine
+	var prose []string
+	appendParagraphGap := func() {
+		blankLines := 0
+		for index := len(result) - 1; index >= 0 && result[index].text == ""; index-- {
+			blankLines++
+		}
+		for blankLines < paragraphGapLines {
+			result = append(result, styledLine{})
+			blankLines++
+		}
+	}
+	flushProse := func() {
+		if len(prose) == 0 {
+			return
+		}
+		for _, text := range addParagraphSpacing(wrapText(strings.Join(prose, "\n"), width)) {
+			result = append(result, styledLine{text: text})
+		}
+		prose = prose[:0]
+	}
+
+	inCodeBlock := false
+	for _, sourceLine := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
+		switch sourceLine {
+		case codeBlockStartMarker:
+			flushProse()
+			if len(result) > 0 {
+				appendParagraphGap()
+			}
+			result = append(result, styledLine{text: "┌─ 代码", style: ansiCode})
+			inCodeBlock = true
+		case codeBlockEndMarker:
+			result = append(result, styledLine{text: "└─", style: ansiCode})
+			appendParagraphGap()
+			inCodeBlock = false
+		default:
+			if !inCodeBlock {
+				prose = append(prose, sourceLine)
+				continue
+			}
+			for _, codeLine := range wrapCellsPreserve(sourceLine, maxInt(1, width-2)) {
+				result = append(result, styledLine{text: "│ " + codeLine, style: ansiCode})
+			}
+		}
+	}
+	flushProse()
+	for len(result) > 0 && result[len(result)-1].text == "" {
+		result = result[:len(result)-1]
+	}
+	if len(result) == 0 {
+		return []styledLine{{}}
+	}
+	return result
+}
+
+func layoutFoldedGroupPreview(children []feedItem, width int) []styledLine {
+	lines := make([]styledLine, 0, len(children)*5)
+	for index, child := range children {
+		if index > 0 {
+			lines = append(lines, styledLine{})
+		}
+		for _, titleLine := range wrapText(child.title, width) {
+			lines = append(lines, styledLine{text: titleLine, style: ansiBlue})
+		}
+		meta := foldedItemEventLabel(child)
+		lines = append(lines, styledLine{text: truncateCells(meta, width), style: ansiDim})
+
+		excerpt, hasMore := foldedItemExcerpt(child)
+		excerptWidth := maxInt(1, width-2)
+		excerptLines := wrapText(excerpt, excerptWidth)
+		truncated := len(excerptLines) > 2
+		if len(excerptLines) > 2 {
+			excerptLines = excerptLines[:2]
+		}
+		if truncated || hasMore {
+			last := len(excerptLines) - 1
+			excerptLines[last] = truncateCells(strings.TrimSuffix(excerptLines[last], "…")+"…", excerptWidth)
+		}
+		for _, excerptLine := range excerptLines {
+			lines = append(lines, styledLine{text: "  " + excerptLine, style: ansiPreview})
+		}
+	}
+	return lines
+}
+
+func foldedItemEventLabel(item feedItem) string {
+	author := firstNonEmpty(item.author, "匿名用户")
+	if item.kind == "answer" {
+		for _, verb := range []string{"赞同了回答", "收藏了回答"} {
+			actor := strings.TrimSpace(strings.TrimSuffix(item.action, verb))
+			if actor != "" && actor != item.action {
+				return actor + " " + strings.TrimSuffix(verb, "回答") + " " + author + " 的回答"
+			}
+		}
+	}
+	if item.kind == "question" {
+		const verb = "关注了问题"
+		actor := strings.TrimSpace(strings.TrimSuffix(item.action, verb))
+		if actor != "" && actor != item.action {
+			return actor + " 关注了 " + author + " 的问题"
+		}
+	}
+	return foldedItemAuthorLabel(item) + " · " + item.action
+}
+
+func foldedItemAuthorLabel(item feedItem) string {
+	author := firstNonEmpty(item.author, "匿名用户")
+	switch item.kind {
+	case "answer":
+		return "答主 " + author
+	case "question":
+		return "提问者 " + author
+	case "article":
+		return "作者 " + author
+	case "pin":
+		return "想法作者 " + author
+	default:
+		return author
+	}
+}
+
+func foldedItemExcerpt(item feedItem) (text string, hasMore bool) {
+	meaningful := make([]string, 0, 2)
+	for _, sourceLine := range strings.Split(item.body, "\n") {
+		text := compactLine(sourceLine)
+		if text == "" || text == codeBlockStartMarker || text == codeBlockEndMarker {
+			continue
+		}
+		meaningful = append(meaningful, text)
+	}
+	if len(meaningful) == 0 {
+		return "暂无正文摘要", false
+	}
+	return meaningful[0], len(meaningful) > 1
+}
+
+func wrapCellsPreserve(text string, width int) []string {
+	if text == "" {
+		return []string{""}
+	}
+	var lines []string
+	var builder strings.Builder
+	cells := 0
+	for _, unit := range textUnits(text) {
+		unitWidth := stringCellWidth(unit)
+		if cells > 0 && cells+unitWidth > width {
+			lines = append(lines, builder.String())
+			builder.Reset()
+			cells = 0
+		}
+		builder.WriteString(unit)
+		cells += unitWidth
+	}
+	if builder.Len() > 0 {
+		lines = append(lines, builder.String())
+	}
+	return lines
+}
+
 func renderWideApp(model *app) ([]styledLine, layoutMetrics) {
 	sidebarWidth := minInt(44, maxInt(30, model.width/4))
 	mainWidth := model.width - sidebarWidth - 3
@@ -265,9 +446,7 @@ func renderSidebar(model *app, width int) []styledLine {
 		style := ""
 		summaryPrefix := "  "
 		summaryStyle := ansiDim
-		_, isNew := model.newItemKeys[item.key]
-		isReadTop := item.key == model.lastReadTopKey
-		isReadBottom := item.key == model.lastReadBottomKey
+		isNew, isReadTop, isReadBottom := sidebarItemState(model, item)
 		isReadBoundary := isReadTop || isReadBottom
 		if isReadTop && isReadBottom {
 			style = ansiCyan
@@ -292,14 +471,49 @@ func renderSidebar(model *app, width int) []styledLine {
 				style = ansiBold + ansiCyan
 			}
 		}
+		titlePrefix := ""
+		if len(item.foldedItems) > 0 {
+			if item.groupOpen {
+				titlePrefix = "▾ "
+			} else {
+				titlePrefix = "▸ "
+			}
+		} else if item.foldedParent != "" {
+			titlePrefix = "  "
+		}
 		titleWidth := maxInt(1, width-stringCellWidth(marker)-1)
-		title := truncateCells(item.title, titleWidth)
+		title := truncateCells(titlePrefix+item.title, titleWidth)
 		lines[row] = styledLine{text: marker + title, style: style}
 		summary := firstNonEmpty(item.action, item.author, typeLabel(item.kind))
+		if len(item.foldedItems) > 0 {
+			if item.groupOpen {
+				summary = "e/Enter 收起"
+			} else {
+				summary = "e/Enter 展开"
+			}
+		} else if item.serverFolded {
+			summary = "知乎收起 · " + firstNonEmpty(item.author, "匿名用户") + " · " + summary
+		}
 		lines[row+1] = styledLine{text: summaryPrefix + truncateCells(summary, maxInt(1, width-stringCellWidth(summaryPrefix)-1)), style: summaryStyle}
 		row += 3
 	}
 	return lines
+}
+
+func sidebarItemState(model *app, item feedItem) (isNew, isReadTop, isReadBottom bool) {
+	_, isNew = model.newItemKeys[item.key]
+	isReadTop = item.key == model.lastReadTopKey
+	isReadBottom = item.key == model.lastReadBottomKey
+	if item.groupOpen {
+		return isNew, isReadTop, isReadBottom
+	}
+	for _, child := range item.foldedItems {
+		childNew, childReadTop, childReadBottom := sidebarItemState(model, child)
+		isNew = isNew || childNew
+		isReadTop = isReadTop || childReadTop
+		isReadBottom = isReadBottom || childReadBottom
+	}
+	return isNew, isReadTop, isReadBottom
 }
 
 func mergeColumns(left styledLine, leftWidth int, right styledLine, rightWidth int) styledLine {
@@ -372,6 +586,7 @@ func renderHelp(width, height int) []styledLine {
 		{text: pad + "n/p · h/l · ←/→  下一条 / 上一条"},
 		{text: pad + "g / G        第一条 / 最后一条已加载动态"},
 		{text: pad + "c            加载评论 / 返回正文"},
+		{text: pad + "e / Enter    展开 / 收起知乎聚合动态"},
 		{text: pad + "z            专注阅读 / 恢复双栏"},
 		{text: pad + "o            用默认浏览器打开当前动态"},
 		{text: pad + "r            刷新；新标题变绿 / 标记进程阅读范围"},
