@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/rivo/uniseg"
 )
 
 const (
@@ -447,16 +449,16 @@ func wrapText(text string, width int) []string {
 			if cells > 0 && cells+tokenWidth > width {
 				runes := []rune(token)
 				if len(runes) == 1 && isClosingPunctuation(runes[0]) {
-					current := []rune(strings.TrimSpace(builder.String()))
+					current := textUnits(strings.TrimSpace(builder.String()))
 					last := current[len(current)-1]
-					prefix := strings.TrimSpace(string(current[:len(current)-1]))
+					prefix := strings.TrimSpace(strings.Join(current[:len(current)-1], ""))
 					if prefix != "" {
 						lines = append(lines, prefix)
 					}
 					builder.Reset()
-					builder.WriteRune(last)
+					builder.WriteString(last)
 					builder.WriteString(token)
-					cells = runeCellWidth(last) + tokenWidth
+					cells = stringCellWidth(last) + tokenWidth
 					continue
 				}
 				lines = append(lines, strings.TrimSpace(builder.String()))
@@ -468,15 +470,15 @@ func wrapText(text string, width int) []string {
 				cells += tokenWidth
 				continue
 			}
-			for _, r := range token {
-				runeWidth := runeCellWidth(r)
-				if cells > 0 && cells+runeWidth > width {
+			for _, unit := range textUnits(token) {
+				unitWidth := stringCellWidth(unit)
+				if cells > 0 && cells+unitWidth > width {
 					lines = append(lines, strings.TrimSpace(builder.String()))
 					builder.Reset()
 					cells = 0
 				}
-				builder.WriteRune(r)
-				cells += runeWidth
+				builder.WriteString(unit)
+				cells += unitWidth
 			}
 		}
 		if builder.Len() > 0 {
@@ -498,8 +500,13 @@ func textTokens(text string) []string {
 			ascii.Reset()
 		}
 	}
-	for _, r := range text {
+	for _, unit := range textUnits(text) {
+		runes := []rune(unit)
+		r := runes[0]
 		switch {
+		case len(runes) > 1:
+			flushASCII()
+			tokens = append(tokens, unit)
 		case unicode.IsSpace(r):
 			flushASCII()
 			if len(tokens) == 0 || tokens[len(tokens)-1] != " " {
@@ -509,11 +516,20 @@ func textTokens(text string) []string {
 			ascii.WriteRune(r)
 		default:
 			flushASCII()
-			tokens = append(tokens, string(r))
+			tokens = append(tokens, unit)
 		}
 	}
 	flushASCII()
 	return tokens
+}
+
+func textUnits(text string) []string {
+	graphemes := uniseg.NewGraphemes(text)
+	units := make([]string, 0, len([]rune(text)))
+	for graphemes.Next() {
+		units = append(units, graphemes.Str())
+	}
+	return units
 }
 
 func isClosingPunctuation(r rune) bool {
@@ -532,43 +548,19 @@ func truncateCells(text string, width int) string {
 	}
 	var builder strings.Builder
 	cells := 0
-	for _, r := range text {
-		runeWidth := runeCellWidth(r)
-		if cells+runeWidth > width-1 {
+	for _, unit := range textUnits(text) {
+		unitWidth := stringCellWidth(unit)
+		if cells+unitWidth > width-1 {
 			break
 		}
-		builder.WriteRune(r)
-		cells += runeWidth
+		builder.WriteString(unit)
+		cells += unitWidth
 	}
 	return builder.String() + "…"
 }
 
 func stringCellWidth(text string) int {
-	width := 0
-	for _, r := range text {
-		width += runeCellWidth(r)
-	}
-	return width
-}
-
-func runeCellWidth(r rune) int {
-	if r == 0 || r == '\n' || r == '\r' || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r) {
-		return 0
-	}
-	if r >= 0x1100 && (r <= 0x115f ||
-		r == 0x2329 || r == 0x232a ||
-		(r >= 0x2e80 && r <= 0xa4cf && r != 0x303f) ||
-		(r >= 0xac00 && r <= 0xd7a3) ||
-		(r >= 0xf900 && r <= 0xfaff) ||
-		(r >= 0xfe10 && r <= 0xfe19) ||
-		(r >= 0xfe30 && r <= 0xfe6f) ||
-		(r >= 0xff00 && r <= 0xff60) ||
-		(r >= 0xffe0 && r <= 0xffe6) ||
-		(r >= 0x1f300 && r <= 0x1faff) ||
-		(r >= 0x20000 && r <= 0x3fffd)) {
-		return 2
-	}
-	return 1
+	return uniseg.StringWidth(text)
 }
 
 func minInt(a, b int) int {

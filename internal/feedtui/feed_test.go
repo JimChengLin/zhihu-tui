@@ -127,6 +127,41 @@ func TestWrapTextDoesNotSplitShortASCIITokens(t *testing.T) {
 	}
 }
 
+func TestTextLayoutKeepsGraphemeClustersTogether(t *testing.T) {
+	tests := []struct {
+		name    string
+		cluster string
+		width   int
+	}{
+		{name: "Luxembourg flag", cluster: "🇱🇺", width: 2},
+		{name: "Netherlands flag", cluster: "🇳🇱", width: 2},
+		{name: "skin tone", cluster: "👍🏽", width: 2},
+		{name: "ZWJ family", cluster: "👨‍👩‍👧‍👦", width: 2},
+		{name: "variation selector", cluster: "❤️", width: 2},
+		{name: "combining accent", cluster: "é", width: 1},
+		{name: "keycap", cluster: "1️⃣", width: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			units := textUnits("x" + test.cluster + "y")
+			if len(units) != 3 || units[1] != test.cluster {
+				t.Fatalf("textUnits()=%q, cluster was split", units)
+			}
+			if width := stringCellWidth(test.cluster); width != test.width {
+				t.Fatalf("stringCellWidth()=%d, want %d", width, test.width)
+			}
+			text := "1234" + test.cluster
+			lines := wrapText(text, 4)
+			if strings.Join(lines, "") != text || len(lines) != 2 || lines[1] != test.cluster {
+				t.Fatalf("wrapText()=%q, cluster was split", lines)
+			}
+			if truncated := truncateCells(text+"x", 5); truncated != "1234…" {
+				t.Fatalf("truncateCells()=%q, cluster was split", truncated)
+			}
+		})
+	}
+}
+
 func TestReadKeyRecognizesNavigationSequences(t *testing.T) {
 	tests := []struct {
 		input string
