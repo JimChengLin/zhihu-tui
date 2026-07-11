@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,23 +26,27 @@ const (
 )
 
 type feedItem struct {
-	key          string
-	id           string
-	kind         string
-	action       string
-	title        string
-	author       string
-	headline     string
-	body         string
-	stats        string
-	createdAt    int64
-	url          string
-	imageCount   int
-	commentCount int
-	serverFolded bool
-	foldedItems  []feedItem
-	foldedParent string
-	groupOpen    bool
+	key             string
+	id              string
+	kind            string
+	action          string
+	title           string
+	author          string
+	headline        string
+	body            string
+	stats           string
+	createdAt       int64
+	url             string
+	imageCount      int
+	commentCount    int
+	hasCommentCount bool
+	voteCount       int64
+	hasVoteCount    bool
+	voted           bool
+	serverFolded    bool
+	foldedItems     []feedItem
+	foldedParent    string
+	groupOpen       bool
 }
 
 func parseFeedItems(data []any) []feedItem {
@@ -159,20 +164,26 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 		key = title + ":" + authorName
 	}
 
+	voteCount, hasVoteCount := feedVoteCount(target)
+	commentCount, hasCommentCount := firstPresent(target["comment_count"])
 	return feedItem{
-		key:          key,
-		id:           id,
-		kind:         kind,
-		action:       action,
-		title:        title,
-		author:       authorName,
-		headline:     compactLine(plainText(toString(author["headline"]))),
-		body:         body,
-		stats:        feedStats(target),
-		createdAt:    createdAt,
-		url:          url,
-		imageCount:   imageCount,
-		commentCount: int(toInt64(target["comment_count"])),
+		key:             key,
+		id:              id,
+		kind:            kind,
+		action:          action,
+		title:           title,
+		author:          authorName,
+		headline:        compactLine(plainText(toString(author["headline"]))),
+		body:            body,
+		stats:           feedStats(target),
+		createdAt:       createdAt,
+		url:             url,
+		imageCount:      imageCount,
+		commentCount:    int(toInt64(commentCount)),
+		hasCommentCount: hasCommentCount,
+		voteCount:       voteCount,
+		hasVoteCount:    hasVoteCount,
+		voted:           feedItemVoted(target),
 	}, true
 }
 
@@ -212,7 +223,7 @@ func feedContentText(value any) (string, int) {
 			imageCount++
 			parts = append(parts, fmt.Sprintf("▣ 图片 %d", imageCount))
 		case "link_card":
-			parts = append(parts, formatPinLinkCard(node))
+			parts = append(parts, formatLinkCard(node))
 		default:
 			text, nestedImages := contentTextFrom(toString(node["content"]), imageCount)
 			if text != "" {
@@ -224,18 +235,28 @@ func feedContentText(value any) (string, int) {
 	return strings.TrimSpace(strings.Join(parts, "\n\n")), imageCount
 }
 
-func hydrateFeedLinkCards(ctx context.Context, source pinSource, response map[string]any) {
-	nodesByID := make(map[string][]map[string]any)
+func hydrateFeedLinkCards(ctx context.Context, source linkCardSource, response map[string]any) {
+	type cardRef struct {
+		kind string
+		id   string
+	}
+	nodesByRef := make(map[cardRef][]map[string]any)
 	var collectActivity func(map[string]any)
 	collectActivity = func(activity map[string]any) {
 		target := mapValue(activity["target"])
 		for _, rawNode := range asSlice(target["content"]) {
 			node := mapValue(rawNode)
-			if strings.EqualFold(toString(node["type"]), "link_card") && strings.EqualFold(toString(node["data_content_type"]), "PIN") {
-				id := strings.TrimSpace(toString(node["data_content_id"]))
-				if id != "" && toString(node["data_draft_title"]) == "" {
-					nodesByID[id] = append(nodesByID[id], node)
-				}
+			if !strings.EqualFold(toString(node["type"]), "link_card") {
+				continue
+			}
+			kind := strings.ToUpper(strings.TrimSpace(toString(node["data_content_type"])))
+			if kind != "PIN" && kind != "ANSWER" {
+				continue
+			}
+			id := linkCardContentID(node, kind)
+			if id != "" {
+				ref := cardRef{kind: kind, id: id}
+				nodesByRef[ref] = append(nodesByRef[ref], node)
 			}
 		}
 		for _, rawChild := range asSlice(activity["list"]) {
@@ -247,20 +268,26 @@ func hydrateFeedLinkCards(ctx context.Context, source pinSource, response map[st
 	}
 
 	type result struct {
-		id     string
+		ref    cardRef
 		detail map[string]any
 		err    error
 	}
-	results := make(chan result, len(nodesByID))
-	for id := range nodesByID {
+	results := make(chan result, len(nodesByRef))
+	for ref := range nodesByRef {
 		go func() {
-			detail, err := source.GetPin(ctx, id)
-			results <- result{id: id, detail: detail, err: err}
+			var detail map[string]any
+			var err error
+			if ref.kind == "ANSWER" {
+				detail, err = source.GetAnswer(ctx, ref.id)
+			} else {
+				detail, err = source.GetPin(ctx, ref.id)
+			}
+			results <- result{ref: ref, detail: detail, err: err}
 		}()
 	}
-	for range nodesByID {
+	for range nodesByRef {
 		result := <-results
-		for _, node := range nodesByID[result.id] {
+		for _, node := range nodesByRef[result.ref] {
 			if result.err != nil {
 				node["card_error"] = result.err.Error()
 				continue
@@ -270,18 +297,40 @@ func hydrateFeedLinkCards(ctx context.Context, source pinSource, response map[st
 	}
 }
 
-func formatPinLinkCard(node map[string]any) string {
-	detail := mapValue(node["card_detail"])
-	title := firstNonEmpty(toString(node["data_draft_title"]), pinLinkCardTitle(detail))
-	if title == "" {
-		title = "引用想法"
+func linkCardContentID(node map[string]any, kind string) string {
+	id := strings.TrimSpace(toString(node["data_content_id"]))
+	if kind != "ANSWER" {
+		return id
 	}
-	label := "▣ 引用想法"
+	parsed, err := url.Parse(toString(node["url"]))
+	if err != nil {
+		return id
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	for index := range parts {
+		if parts[index] == "answer" && index+1 < len(parts) {
+			return parts[index+1]
+		}
+	}
+	return id
+}
+
+func formatLinkCard(node map[string]any) string {
+	detail := mapValue(node["card_detail"])
+	kind := strings.ToUpper(strings.TrimSpace(toString(node["data_content_type"])))
+	if kind == "ANSWER" {
+		return formatAnswerLinkCard(node, detail)
+	}
+	title := firstNonEmpty(pinLinkCardTitle(detail), toString(node["data_draft_title"]))
+	label := "↳ 引用想法"
 	if toString(node["card_error"]) != "" {
 		label += "（详情加载失败）"
 	}
-	lines := []string{label, title}
-	if stats := pinLinkCardStats(detail); stats != "" {
+	lines := []string{label}
+	if title != "" && title != "引用想法" {
+		lines = append(lines, title)
+	}
+	if stats := linkCardStats(detail); stats != "" {
 		lines = append(lines, stats)
 	}
 	for _, rawNode := range asSlice(detail["content"]) {
@@ -289,6 +338,30 @@ func formatPinLinkCard(node map[string]any) string {
 			lines = append(lines, "▣ 图片")
 			break
 		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatAnswerLinkCard(node, detail map[string]any) string {
+	label := "↳ 引用回答"
+	if author := strings.TrimSpace(toString(mapValue(detail["author"])["name"])); author != "" {
+		label += " · " + author
+	}
+	if toString(node["card_error"]) != "" {
+		label += "（详情加载失败）"
+	}
+	lines := []string{label}
+	if title := firstNonEmpty(toString(mapValue(detail["question"])["title"]), toString(node["data_draft_title"])); title != "" {
+		lines = append(lines, plainText(title))
+	}
+	if excerpt := truncateCells(plainText(firstNonEmpty(toString(detail["excerpt_new"]), toString(detail["excerpt"]), toString(detail["content"]))), 140); excerpt != "" {
+		lines = append(lines, excerpt)
+	}
+	if stats := linkCardStats(detail); stats != "" {
+		lines = append(lines, stats)
+	}
+	if imageTagPattern.MatchString(toString(detail["content"])) {
+		lines = append(lines, "▣ 图片")
 	}
 	return strings.Join(lines, "\n")
 }
@@ -311,9 +384,9 @@ func pinLinkCardTitle(detail map[string]any) string {
 	return strings.TrimSpace(strings.TrimSuffix(firstParagraph(plainText(content)), "|"))
 }
 
-func pinLinkCardStats(detail map[string]any) string {
+func linkCardStats(detail map[string]any) string {
 	parts := make([]string, 0, 3)
-	if value, ok := firstPresent(detail["like_count"], mapValue(mapValue(detail["reaction"])["statistics"])["up_vote_count"]); ok {
+	if value, ok := firstPresent(detail["voteup_count"], detail["like_count"], mapValue(mapValue(detail["reaction"])["statistics"])["up_vote_count"]); ok {
 		parts = append(parts, "赞同 "+display.FormatCount(value))
 	}
 	if value, ok := firstPresent(detail["favorite_count"], detail["favlists_count"]); ok {
@@ -419,6 +492,66 @@ func feedStats(target map[string]any) string {
 		parts = append(parts, "收藏 "+display.FormatCount(value))
 	}
 	return strings.Join(parts, "  ·  ")
+}
+
+func feedVoteCount(target map[string]any) (int64, bool) {
+	value, ok := firstPresent(
+		target["voteup_count"],
+		mapValue(mapValue(target["reaction"])["statistics"])["like_count"],
+		target["like_count"],
+	)
+	return toInt64(value), ok
+}
+
+func feedItemVoted(target map[string]any) bool {
+	relationship := mapValue(target["relationship"])
+	voting := relationship["voting"]
+	if truthy(voting) || toInt64(voting) > 0 || strings.EqualFold(toString(voting), "up") {
+		return true
+	}
+	relation := mapValue(mapValue(target["reaction"])["relation"])
+	return truthy(relation["liked"]) || strings.EqualFold(toString(relation["vote"]), "up")
+}
+
+func replaceVoteStat(stats string, count int64) string {
+	parts := strings.Split(stats, "  ·  ")
+	vote := "赞同 " + display.FormatCount(count)
+	for index := range parts {
+		if strings.HasPrefix(parts[index], "赞同 ") {
+			parts[index] = vote
+			return strings.Join(parts, "  ·  ")
+		}
+	}
+	if stats == "" {
+		return vote
+	}
+	return vote + "  ·  " + stats
+}
+
+func replaceCommentStat(stats string, count int) string {
+	parts := strings.Split(stats, "  ·  ")
+	comment := "评论 " + display.FormatCount(count)
+	for index := range parts {
+		if strings.HasPrefix(parts[index], "评论 ") {
+			parts[index] = comment
+			return strings.Join(parts, "  ·  ")
+		}
+	}
+	if stats == "" {
+		return comment
+	}
+	return stats + "  ·  " + comment
+}
+
+func withoutCommentStat(stats string) string {
+	parts := strings.Split(stats, "  ·  ")
+	kept := parts[:0]
+	for _, part := range parts {
+		if !strings.HasPrefix(part, "评论 ") {
+			kept = append(kept, part)
+		}
+	}
+	return strings.Join(kept, "  ·  ")
 }
 
 func feedItemURL(kind, id, questionID, apiURL string) string {

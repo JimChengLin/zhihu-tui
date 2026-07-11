@@ -246,6 +246,55 @@ func TestGetCommentsSupportsFeedResourceTypes(t *testing.T) {
 	}
 }
 
+func TestGetChildComments(t *testing.T) {
+	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v4/comment_v5/comment/789/child_comment" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		if r.URL.Query().Get("limit") != "20" || r.URL.Query().Get("offset") != "10" {
+			t.Fatalf("query=%s", r.URL.RawQuery)
+		}
+		writeJSON(t, w, http.StatusOK, map[string]any{"data": []any{map[string]any{"id": 456}}})
+	})
+	defer server.Close()
+
+	result, err := c.GetChildComments(context.Background(), "789", 10, 20)
+	if err != nil {
+		t.Fatalf("GetChildComments: %v", err)
+	}
+	if len(result["data"].([]any)) != 1 {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
+func TestCreateComment(t *testing.T) {
+	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v4/comment_v5/answers/123/comment" {
+			t.Fatalf("request=%s %s", r.Method, r.URL.Path)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["content"] != "新评论" {
+			t.Fatalf("payload=%#v", payload)
+		}
+		if _, exists := payload["reply_comment_id"]; exists {
+			t.Fatalf("root comment unexpectedly has reply target: %#v", payload)
+		}
+		writeJSON(t, w, http.StatusCreated, map[string]any{"id": 456})
+	})
+	defer server.Close()
+
+	result, err := c.CreateComment(context.Background(), "answer", "123", " 新评论 ")
+	if err != nil {
+		t.Fatalf("CreateComment: %v", err)
+	}
+	if result["id"].(json.Number).String() != "456" {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
 func TestGetAnswerIncludesCounts(t *testing.T) {
 	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v4/answers/123" {

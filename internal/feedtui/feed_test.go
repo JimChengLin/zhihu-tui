@@ -9,13 +9,20 @@ import (
 )
 
 type pinCardTestSource struct {
-	detail map[string]any
-	calls  []string
+	detail       map[string]any
+	answerDetail map[string]any
+	calls        []string
+	answerCalls  []string
 }
 
 func (source *pinCardTestSource) GetPin(_ context.Context, id string) (map[string]any, error) {
 	source.calls = append(source.calls, id)
 	return source.detail, nil
+}
+
+func (source *pinCardTestSource) GetAnswer(_ context.Context, id string) (map[string]any, error) {
+	source.answerCalls = append(source.answerCalls, id)
+	return source.answerDetail, nil
 }
 
 func TestParseFeedItemFormatsFollowingActivity(t *testing.T) {
@@ -61,6 +68,9 @@ func TestParseFeedItemFormatsFollowingActivity(t *testing.T) {
 	}
 	if item.stats != "赞同 1.2万  ·  评论 7" {
 		t.Fatalf("stats=%q", item.stats)
+	}
+	if !item.hasCommentCount || item.commentCount != 7 {
+		t.Fatalf("comment count=%d known=%v", item.commentCount, item.hasCommentCount)
 	}
 	if item.url != "https://www.zhihu.com/question/123/answer/456" {
 		t.Fatalf("url=%q", item.url)
@@ -148,6 +158,7 @@ func TestPinLinkCardLoadsAndRendersReferencedPin(t *testing.T) {
 		"type":              "link_card",
 		"data_content_type": "PIN",
 		"data_content_id":   "linked-pin",
+		"data_draft_title":  "引用想法",
 		"url":               "https://www.zhihu.com/pin/linked-pin",
 	}
 	response := map[string]any{
@@ -181,7 +192,7 @@ func TestPinLinkCardLoadsAndRendersReferencedPin(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"最终判了五年",
-		"▣ 引用想法",
+		"↳ 引用想法",
 		"北大才女用算法贩毒一年赚 1 亿美金，最终被判30年",
 		"赞同 69  ·  收藏 40  ·  评论 47",
 		"▣ 图片",
@@ -189,6 +200,55 @@ func TestPinLinkCardLoadsAndRendersReferencedPin(t *testing.T) {
 		if !strings.Contains(items[0].body, expected) {
 			t.Fatalf("pin body has no %q: %q", expected, items[0].body)
 		}
+	}
+	if strings.Count(items[0].body, "引用想法") != 1 {
+		t.Fatalf("generic card title was rendered twice: %q", items[0].body)
+	}
+}
+
+func TestAnswerLinkCardLoadsAnswerFromURL(t *testing.T) {
+	linkCard := map[string]any{
+		"type":              "link_card",
+		"data_content_type": "ANSWER",
+		"data_content_id":   "legacy-id",
+		"url":               "https://www.zhihu.com/question/1/answer/2058851474327738199",
+	}
+	response := map[string]any{"data": []any{map[string]any{
+		"target": map[string]any{
+			"id":      "outer-pin",
+			"type":    "pin",
+			"content": []any{linkCard},
+		},
+	}}}
+	source := &pinCardTestSource{answerDetail: map[string]any{
+		"author":         map[string]any{"name": "厂长L"},
+		"question":       map[string]any{"title": "如何评价 GPT-5.6？"},
+		"content":        "<p>回答的真实摘要。</p>",
+		"voteup_count":   102,
+		"comment_count":  9,
+		"favlists_count": 15,
+	}}
+
+	hydrateFeedLinkCards(context.Background(), source, response)
+	if len(source.answerCalls) != 1 || source.answerCalls[0] != "2058851474327738199" {
+		t.Fatalf("answer card calls=%#v", source.answerCalls)
+	}
+	items := parseFeedItems(asSlice(response["data"]))
+	if len(items) != 1 {
+		t.Fatalf("items=%#v", items)
+	}
+	for _, want := range []string{
+		"↳ 引用回答 · 厂长L",
+		"如何评价 GPT-5.6？",
+		"回答的真实摘要。",
+		"赞同 102  ·  收藏 15  ·  评论 9",
+	} {
+		if !strings.Contains(items[0].body, want) {
+			t.Fatalf("answer card has no %q: %q", want, items[0].body)
+		}
+	}
+	if strings.Contains(items[0].body, "暂无摘要") || strings.Contains(items[0].body, "引用想法") {
+		t.Fatalf("answer card used pin fallback: %q", items[0].body)
 	}
 }
 
@@ -752,6 +812,11 @@ func TestReadKeyRecognizesNavigationSequences(t *testing.T) {
 		{"\x1b[5~", keyPageUp},
 		{"\x1b[6~", keyPageDown},
 		{"\x03", keyCtrlC},
+		{"\x1b", keyEscape},
+		{"\x07", keyCtrlG},
+		{"\t", keyTab},
+		{"\x7f", keyBackspace},
+		{"你", "你"},
 	}
 	for _, test := range tests {
 		got, err := readKey(bufio.NewReader(strings.NewReader(test.input)))
@@ -761,6 +826,45 @@ func TestReadKeyRecognizesNavigationSequences(t *testing.T) {
 		if got != test.want {
 			t.Fatalf("readKey(%q)=%q, want %q", test.input, got, test.want)
 		}
+	}
+}
+
+func TestTerminalKeyDecoderSeparatesEscapeFromNavigation(t *testing.T) {
+	var decoder terminalKeyDecoder
+	if events := decoder.push(27); len(events) != 0 || !decoder.hasPendingEscape() {
+		t.Fatalf("escape start events=%v pending=%v", events, decoder.hasPendingEscape())
+	}
+	if events := decoder.flushEscape(); len(events) != 1 || events[0] != keyEscape {
+		t.Fatalf("standalone escape events=%v", events)
+	}
+
+	var arrow terminalKeyDecoder
+	var events []keyEvent
+	for _, value := range []byte("\x1b[A") {
+		events = append(events, arrow.push(value)...)
+	}
+	if len(events) != 1 || events[0] != keyUp || arrow.hasPendingEscape() {
+		t.Fatalf("arrow events=%v pending=%v", events, arrow.hasPendingEscape())
+	}
+
+	var followed terminalKeyDecoder
+	events = nil
+	for _, value := range []byte("\x1bq") {
+		events = append(events, followed.push(value)...)
+	}
+	if len(events) != 2 || events[0] != keyEscape || events[1] != "q" {
+		t.Fatalf("escape followed by text events=%v", events)
+	}
+}
+
+func TestTerminalKeyDecoderKeepsUTF8Input(t *testing.T) {
+	var decoder terminalKeyDecoder
+	var events []keyEvent
+	for _, value := range []byte("你") {
+		events = append(events, decoder.push(value)...)
+	}
+	if len(events) != 1 || events[0] != "你" {
+		t.Fatalf("UTF-8 events=%v", events)
 	}
 }
 
@@ -1247,6 +1351,35 @@ func TestReadingHeaderDoesNotRepeatImageCount(t *testing.T) {
 	}
 }
 
+func TestCommentHeaderOwnsCommentCount(t *testing.T) {
+	model := &app{
+		items: []feedItem{{
+			key:          "answer:42",
+			kind:         "answer",
+			title:        "测试问题",
+			author:       "答主",
+			stats:        "赞同 12  ·  评论 3  ·  收藏 2",
+			commentCount: 3,
+		}},
+		comments: map[string]*commentState{
+			"answer:42": {items: []feedComment{{id: "1", author: "用户", content: "评论"}}, loaded: true},
+		},
+		commentMode: true,
+		width:       100,
+		height:      24,
+	}
+	lines, _ := renderSingleApp(model)
+	rendered := strings.Join(styledLineTexts(lines), "\n")
+	if strings.Contains(rendered, "评论 3") {
+		t.Fatalf("feed stats repeat comment count in comment mode: %q", rendered)
+	}
+	for _, want := range []string{"赞同 12  ·  收藏 2", "评论区 · 共 3 条 · 已加载 1 条"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("comment header does not contain %q: %q", want, rendered)
+		}
+	}
+}
+
 func TestLongBodyScrollbarTracksReadingPosition(t *testing.T) {
 	model := &app{
 		items: []feedItem{{
@@ -1328,15 +1461,16 @@ func TestHelpUsesAlignedCommandColumns(t *testing.T) {
 		t.Fatalf("help title=%q", lines[0].text)
 	}
 	descriptions := []string{
-		"向下滚动；正文底部停止",
-		"向上滚动；正文顶部停止",
+		"正文滚动；评论区逐条移动蓝色焦点",
 		"向下翻页；到底后再按一次切换下一条",
 		"向上翻页；到顶后再按一次切换上一条",
 		"向下 / 向上半页，不切换动态",
 		"下一条 / 上一条",
 		"第一条 / 最后一条已加载动态",
+		"赞同回答 / 取消赞同",
+		"写评论 / 回复蓝色焦点所在评论",
 		"加载评论 / 返回正文",
-		"展开 / 收起知乎聚合动态",
+		"展开 / 收起蓝色焦点评论的回复或知乎聚合动态",
 		"专注阅读 / 恢复双栏",
 		"用默认浏览器打开当前动态",
 		"刷新；新标题变绿 / 标记进程阅读范围",

@@ -285,6 +285,21 @@ func (c *Client) GetComments(ctx context.Context, resourceType, resourceID strin
 	return c.getMap(ctx, c.endpoints.APIV4+"/comment_v5/"+resourceType+"s/"+url.PathEscape(resourceID)+"/root_comment", params)
 }
 
+func (c *Client) GetChildComments(ctx context.Context, commentID string, offset, limit int) (map[string]any, error) {
+	commentID = strings.TrimSpace(commentID)
+	if commentID == "" {
+		return nil, DataFetchError{Message: "root comment ID cannot be empty"}
+	}
+	params := url.Values{
+		"offset": {""},
+		"limit":  {strconv.Itoa(limit)},
+	}
+	if offset > 0 {
+		params.Set("offset", strconv.Itoa(offset))
+	}
+	return c.getMap(ctx, c.endpoints.APIV4+"/comment_v5/comment/"+url.PathEscape(commentID)+"/child_comment", params)
+}
+
 func (c *Client) ReplyComment(ctx context.Context, commentID, content string) (map[string]any, error) {
 	comment, err := c.GetComment(ctx, commentID)
 	if err != nil {
@@ -313,6 +328,24 @@ func (c *Client) ReplyCommentToResource(ctx context.Context, resourceType, resou
 	payload := map[string]any{
 		"content":           content,
 		"reply_comment_id":  commentID,
+		"selected_settings": []string{},
+		"unfriendly_check":  "strict",
+	}
+	return c.postJSON(ctx, c.endpoints.APIV4+"/comment_v5/"+url.PathEscape(resourceType)+"s/"+url.PathEscape(resourceID)+"/comment", payload, map[int]bool{http.StatusOK: true, http.StatusCreated: true})
+}
+
+func (c *Client) CreateComment(ctx context.Context, resourceType, resourceID, content string) (map[string]any, error) {
+	resourceType = strings.TrimSpace(resourceType)
+	resourceID = strings.TrimSpace(resourceID)
+	content = strings.TrimSpace(content)
+	if resourceType == "" || resourceID == "" {
+		return nil, DataFetchError{Message: "comment target cannot be empty"}
+	}
+	if content == "" {
+		return nil, DataFetchError{Message: "comment content cannot be empty"}
+	}
+	payload := map[string]any{
+		"content":           content,
 		"selected_settings": []string{},
 		"unfriendly_check":  "strict",
 	}
