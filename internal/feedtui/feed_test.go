@@ -8,6 +8,16 @@ import (
 	"testing"
 )
 
+type pinCardTestSource struct {
+	detail map[string]any
+	calls  []string
+}
+
+func (source *pinCardTestSource) GetPin(_ context.Context, id string) (map[string]any, error) {
+	source.calls = append(source.calls, id)
+	return source.detail, nil
+}
+
 func TestParseFeedItemFormatsFollowingActivity(t *testing.T) {
 	raw := map[string]any{
 		"id":           "activity-1",
@@ -82,11 +92,103 @@ func TestParseFeedItemFormatsStructuredPinContent(t *testing.T) {
 	if item.title != "想法标题" {
 		t.Fatalf("title=%q", item.title)
 	}
-	if item.body != "想法正文\n\n▣ 图片 1" {
+	if item.body != "想法标题\n\n想法正文\n\n▣ 图片 1" {
 		t.Fatalf("body=%q", item.body)
 	}
 	if item.imageCount != 1 {
 		t.Fatalf("imageCount=%d", item.imageCount)
+	}
+}
+
+func TestSingleParagraphPinRendersAsCompleteBody(t *testing.T) {
+	raw := map[string]any{
+		"id":          "activity-pin",
+		"action_text": "uncle creepy 发布了想法",
+		"target": map[string]any{
+			"id":      "789",
+			"type":    "pin",
+			"content": "最终判了五年 罪行是骗保 美国也是醉了[捂嘴]",
+			"author":  map[string]any{"name": "uncle creepy"},
+		},
+	}
+	item, ok := parseFeedItem(raw)
+	if !ok {
+		t.Fatal("parseFeedItem returned false")
+	}
+	if item.title != item.body {
+		t.Fatalf("single-paragraph pin title=%q body=%q, want sidebar title and complete body", item.title, item.body)
+	}
+	model := &app{items: []feedItem{item}, width: 100, height: 16}
+	lines, _ := renderSingleApp(model)
+	rendered := strings.Join(styledLineTexts(lines), "\n")
+	if strings.Contains(rendered, "这条动态没有正文摘要") {
+		t.Fatalf("complete pin was rendered as missing content: %q", rendered)
+	}
+	contentLines := 0
+	authorMentions := 0
+	for _, line := range lines {
+		authorMentions += strings.Count(line.text, item.author)
+		if strings.Contains(line.text, item.body) {
+			contentLines++
+			if line.style != "" {
+				t.Fatalf("pin body style=%q, want normal body text", line.style)
+			}
+		}
+	}
+	if contentLines != 1 {
+		t.Fatalf("pin body rendered %d times, want once: %q", contentLines, rendered)
+	}
+	if authorMentions != 1 {
+		t.Fatalf("pin author rendered %d times, want only the action line: %q", authorMentions, rendered)
+	}
+}
+
+func TestPinLinkCardLoadsAndRendersReferencedPin(t *testing.T) {
+	linkCard := map[string]any{
+		"type":              "link_card",
+		"data_content_type": "PIN",
+		"data_content_id":   "linked-pin",
+		"url":               "https://www.zhihu.com/pin/linked-pin",
+	}
+	response := map[string]any{
+		"data": []any{map[string]any{
+			"action_text": "uncle creepy发布了想法",
+			"target": map[string]any{
+				"id":      "outer-pin",
+				"type":    "pin",
+				"author":  map[string]any{"name": "uncle creepy"},
+				"content": []any{map[string]any{"type": "text", "content": "最终判了五年"}, linkCard},
+			},
+		}},
+	}
+	source := &pinCardTestSource{detail: map[string]any{
+		"content": []any{
+			map[string]any{"type": "text", "content": "北大才女用算法贩毒一年赚 1 亿美金，最终被判30年 | <p>正文</p>"},
+			map[string]any{"type": "image", "url": "cover.jpg"},
+		},
+		"like_count":     69,
+		"favorite_count": 40,
+		"comment_count":  47,
+	}}
+
+	hydrateFeedLinkCards(context.Background(), source, response)
+	if len(source.calls) != 1 || source.calls[0] != "linked-pin" {
+		t.Fatalf("linked pin calls=%#v", source.calls)
+	}
+	items := parseFeedItems(asSlice(response["data"]))
+	if len(items) != 1 {
+		t.Fatalf("items=%#v", items)
+	}
+	for _, expected := range []string{
+		"最终判了五年",
+		"▣ 引用想法",
+		"北大才女用算法贩毒一年赚 1 亿美金，最终被判30年",
+		"赞同 69  ·  收藏 40  ·  评论 47",
+		"▣ 封面图片",
+	} {
+		if !strings.Contains(items[0].body, expected) {
+			t.Fatalf("pin body has no %q: %q", expected, items[0].body)
+		}
 	}
 }
 

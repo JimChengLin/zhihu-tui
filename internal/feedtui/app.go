@@ -19,8 +19,13 @@ const feedPageSize = 10
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 type feedSource interface {
+	pinSource
 	GetFollowingFeed(context.Context, string, int) (map[string]any, error)
 	GetComments(context.Context, string, string, int, int, string) (map[string]any, error)
+}
+
+type pinSource interface {
+	GetPin(context.Context, string) (map[string]any, error)
 }
 
 type app struct {
@@ -206,6 +211,9 @@ func (model *app) startFetch(ctx context.Context, reset bool) {
 	}
 	go func() {
 		response, err := model.source.GetFollowingFeed(ctx, nextURL, feedPageSize)
+		if err == nil {
+			hydrateFeedLinkCards(ctx, model.source, response)
+		}
 		select {
 		case model.fetches <- fetchResult{response: response, err: err, reset: reset, generation: generation}:
 		case <-ctx.Done():

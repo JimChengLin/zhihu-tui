@@ -84,20 +84,25 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 			title = "▸ " + title
 		}
 	}
-	titleLines := wrapText(title, contentWidth)
-	if len(titleLines) > 3 {
-		titleLines = titleLines[:3]
-		titleLines[2] = truncateCells(strings.TrimSuffix(titleLines[2], "…")+"…", contentWidth)
-	}
-	titleStyle := ansiBold + ansiBlue
-	if len(item.foldedItems) > 0 {
-		titleStyle = ansiDim
-	}
-	for _, titleLine := range titleLines {
-		lines = append(lines, line(titleLine, titleStyle))
+	if item.kind != "pin" || item.body == "" {
+		titleLines := wrapText(title, contentWidth)
+		if len(titleLines) > 3 {
+			titleLines = titleLines[:3]
+			titleLines[2] = truncateCells(strings.TrimSuffix(titleLines[2], "…")+"…", contentWidth)
+		}
+		titleStyle := ansiBold + ansiBlue
+		if len(item.foldedItems) > 0 {
+			titleStyle = ansiDim
+		}
+		for _, titleLine := range titleLines {
+			lines = append(lines, line(titleLine, titleStyle))
+		}
 	}
 
 	authorLine := item.author
+	if item.headline == "" && strings.HasPrefix(item.action, item.author+" ") {
+		authorLine = ""
+	}
 	if item.headline != "" {
 		authorLine += "  ·  " + item.headline
 	}
@@ -116,7 +121,7 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	}
 	lines = append(lines, line(strings.Repeat("─", contentWidth), ansiDim))
 
-	if body == "" && len(item.foldedItems) == 0 {
+	if body == "" && len(item.foldedItems) == 0 && item.kind != "pin" {
 		body = "这条动态没有正文摘要；按 o 在知乎中查看完整内容。"
 	}
 	bodyLines := layoutBodyLines(body, contentWidth)
@@ -325,6 +330,9 @@ func layoutFoldedGroupPreview(children []feedItem, width int) []styledLine {
 		lines = append(lines, styledLine{text: truncateCells(meta, width), style: ansiDim})
 
 		excerpt, hasMore := foldedItemExcerpt(child)
+		if excerpt == "" {
+			continue
+		}
 		excerptWidth := width
 		excerptLines := wrapText(excerpt, excerptWidth)
 		truncated := len(excerptLines) > 2
@@ -387,7 +395,13 @@ func foldedItemExcerpt(item feedItem) (text string, hasMore bool) {
 		}
 		meaningful = append(meaningful, text)
 	}
+	if item.kind == "pin" && len(meaningful) > 0 && meaningful[0] == compactLine(item.title) {
+		meaningful = meaningful[1:]
+	}
 	if len(meaningful) == 0 {
+		if item.kind == "pin" {
+			return "", false
+		}
 		return "暂无正文摘要", false
 	}
 	return meaningful[0], len(meaningful) > 1

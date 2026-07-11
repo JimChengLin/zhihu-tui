@@ -1,6 +1,7 @@
 package feedtui
 
 import (
+	"context"
 	"fmt"
 	"html"
 	"regexp"
@@ -131,7 +132,7 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 			bodyTitle = ""
 		}
 		title = firstNonEmpty(bodyTitle, typeLabel(kind), "一条关注动态")
-		if title == firstParagraph(body) {
+		if title == firstParagraph(body) && kind != "pin" {
 			body = strings.TrimSpace(strings.TrimPrefix(body, title))
 		}
 	}
@@ -210,6 +211,8 @@ func feedContentText(value any) (string, int) {
 		case "image":
 			imageCount++
 			parts = append(parts, fmt.Sprintf("▣ 图片 %d", imageCount))
+		case "link_card":
+			parts = append(parts, formatPinLinkCard(node))
 		default:
 			text, nestedImages := contentTextFrom(toString(node["content"]), imageCount)
 			if text != "" {
@@ -219,6 +222,107 @@ func feedContentText(value any) (string, int) {
 		}
 	}
 	return strings.TrimSpace(strings.Join(parts, "\n\n")), imageCount
+}
+
+func hydrateFeedLinkCards(ctx context.Context, source pinSource, response map[string]any) {
+	nodesByID := make(map[string][]map[string]any)
+	var collectActivity func(map[string]any)
+	collectActivity = func(activity map[string]any) {
+		target := mapValue(activity["target"])
+		for _, rawNode := range asSlice(target["content"]) {
+			node := mapValue(rawNode)
+			if strings.EqualFold(toString(node["type"]), "link_card") && strings.EqualFold(toString(node["data_content_type"]), "PIN") {
+				id := strings.TrimSpace(toString(node["data_content_id"]))
+				if id != "" && toString(node["data_draft_title"]) == "" {
+					nodesByID[id] = append(nodesByID[id], node)
+				}
+			}
+		}
+		for _, rawChild := range asSlice(activity["list"]) {
+			collectActivity(mapValue(rawChild))
+		}
+	}
+	for _, rawActivity := range asSlice(response["data"]) {
+		collectActivity(mapValue(rawActivity))
+	}
+
+	type result struct {
+		id     string
+		detail map[string]any
+		err    error
+	}
+	results := make(chan result, len(nodesByID))
+	for id := range nodesByID {
+		go func() {
+			detail, err := source.GetPin(ctx, id)
+			results <- result{id: id, detail: detail, err: err}
+		}()
+	}
+	for range nodesByID {
+		result := <-results
+		for _, node := range nodesByID[result.id] {
+			if result.err != nil {
+				node["card_error"] = result.err.Error()
+				continue
+			}
+			node["card_detail"] = result.detail
+		}
+	}
+}
+
+func formatPinLinkCard(node map[string]any) string {
+	detail := mapValue(node["card_detail"])
+	title := firstNonEmpty(toString(node["data_draft_title"]), pinLinkCardTitle(detail))
+	if title == "" {
+		title = "引用想法"
+	}
+	label := "▣ 引用想法"
+	if toString(node["card_error"]) != "" {
+		label += "（详情加载失败）"
+	}
+	lines := []string{label, title}
+	if stats := pinLinkCardStats(detail); stats != "" {
+		lines = append(lines, stats)
+	}
+	for _, rawNode := range asSlice(detail["content"]) {
+		if strings.EqualFold(toString(mapValue(rawNode)["type"]), "image") {
+			lines = append(lines, "▣ 封面图片")
+			break
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func pinLinkCardTitle(detail map[string]any) string {
+	var content string
+	for _, rawNode := range asSlice(detail["content"]) {
+		node := mapValue(rawNode)
+		if strings.EqualFold(toString(node["type"]), "text") {
+			content = toString(node["content"])
+			break
+		}
+	}
+	if content == "" {
+		content = toString(detail["excerpt_title"])
+	}
+	if before, _, found := strings.Cut(content, " | "); found {
+		content = before
+	}
+	return strings.TrimSpace(strings.TrimSuffix(firstParagraph(plainText(content)), "|"))
+}
+
+func pinLinkCardStats(detail map[string]any) string {
+	parts := make([]string, 0, 3)
+	if value, ok := firstPresent(detail["like_count"], mapValue(mapValue(detail["reaction"])["statistics"])["up_vote_count"]); ok {
+		parts = append(parts, "赞同 "+display.FormatCount(value))
+	}
+	if value, ok := firstPresent(detail["favorite_count"], detail["favlists_count"]); ok {
+		parts = append(parts, "收藏 "+display.FormatCount(value))
+	}
+	if value, ok := firstPresent(detail["comment_count"]); ok {
+		parts = append(parts, "评论 "+display.FormatCount(value))
+	}
+	return strings.Join(parts, "  ·  ")
 }
 
 func referencedImageCount(raw, target map[string]any) int {

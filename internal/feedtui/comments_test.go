@@ -15,6 +15,10 @@ func (source *commentTestSource) GetFollowingFeed(context.Context, string, int) 
 	return nil, nil
 }
 
+func (source *commentTestSource) GetPin(context.Context, string) (map[string]any, error) {
+	return nil, nil
+}
+
 func (source *commentTestSource) GetComments(_ context.Context, resourceType, resourceID string, _, _ int, _ string) (map[string]any, error) {
 	source.calls <- resourceType + ":" + resourceID
 	return map[string]any{
