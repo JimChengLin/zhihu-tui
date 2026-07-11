@@ -122,6 +122,9 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		if row >= thumbStart && row < thumbStart+thumbSize {
 			bar = "┃"
 		}
+		if model.pageAnchorVisible && model.scroll+row == model.pageAnchorLine {
+			bar = "◂"
+		}
 		body := line(padCells(bodyLine, contentWidth)+" ", "")
 		body.suffix = bar
 		body.suffixStyle = ansiDim
@@ -230,11 +233,7 @@ func renderWideApp(model *app) ([]styledLine, layoutMetrics) {
 func renderSidebar(model *app, width int) []styledLine {
 	lines := make([]styledLine, model.height)
 	lines[0] = styledLine{text: " 关注动态", style: ansiBold + ansiCyan}
-	status := fmt.Sprintf(" 已加载 %d 条", len(model.items))
-	if len(model.newItemKeys) > 0 {
-		status += fmt.Sprintf(" · NEW %d", len(model.newItemKeys))
-	}
-	status += fmt.Sprintf(" · 当前第 %d 条", model.index+1)
+	status := fmt.Sprintf(" 已加载 %d 条 · 当前第 %d 条", len(model.items), model.index+1)
 	lines[1] = styledLine{text: truncateCells(status, width-1), style: ansiDim}
 
 	visibleItems := maxInt(1, (model.height-5)/3)
@@ -259,10 +258,9 @@ func renderSidebar(model *app, width int) []styledLine {
 		style := ""
 		summaryPrefix := "  "
 		summaryStyle := ansiDim
-		if _, isNew := model.newItemKeys[item.key]; isNew {
-			style = ansiBold + ansiGreen
-			summaryPrefix = "  NEW · "
-			summaryStyle = ansiGreen
+		_, isNew := model.newItemKeys[item.key]
+		if isNew {
+			style = ansiGreen
 		} else if item.key == model.lastReadTopKey && item.key == model.lastReadBottomKey {
 			style = ansiCyan
 			summaryPrefix = "  上次读到↓↑ · "
@@ -278,7 +276,11 @@ func renderSidebar(model *app, width int) []styledLine {
 		}
 		if index == model.index {
 			marker = "› "
-			style = ansiBold + ansiCyan
+			if isNew {
+				style = ansiBold + ansiGreen
+			} else {
+				style = ansiBold + ansiCyan
+			}
 		}
 		titleWidth := maxInt(1, width-stringCellWidth(marker)-1)
 		title := truncateCells(item.title, titleWidth)
@@ -362,7 +364,7 @@ func renderHelp(width, height int) []styledLine {
 		{text: pad + "c            加载评论 / 返回正文"},
 		{text: pad + "z            专注阅读 / 恢复双栏"},
 		{text: pad + "o            用默认浏览器打开当前动态"},
-		{text: pad + "r            刷新，并标记新内容 / 上次列表首尾"},
+		{text: pad + "r            刷新；新标题变绿 / 标记上次列表首尾"},
 		{text: pad + "q / Ctrl-C   退出并恢复终端"},
 		{},
 		{text: pad + "按 ? 返回阅读。", style: ansiCyan},

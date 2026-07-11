@@ -40,6 +40,8 @@ type app struct {
 	messageUntil         time.Time
 	boundarySwitchKey    keyEvent
 	boundarySwitchUntil  time.Time
+	pageAnchorLine       int
+	pageAnchorVisible    bool
 	showHelp             bool
 	zenMode              bool
 	hideFeedHeader       bool
@@ -130,6 +132,7 @@ func Run(ctx context.Context, source feedSource, in, out *os.File) error {
 			return ctx.Err()
 		case sig := <-signals:
 			if sig == syscall.SIGWINCH {
+				model.clearPageAnchor()
 				width, height, err = terminalSize(out)
 				if err != nil {
 					return fmt.Errorf("read resized terminal: %w", err)
@@ -297,6 +300,7 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 	case "?":
 		model.showHelp = true
 	case "r":
+		model.clearPageAnchor()
 		model.captureRefreshBoundary()
 		model.commentMode = false
 		model.bodyScroll = 0
@@ -306,6 +310,7 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 	case "c":
 		model.toggleComments(ctx)
 	case "z":
+		model.clearPageAnchor()
 		model.zenMode = !model.zenMode
 		if model.zenMode {
 			model.setMessage("已进入专注模式", 2*time.Second)
@@ -330,12 +335,14 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 		model.scrollUp(maxInt(1, model.metrics.bodyHeight/2))
 	case "g":
 		if len(model.items) > 0 {
+			model.clearPageAnchor()
 			model.commentMode = false
 			model.bodyScroll = 0
 			model.index, model.scroll = 0, 0
 		}
 	case "G":
 		if len(model.items) > 0 {
+			model.clearPageAnchor()
 			model.commentMode = false
 			model.bodyScroll = 0
 			model.index, model.scroll = len(model.items)-1, 0
@@ -370,6 +377,7 @@ func (model *app) trackRefreshBoundary(item feedItem) {
 }
 
 func (model *app) lineDown() {
+	model.clearPageAnchor()
 	if model.scroll < model.metrics.maxScroll {
 		model.scroll++
 		model.clearMessage()
@@ -379,6 +387,7 @@ func (model *app) lineDown() {
 }
 
 func (model *app) lineUp() {
+	model.clearPageAnchor()
 	if model.scroll > 0 {
 		model.scroll--
 		model.clearMessage()
@@ -389,8 +398,10 @@ func (model *app) lineUp() {
 
 func (model *app) pageDownWithConfirmation(ctx context.Context, amount int) {
 	if model.scroll < model.metrics.maxScroll {
+		previousLastLine := minInt(model.metrics.bodyLines-1, model.scroll+model.metrics.bodyHeight-1)
 		model.clearBoundarySwitch()
 		model.scroll = minInt(model.metrics.maxScroll, model.scroll+amount)
+		model.setPageAnchor(previousLastLine)
 		model.clearMessage()
 		if model.scroll == model.metrics.maxScroll {
 			model.armBoundarySwitch(" ", "已到正文底部，再按一次 space 切换下一条")
@@ -406,8 +417,10 @@ func (model *app) pageDownWithConfirmation(ctx context.Context, amount int) {
 
 func (model *app) pageUpWithConfirmation(amount int) {
 	if model.scroll > 0 {
+		previousFirstLine := model.scroll
 		model.clearBoundarySwitch()
 		model.scroll = maxInt(0, model.scroll-amount)
+		model.setPageAnchor(previousFirstLine)
 		model.clearMessage()
 		if model.scroll == 0 {
 			model.armBoundarySwitch("b", "已到正文顶部，再按一次 b 切换上一条")
@@ -422,6 +435,7 @@ func (model *app) pageUpWithConfirmation(amount int) {
 }
 
 func (model *app) scrollDown(amount int) {
+	model.clearPageAnchor()
 	if model.scroll < model.metrics.maxScroll {
 		model.scroll = minInt(model.metrics.maxScroll, model.scroll+amount)
 		model.clearMessage()
@@ -431,6 +445,7 @@ func (model *app) scrollDown(amount int) {
 }
 
 func (model *app) scrollUp(amount int) {
+	model.clearPageAnchor()
 	if model.scroll > 0 {
 		model.scroll = maxInt(0, model.scroll-amount)
 		model.clearMessage()
@@ -464,7 +479,18 @@ func (model *app) clearMessage() {
 	model.messageUntil = time.Time{}
 }
 
+func (model *app) setPageAnchor(line int) {
+	model.pageAnchorLine = line
+	model.pageAnchorVisible = line >= 0
+}
+
+func (model *app) clearPageAnchor() {
+	model.pageAnchorLine = 0
+	model.pageAnchorVisible = false
+}
+
 func (model *app) moveNext(ctx context.Context) {
+	model.clearPageAnchor()
 	if model.index+1 < len(model.items) {
 		model.commentMode = false
 		model.bodyScroll = 0
@@ -482,6 +508,7 @@ func (model *app) moveNext(ctx context.Context) {
 }
 
 func (model *app) movePrevious(atEnd bool) {
+	model.clearPageAnchor()
 	if model.index == 0 || len(model.items) == 0 {
 		model.setMessage("已经是第一条动态", 2*time.Second)
 		return
@@ -497,6 +524,7 @@ func (model *app) movePrevious(atEnd bool) {
 }
 
 func (model *app) toggleComments(ctx context.Context) {
+	model.clearPageAnchor()
 	if len(model.items) == 0 {
 		return
 	}

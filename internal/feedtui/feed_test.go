@@ -135,7 +135,7 @@ func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 	ctx := context.Background()
 	model := &app{
 		items:   []feedItem{{key: "1"}, {key: "2"}},
-		metrics: layoutMetrics{bodyHeight: 8, maxScroll: 8},
+		metrics: layoutMetrics{bodyHeight: 8, bodyLines: 16, maxScroll: 8},
 	}
 
 	model.scroll = model.metrics.maxScroll
@@ -161,6 +161,9 @@ func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 	if !strings.Contains(model.message, "再按一次 space") {
 		t.Fatalf("bottom confirmation message=%q", model.message)
 	}
+	if !model.pageAnchorVisible || model.pageAnchorLine != 11 {
+		t.Fatalf("space continuation anchor=(%d, %v), want previous last line 11", model.pageAnchorLine, model.pageAnchorVisible)
+	}
 	model.handleKey(ctx, " ")
 	if model.index != 1 || model.scroll != 0 {
 		t.Fatalf("confirmed space did not switch to the next item: index=%d scroll=%d", model.index, model.scroll)
@@ -177,6 +180,9 @@ func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 	}
 	if !strings.Contains(model.message, "再按一次 b") {
 		t.Fatalf("top confirmation message=%q", model.message)
+	}
+	if !model.pageAnchorVisible || model.pageAnchorLine != 4 {
+		t.Fatalf("b continuation anchor=(%d, %v), want previous first line 4", model.pageAnchorLine, model.pageAnchorVisible)
 	}
 	model.handleKey(ctx, "b")
 	if model.index != 0 || model.scroll == 0 {
@@ -257,8 +263,14 @@ func TestRefreshMarksNewAndPreviouslyViewedRangeAfterSuccess(t *testing.T) {
 	if sidebar[3].text != "› 新问题" {
 		t.Fatalf("first sidebar title=%q, want no numeric prefix", sidebar[3].text)
 	}
-	if !strings.Contains(sidebar[1].text, "NEW 1") || !strings.HasPrefix(sidebar[4].text, "  NEW · ") {
-		t.Fatalf("sidebar is missing the NEW marker: %#v", sidebar)
+	if strings.Contains(sidebar[1].text, "NEW") || strings.Contains(sidebar[4].text, "NEW") {
+		t.Fatalf("sidebar still contains redundant NEW text: %#v", sidebar)
+	}
+	if sidebar[3].style != ansiBold+ansiGreen {
+		t.Fatalf("new selected title style=%q, want green", sidebar[3].style)
+	}
+	if sidebar[4].style != ansiDim {
+		t.Fatalf("new item summary style=%q, want the normal dim style", sidebar[4].style)
 	}
 	if !strings.HasPrefix(sidebar[7].text, "  上次读到↓ · ") {
 		t.Fatalf("last-read top summary=%q", sidebar[7].text)
@@ -460,12 +472,34 @@ func TestLongBodyScrollbarTracksReadingPosition(t *testing.T) {
 	if bar[len(bar)-1].suffix != "┃" {
 		t.Fatalf("bottom scrollbar does not end with the thumb: %q", bar[len(bar)-1].suffix)
 	}
+
+	model.scroll = 0
+	model.metrics = metrics
+	model.pageDownWithConfirmation(context.Background(), maxInt(1, metrics.bodyHeight/2))
+	lines, _ = renderSingleApp(model)
+	anchors := pageAnchorLines(lines)
+	if len(anchors) != 1 || !strings.HasPrefix(anchors[0].suffix, "◂") {
+		t.Fatalf("page continuation anchors=%#v, want one visible marker", anchors)
+	}
+	if anchors[0].suffixStyle != ansiDim {
+		t.Fatalf("page continuation marker style=%q, want dim", anchors[0].suffixStyle)
+	}
 }
 
 func scrollbarLines(lines []styledLine) []styledLine {
 	var result []styledLine
 	for _, line := range lines {
 		if line.suffix == "┊" || line.suffix == "┃" {
+			result = append(result, line)
+		}
+	}
+	return result
+}
+
+func pageAnchorLines(lines []styledLine) []styledLine {
+	var result []styledLine
+	for _, line := range lines {
+		if strings.HasPrefix(line.suffix, "◂") {
 			result = append(result, line)
 		}
 	}
