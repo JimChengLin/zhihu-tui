@@ -24,29 +24,38 @@ type feedSource interface {
 }
 
 type app struct {
-	source         feedSource
-	items          []feedItem
-	index          int
-	scroll         int
-	width          int
-	height         int
-	nextURL        string
-	end            bool
-	loading        bool
-	refreshing     bool
-	err            error
-	message        string
-	messageUntil   time.Time
-	showHelp       bool
-	zenMode        bool
-	spinner        int
-	generation     int
-	metrics        layoutMetrics
-	fetches        chan fetchResult
-	commentMode    bool
-	bodyScroll     int
-	comments       map[string]*commentState
-	commentFetches chan commentFetchResult
+	source               feedSource
+	items                []feedItem
+	index                int
+	scroll               int
+	width                int
+	height               int
+	nextURL              string
+	end                  bool
+	loading              bool
+	refreshing           bool
+	err                  error
+	message              string
+	messageUntil         time.Time
+	showHelp             bool
+	zenMode              bool
+	hideFeedHeader       bool
+	hideItemPosition     bool
+	spinner              int
+	generation           int
+	metrics              layoutMetrics
+	fetches              chan fetchResult
+	lastReadTopKey       string
+	lastReadBottomKey    string
+	pendingReadTopKey    string
+	pendingReadBottomKey string
+	newItemKeys          map[string]struct{}
+	lastReadTopFound     bool
+	viewedThrough        int
+	commentMode          bool
+	bodyScroll           int
+	comments             map[string]*commentState
+	commentFetches       chan commentFetchResult
 }
 
 type fetchResult struct {
@@ -219,6 +228,15 @@ func (model *app) applyFetch(result fetchResult) {
 		model.scroll = 0
 		model.end = false
 		model.nextURL = ""
+		model.viewedThrough = 0
+		if model.pendingReadTopKey != "" {
+			model.lastReadTopKey = model.pendingReadTopKey
+			model.lastReadBottomKey = model.pendingReadBottomKey
+			model.pendingReadTopKey = ""
+			model.pendingReadBottomKey = ""
+			model.newItemKeys = make(map[string]struct{})
+			model.lastReadTopFound = false
+		}
 	}
 	seen := make(map[string]struct{}, len(model.items)+len(newItems))
 	for _, item := range model.items {
@@ -230,6 +248,7 @@ func (model *app) applyFetch(result fetchResult) {
 			continue
 		}
 		seen[item.key] = struct{}{}
+		model.trackRefreshBoundary(item)
 		model.items = append(model.items, item)
 		added++
 	}
@@ -271,6 +290,7 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 	case "?":
 		model.showHelp = true
 	case "r":
+		model.captureRefreshBoundary()
 		model.commentMode = false
 		model.bodyScroll = 0
 		model.scroll = 0
@@ -317,6 +337,29 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 		model.openCurrent()
 	}
 	return false
+}
+
+func (model *app) captureRefreshBoundary() {
+	model.pendingReadTopKey = ""
+	model.pendingReadBottomKey = ""
+	if len(model.items) == 0 {
+		return
+	}
+	model.pendingReadTopKey = model.items[0].key
+	if model.viewedThrough > 0 {
+		model.pendingReadBottomKey = model.items[model.viewedThrough-1].key
+	}
+}
+
+func (model *app) trackRefreshBoundary(item feedItem) {
+	if model.lastReadTopKey == "" || model.lastReadTopFound {
+		return
+	}
+	if item.key == model.lastReadTopKey {
+		model.lastReadTopFound = true
+		return
+	}
+	model.newItemKeys[item.key] = struct{}{}
 }
 
 func (model *app) lineDown(ctx context.Context) {
@@ -479,7 +522,20 @@ func (model *app) setMessage(message string, duration time.Duration) {
 func (model *app) render(out *os.File) error {
 	lines, metrics := renderApp(model)
 	model.metrics = metrics
-	return writeFrame(out, lines, model.width, model.height)
+	if err := writeFrame(out, lines, model.width, model.height); err != nil {
+		return err
+	}
+	if !model.showHelp && model.width >= 42 && model.height >= 14 {
+		model.markCurrentViewed()
+	}
+	return nil
+}
+
+func (model *app) markCurrentViewed() {
+	if len(model.items) == 0 || model.index+1 <= model.viewedThrough {
+		return
+	}
+	model.viewedThrough = model.index + 1
 }
 
 func readKeys(in *os.File, keys chan<- keyEvent, errs chan<- error) {

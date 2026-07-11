@@ -152,6 +152,71 @@ func TestApplyFetchDeduplicatesOverlappingPages(t *testing.T) {
 	}
 }
 
+func TestRefreshMarksNewAndPreviouslyViewedRangeAfterSuccess(t *testing.T) {
+	model := &app{
+		generation: 1,
+		items: []feedItem{
+			{key: "answer:1", title: "问题一", action: "甲赞同了回答"},
+			{key: "answer:2", title: "问题二", action: "乙赞同了回答"},
+			{key: "answer:3", title: "问题三", action: "丙赞同了回答"},
+		},
+		height: 24,
+	}
+	model.index = 0
+	model.markCurrentViewed()
+	model.index = 1
+	model.markCurrentViewed()
+	model.captureRefreshBoundary()
+	if model.lastReadTopKey != "" || model.lastReadBottomKey != "" {
+		t.Fatalf("last-read range=(%q, %q) before refresh finishes", model.lastReadTopKey, model.lastReadBottomKey)
+	}
+	if model.pendingReadTopKey != "answer:1" || model.pendingReadBottomKey != "answer:2" {
+		t.Fatalf("pending range=(%q, %q), want previous first and last viewed items", model.pendingReadTopKey, model.pendingReadBottomKey)
+	}
+	if len(model.newItemKeys) != 0 {
+		t.Fatalf("newItemKeys=%v before refresh finishes", model.newItemKeys)
+	}
+
+	response := map[string]any{
+		"data": []any{
+			feedTestRaw("new", "新问题"),
+			feedTestRaw("1", "问题一"),
+			feedTestRaw("2", "问题二"),
+			feedTestRaw("3", "问题三"),
+		},
+		"paging": map[string]any{"is_end": true},
+	}
+	model.generation++
+	model.applyFetch(fetchResult{response: response, reset: true, generation: model.generation})
+
+	if model.lastReadTopKey != "answer:1" || model.lastReadBottomKey != "answer:2" {
+		t.Fatalf("last-read range=(%q, %q), want previous first and last viewed items", model.lastReadTopKey, model.lastReadBottomKey)
+	}
+	if model.pendingReadTopKey != "" || model.pendingReadBottomKey != "" {
+		t.Fatalf("pending range=(%q, %q) after refresh finishes", model.pendingReadTopKey, model.pendingReadBottomKey)
+	}
+	if _, ok := model.newItemKeys["answer:new"]; !ok || len(model.newItemKeys) != 1 {
+		t.Fatalf("newItemKeys=%v, want only the item before the previous first item", model.newItemKeys)
+	}
+
+	sidebar := renderSidebar(model, 40)
+	if sidebar[3].text != "› 新问题" {
+		t.Fatalf("first sidebar title=%q, want no numeric prefix", sidebar[3].text)
+	}
+	if !strings.Contains(sidebar[1].text, "NEW 1") || !strings.HasPrefix(sidebar[4].text, "  NEW · ") {
+		t.Fatalf("sidebar is missing the NEW marker: %#v", sidebar)
+	}
+	if !strings.HasPrefix(sidebar[7].text, "  上次读到↓ · ") {
+		t.Fatalf("last-read top summary=%q", sidebar[7].text)
+	}
+	if !strings.HasPrefix(sidebar[10].text, "  上次读到↑ · ") {
+		t.Fatalf("last-read bottom summary=%q", sidebar[10].text)
+	}
+	if strings.Contains(sidebar[13].text, "上次读到") {
+		t.Fatalf("unread prefetched item was marked as viewed: %q", sidebar[13].text)
+	}
+}
+
 func TestRenderAppUsesResponsiveWideLayout(t *testing.T) {
 	items := make([]feedItem, 20)
 	for index := range items {
@@ -173,6 +238,9 @@ func TestRenderAppUsesResponsiveWideLayout(t *testing.T) {
 	if !strings.Contains(rendered, "关注动态") || !strings.Contains(rendered, "第 11 条关注动态") {
 		t.Fatalf("wide layout is missing sidebar or current item: %q", rendered)
 	}
+	if strings.Contains(rendered, "知乎关注 · 回答 · 已加载 20 条") {
+		t.Fatalf("wide main pane repeats the feed header: %q", rendered)
+	}
 	if metrics.bodyHeight <= 0 {
 		t.Fatalf("bodyHeight=%d", metrics.bodyHeight)
 	}
@@ -189,18 +257,28 @@ func TestRenderAppUsesResponsiveWideLayout(t *testing.T) {
 	if lines[0].raw {
 		t.Fatal("compact layout unexpectedly rendered columns")
 	}
+	if rendered := strings.Join(styledLineTexts(lines), "\n"); !strings.Contains(rendered, "第 11 / 20 条") {
+		t.Fatalf("compact layout is missing the item position: %q", rendered)
+	}
+	if rendered := strings.Join(styledLineTexts(lines), "\n"); !strings.Contains(rendered, "知乎关注 · 回答 · 已加载 20 条") {
+		t.Fatalf("compact layout is missing the feed header: %q", rendered)
+	}
 
 	model.width, model.height = 220, 70
 	lines, _ = renderApp(model)
-	statusRow := -1
+	rendered = strings.Join(styledLineTexts(lines), "\n")
+	if strings.Contains(rendered, "第 11 / 20 条") {
+		t.Fatalf("wide main pane repeats the sidebar item position: %q", rendered)
+	}
+	hintsRow := -1
 	for row, line := range lines {
-		if strings.Contains(line.text, "第 11 / 20 条") {
-			statusRow = row
+		if strings.Contains(line.text, "j/k 滚动") {
+			hintsRow = row
 			break
 		}
 	}
-	if statusRow < 0 || statusRow >= model.height/2 {
-		t.Fatalf("short-content status row=%d, want it near the content in a tall terminal", statusRow)
+	if hintsRow != model.height-2 {
+		t.Fatalf("short-content hints row=%d, want it pinned at row %d", hintsRow, model.height-2)
 	}
 
 	model.width, model.height = 160, 32
@@ -225,6 +303,11 @@ func TestRenderAppUsesResponsiveWideLayout(t *testing.T) {
 	if sidebar[5].text != "" {
 		t.Fatalf("sidebar items do not have a spacer row: %#v", sidebar[5])
 	}
+	for _, line := range sidebar {
+		if strings.Contains(line.text, "后面还有") {
+			t.Fatalf("sidebar contains a finite-list tail hint: %q", line.text)
+		}
+	}
 }
 
 func TestAddParagraphSpacingPreservesAuthorLayout(t *testing.T) {
@@ -233,6 +316,27 @@ func TestAddParagraphSpacingPreservesAuthorLayout(t *testing.T) {
 	got := addParagraphSpacing(lines)
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("addParagraphSpacing()=%q, want %q", got, want)
+	}
+}
+
+func TestReadingHeaderDoesNotRepeatImageCount(t *testing.T) {
+	model := &app{
+		items: []feedItem{{
+			kind:       "answer",
+			action:     "某人赞同了回答",
+			title:      "测试问题",
+			author:     "答主",
+			stats:      "赞同 12  ·  评论 3",
+			body:       "正文",
+			imageCount: 2,
+		}},
+		width:  100,
+		height: 24,
+	}
+	lines, _ := renderSingleApp(model)
+	rendered := strings.Join(styledLineTexts(lines), "\n")
+	if strings.Contains(rendered, "图片 2") {
+		t.Fatalf("reading header repeats the image count: %q", rendered)
 	}
 }
 

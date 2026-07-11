@@ -55,7 +55,10 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	line := func(text, style string) styledLine {
 		return styledLine{text: strings.Repeat(" ", left) + text, style: style}
 	}
-	lines := []styledLine{line(headerText(model), ansiBold+ansiCyan), {}}
+	lines := []styledLine{{}}
+	if !model.hideFeedHeader {
+		lines = []styledLine{line(headerText(model), ansiBold+ansiCyan), {}}
+	}
 
 	action := item.action
 	if relative := formatRelativeTime(item.createdAt, time.Now()); relative != "" {
@@ -78,12 +81,6 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	}
 	lines = append(lines, line(truncateCells(authorLine, contentWidth), ansiDim))
 	meta := item.stats
-	if item.imageCount > 0 {
-		if meta != "" {
-			meta += "  ·  "
-		}
-		meta += fmt.Sprintf("图片 %d", item.imageCount)
-	}
 	if meta != "" {
 		lines = append(lines, line(truncateCells(meta, contentWidth), ansiGreen))
 	}
@@ -105,10 +102,8 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
-	footerAtBottom := true
 	if len(bodyLines) < bodyHeight {
 		bodyHeight = maxInt(1, len(bodyLines))
-		footerAtBottom = false
 	}
 	maxScroll := maxInt(0, len(bodyLines)-bodyHeight)
 	if model.scroll > maxScroll {
@@ -118,34 +113,34 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	for _, bodyLine := range bodyLines[model.scroll:end] {
 		lines = append(lines, line(bodyLine, ""))
 	}
-	if footerAtBottom {
-		for len(lines) < model.height-fixedBottom {
-			lines = append(lines, styledLine{})
-		}
-	} else {
+	for len(lines) < model.height-fixedBottom {
 		lines = append(lines, styledLine{})
 	}
 
 	lines = append(lines, line(strings.Repeat("─", contentWidth), ansiDim))
-	status := fmt.Sprintf("第 %d / %d 条", model.index+1, len(model.items))
+	statusParts := make([]string, 0, 4)
+	if !model.hideItemPosition {
+		statusParts = append(statusParts, fmt.Sprintf("第 %d / %d 条", model.index+1, len(model.items)))
+	}
 	if model.commentMode {
-		status += "  ·  评论区"
+		statusParts = append(statusParts, "评论区")
 	}
 	if len(bodyLines) > bodyHeight {
-		status += fmt.Sprintf("  ·  正文 %d–%d / %d 行", model.scroll+1, end, len(bodyLines))
+		statusParts = append(statusParts, fmt.Sprintf("正文 %d–%d / %d 行", model.scroll+1, end, len(bodyLines)))
 	}
 	if model.loading {
 		loadingText := "正在预取后续动态"
 		if model.refreshing {
 			loadingText = "正在刷新关注流"
 		}
-		status += "  ·  " + spinnerFrames[model.spinner%len(spinnerFrames)] + " " + loadingText
+		statusParts = append(statusParts, spinnerFrames[model.spinner%len(spinnerFrames)]+" "+loadingText)
 	} else if model.end {
-		status += "  ·  已到当前关注流末尾"
+		statusParts = append(statusParts, "已到当前关注流末尾")
 	}
 	if model.message != "" {
-		status += "  ·  " + model.message
+		statusParts = append(statusParts, model.message)
 	}
+	status := strings.Join(statusParts, "  ·  ")
 	lines = append(lines, line(truncateCells(status, contentWidth), ansiDim))
 	hints := "j/k 滚动  space/b 翻页  n/p 切换  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
 	if model.zenMode {
@@ -190,6 +185,8 @@ func renderWideApp(model *app) ([]styledLine, layoutMetrics) {
 	mainWidth := model.width - sidebarWidth - 3
 	mainModel := *model
 	mainModel.width = mainWidth
+	mainModel.hideFeedHeader = true
+	mainModel.hideItemPosition = true
 	mainLines, metrics := renderSingleApp(&mainModel)
 	model.scroll = mainModel.scroll
 
@@ -204,7 +201,12 @@ func renderWideApp(model *app) ([]styledLine, layoutMetrics) {
 func renderSidebar(model *app, width int) []styledLine {
 	lines := make([]styledLine, model.height)
 	lines[0] = styledLine{text: " 关注动态", style: ansiBold + ansiCyan}
-	lines[1] = styledLine{text: fmt.Sprintf(" 已加载 %d 条 · 当前第 %d 条", len(model.items), model.index+1), style: ansiDim}
+	status := fmt.Sprintf(" 已加载 %d 条", len(model.items))
+	if len(model.newItemKeys) > 0 {
+		status += fmt.Sprintf(" · NEW %d", len(model.newItemKeys))
+	}
+	status += fmt.Sprintf(" · 当前第 %d 条", model.index+1)
+	lines[1] = styledLine{text: truncateCells(status, width-1), style: ansiDim}
 
 	visibleItems := maxInt(1, (model.height-5)/3)
 	visibleItems = minInt(visibleItems, len(model.items))
@@ -221,19 +223,35 @@ func renderSidebar(model *app, width int) []styledLine {
 		item := model.items[index]
 		marker := "  "
 		style := ""
+		summaryPrefix := "  "
+		summaryStyle := ansiDim
+		if _, isNew := model.newItemKeys[item.key]; isNew {
+			style = ansiBold + ansiGreen
+			summaryPrefix = "  NEW · "
+			summaryStyle = ansiGreen
+		} else if item.key == model.lastReadTopKey && item.key == model.lastReadBottomKey {
+			style = ansiCyan
+			summaryPrefix = "  上次读到↓↑ · "
+			summaryStyle = ansiCyan
+		} else if item.key == model.lastReadTopKey {
+			style = ansiCyan
+			summaryPrefix = "  上次读到↓ · "
+			summaryStyle = ansiCyan
+		} else if item.key == model.lastReadBottomKey {
+			style = ansiCyan
+			summaryPrefix = "  上次读到↑ · "
+			summaryStyle = ansiCyan
+		}
 		if index == model.index {
 			marker = "› "
 			style = ansiBold + ansiCyan
 		}
-		titleWidth := maxInt(1, width-stringCellWidth(marker)-4)
+		titleWidth := maxInt(1, width-stringCellWidth(marker)-1)
 		title := truncateCells(item.title, titleWidth)
-		lines[row] = styledLine{text: fmt.Sprintf("%s%2d %s", marker, index+1, title), style: style}
+		lines[row] = styledLine{text: marker + title, style: style}
 		summary := firstNonEmpty(item.action, item.author, typeLabel(item.kind))
-		lines[row+1] = styledLine{text: "     " + truncateCells(summary, maxInt(1, width-6)), style: ansiDim}
+		lines[row+1] = styledLine{text: summaryPrefix + truncateCells(summary, maxInt(1, width-stringCellWidth(summaryPrefix)-1)), style: summaryStyle}
 		row += 3
-	}
-	if start+visibleItems < len(model.items) && row < model.height-2 {
-		lines[row] = styledLine{text: fmt.Sprintf("  ↓ 后面还有 %d 条", len(model.items)-start-visibleItems), style: ansiDim}
 	}
 	return lines
 }
@@ -303,7 +321,7 @@ func renderHelp(width, height int) []styledLine {
 		{text: pad + "c            加载评论 / 返回正文"},
 		{text: pad + "z            专注阅读 / 恢复双栏"},
 		{text: pad + "o            用默认浏览器打开当前动态"},
-		{text: pad + "r            从头刷新关注流"},
+		{text: pad + "r            刷新，并标记新内容 / 上次列表首尾"},
 		{text: pad + "q / Ctrl-C   退出并恢复终端"},
 		{},
 		{text: pad + "按 ? 返回阅读。", style: ansiCyan},
