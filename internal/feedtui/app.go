@@ -54,9 +54,12 @@ type app struct {
 	lastReadBottomKey    string
 	pendingReadTopKey    string
 	pendingReadBottomKey string
+	refreshTopKey        string
+	pendingRefreshTopKey string
 	newItemKeys          map[string]struct{}
-	lastReadTopFound     bool
-	viewedThrough        int
+	refreshTopFound      bool
+	firstViewedKey       string
+	furthestViewedKey    string
 	commentMode          bool
 	bodyScroll           int
 	comments             map[string]*commentState
@@ -235,14 +238,15 @@ func (model *app) applyFetch(result fetchResult) {
 		model.sidebarStart = 0
 		model.end = false
 		model.nextURL = ""
-		model.viewedThrough = 0
-		if model.pendingReadTopKey != "" {
+		if model.pendingRefreshTopKey != "" {
 			model.lastReadTopKey = model.pendingReadTopKey
 			model.lastReadBottomKey = model.pendingReadBottomKey
+			model.refreshTopKey = model.pendingRefreshTopKey
 			model.pendingReadTopKey = ""
 			model.pendingReadBottomKey = ""
+			model.pendingRefreshTopKey = ""
 			model.newItemKeys = make(map[string]struct{})
-			model.lastReadTopFound = false
+			model.refreshTopFound = false
 		}
 	}
 	seen := make(map[string]struct{}, len(model.items)+len(newItems))
@@ -326,9 +330,9 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 	case "k", keyUp:
 		model.lineUp()
 	case " ":
-		model.pageDownWithConfirmation(ctx, maxInt(1, model.metrics.bodyHeight/2))
+		model.pageDownWithConfirmation(ctx, maxInt(1, model.metrics.bodyHeight*7/8))
 	case "b":
-		model.pageUpWithConfirmation(maxInt(1, model.metrics.bodyHeight/2))
+		model.pageUpWithConfirmation(maxInt(1, model.metrics.bodyHeight*7/8))
 	case "f", keyPageDown, "\r", "d":
 		model.scrollDown(maxInt(1, model.metrics.bodyHeight/2))
 	case keyPageUp, "u":
@@ -356,21 +360,21 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 func (model *app) captureRefreshBoundary() {
 	model.pendingReadTopKey = ""
 	model.pendingReadBottomKey = ""
+	model.pendingRefreshTopKey = ""
 	if len(model.items) == 0 {
 		return
 	}
-	model.pendingReadTopKey = model.items[0].key
-	if model.viewedThrough > 0 {
-		model.pendingReadBottomKey = model.items[model.viewedThrough-1].key
-	}
+	model.pendingReadTopKey = model.firstViewedKey
+	model.pendingReadBottomKey = model.furthestViewedKey
+	model.pendingRefreshTopKey = model.items[0].key
 }
 
 func (model *app) trackRefreshBoundary(item feedItem) {
-	if model.lastReadTopKey == "" || model.lastReadTopFound {
+	if model.refreshTopKey == "" || model.refreshTopFound {
 		return
 	}
-	if item.key == model.lastReadTopKey {
-		model.lastReadTopFound = true
+	if item.key == model.refreshTopKey {
+		model.refreshTopFound = true
 		return
 	}
 	model.newItemKeys[item.key] = struct{}{}
@@ -630,10 +634,25 @@ func (model *app) render(out *os.File) error {
 }
 
 func (model *app) markCurrentViewed() {
-	if len(model.items) == 0 || model.index+1 <= model.viewedThrough {
+	if len(model.items) == 0 {
 		return
 	}
-	model.viewedThrough = model.index + 1
+	currentKey := model.items[model.index].key
+	if model.firstViewedKey == "" {
+		model.firstViewedKey = currentKey
+	}
+	if model.furthestViewedKey == "" {
+		model.furthestViewedKey = currentKey
+		return
+	}
+	for index, item := range model.items {
+		if item.key == model.furthestViewedKey {
+			if model.index > index {
+				model.furthestViewedKey = currentKey
+			}
+			return
+		}
+	}
 }
 
 func readKeys(in *os.File, keys chan<- keyEvent, errs chan<- error) {

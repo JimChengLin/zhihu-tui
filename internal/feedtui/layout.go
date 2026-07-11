@@ -122,10 +122,15 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		if row >= thumbStart && row < thumbStart+thumbSize {
 			bar = "┃"
 		}
-		if model.pageAnchorVisible && model.scroll+row == model.pageAnchorLine {
-			bar = "◂"
-		}
 		body := line(padCells(bodyLine, contentWidth)+" ", "")
+		if model.pageAnchorVisible && model.scroll+row == model.pageAnchorLine {
+			anchorText := bodyLine
+			if strings.TrimSpace(anchorText) == "" {
+				anchorText = strings.Repeat("┄", contentWidth)
+			}
+			body.text = strings.Repeat(" ", maxInt(0, left-2)) + "▸ " + padCells(anchorText, contentWidth) + " "
+			body.style = ansiBlue
+		}
 		body.suffix = bar
 		body.suffixStyle = ansiDim
 		lines = append(lines, body)
@@ -159,9 +164,9 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	}
 	status := strings.Join(statusParts, "  ·  ")
 	lines = append(lines, line(truncateCells(status, contentWidth), ansiDim))
-	hints := "j/k 滚动  space/b 半页/确认切换  n/p 直接切换  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
+	hints := "j/k 滚动  space/b 7/8页/确认切换  n/p 直接切换  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
 	if model.zenMode {
-		hints = "j/k 滚动  space/b 半页/确认切换  n/p 直接切换  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
+		hints = "j/k 滚动  space/b 7/8页/确认切换  n/p 直接切换  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
 	}
 	lines = append(lines, line(truncateCells(hints, contentWidth), ansiCyan))
 	lines = append(lines, styledLine{})
@@ -259,24 +264,27 @@ func renderSidebar(model *app, width int) []styledLine {
 		summaryPrefix := "  "
 		summaryStyle := ansiDim
 		_, isNew := model.newItemKeys[item.key]
-		if isNew {
-			style = ansiGreen
-		} else if item.key == model.lastReadTopKey && item.key == model.lastReadBottomKey {
+		isReadTop := item.key == model.lastReadTopKey
+		isReadBottom := item.key == model.lastReadBottomKey
+		isReadBoundary := isReadTop || isReadBottom
+		if isReadTop && isReadBottom {
 			style = ansiCyan
 			summaryPrefix = "  上次读到↓↑ · "
 			summaryStyle = ansiCyan
-		} else if item.key == model.lastReadTopKey {
+		} else if isReadTop {
 			style = ansiCyan
 			summaryPrefix = "  上次读到↓ · "
 			summaryStyle = ansiCyan
-		} else if item.key == model.lastReadBottomKey {
+		} else if isReadBottom {
 			style = ansiCyan
 			summaryPrefix = "  上次读到↑ · "
 			summaryStyle = ansiCyan
+		} else if isNew {
+			style = ansiGreen
 		}
 		if index == model.index {
 			marker = "› "
-			if isNew {
+			if isNew && !isReadBoundary {
 				style = ansiBold + ansiGreen
 			} else {
 				style = ansiBold + ansiCyan
@@ -356,15 +364,15 @@ func renderHelp(width, height int) []styledLine {
 		{},
 		{text: pad + "j / ↓       向下滚动；正文底部停止"},
 		{text: pad + "k / ↑       向上滚动；正文顶部停止"},
-		{text: pad + "space        向下半页；到底后再按一次切换下一条"},
-		{text: pad + "b            向上半页；到顶后再按一次切换上一条"},
+		{text: pad + "space        向下 7/8 页；到底后再按一次切换下一条"},
+		{text: pad + "b            向上 7/8 页；到顶后再按一次切换上一条"},
 		{text: pad + "d / u        向下 / 向上半页，不切换动态"},
 		{text: pad + "n/p · h/l · ←/→  下一条 / 上一条"},
 		{text: pad + "g / G        第一条 / 最后一条已加载动态"},
 		{text: pad + "c            加载评论 / 返回正文"},
 		{text: pad + "z            专注阅读 / 恢复双栏"},
 		{text: pad + "o            用默认浏览器打开当前动态"},
-		{text: pad + "r            刷新；新标题变绿 / 标记上次列表首尾"},
+		{text: pad + "r            刷新；新标题变绿 / 标记进程阅读范围"},
 		{text: pad + "q / Ctrl-C   退出并恢复终端"},
 		{},
 		{text: pad + "按 ? 返回阅读。", style: ansiCyan},
@@ -438,9 +446,17 @@ func wrapText(text string, width int) []string {
 			tokenWidth := stringCellWidth(token)
 			if cells > 0 && cells+tokenWidth > width {
 				runes := []rune(token)
-				if len(runes) == 1 && isClosingPunctuation(runes[0]) && cells+tokenWidth <= width+2 {
+				if len(runes) == 1 && isClosingPunctuation(runes[0]) {
+					current := []rune(strings.TrimSpace(builder.String()))
+					last := current[len(current)-1]
+					prefix := strings.TrimSpace(string(current[:len(current)-1]))
+					if prefix != "" {
+						lines = append(lines, prefix)
+					}
+					builder.Reset()
+					builder.WriteRune(last)
 					builder.WriteString(token)
-					cells += tokenWidth
+					cells = runeCellWidth(last) + tokenWidth
 					continue
 				}
 				lines = append(lines, strings.TrimSpace(builder.String()))

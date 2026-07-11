@@ -99,6 +99,25 @@ func TestWrapTextKeepsClosingPunctuationOnPreviousLine(t *testing.T) {
 	}
 }
 
+func TestWrapTextMovesContentInsteadOfOverflowingForClosingPunctuation(t *testing.T) {
+	text := "比肩cuBLAS的性能。"
+	lines := wrapText(text, 16)
+	if strings.Join(lines, "") != text {
+		t.Fatalf("wrapped text changed content: %q", lines)
+	}
+	for _, line := range lines {
+		if width := stringCellWidth(line); width > 16 {
+			t.Fatalf("wrapped line width=%d exceeds 16 cells: %q", width, line)
+		}
+		if strings.Contains(line, "…") {
+			t.Fatalf("wrapped line contains a synthetic ellipsis: %q", line)
+		}
+	}
+	if len(lines) < 2 || lines[1] != "能。" {
+		t.Fatalf("closing punctuation was not kept with preceding content: %q", lines)
+	}
+}
+
 func TestWrapTextDoesNotSplitShortASCIITokens(t *testing.T) {
 	lines := wrapText("这是一个 Zig community 和 100% 测试", 18)
 	for _, line := range lines {
@@ -151,8 +170,8 @@ func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 
 	model.index, model.scroll = 0, 0
 	model.handleKey(ctx, " ")
-	if model.scroll != 4 || model.index != 0 {
-		t.Fatalf("first space did not move down half a page: index=%d scroll=%d", model.index, model.scroll)
+	if model.scroll != 7 || model.index != 0 {
+		t.Fatalf("first space did not move down seven eighths of a page: index=%d scroll=%d", model.index, model.scroll)
 	}
 	model.handleKey(ctx, " ")
 	if model.scroll != 8 || model.index != 0 || model.boundarySwitchKey != " " {
@@ -161,8 +180,8 @@ func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 	if !strings.Contains(model.message, "再按一次 space") {
 		t.Fatalf("bottom confirmation message=%q", model.message)
 	}
-	if !model.pageAnchorVisible || model.pageAnchorLine != 11 {
-		t.Fatalf("space continuation anchor=(%d, %v), want previous last line 11", model.pageAnchorLine, model.pageAnchorVisible)
+	if !model.pageAnchorVisible || model.pageAnchorLine != 14 {
+		t.Fatalf("space continuation anchor=(%d, %v), want previous last line 14", model.pageAnchorLine, model.pageAnchorVisible)
 	}
 	model.handleKey(ctx, " ")
 	if model.index != 1 || model.scroll != 0 {
@@ -171,8 +190,8 @@ func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 
 	model.scroll = 8
 	model.handleKey(ctx, "b")
-	if model.scroll != 4 || model.index != 1 {
-		t.Fatalf("first b did not move up half a page: index=%d scroll=%d", model.index, model.scroll)
+	if model.scroll != 1 || model.index != 1 {
+		t.Fatalf("first b did not move up seven eighths of a page: index=%d scroll=%d", model.index, model.scroll)
 	}
 	model.handleKey(ctx, "b")
 	if model.scroll != 0 || model.index != 1 || model.boundarySwitchKey != "b" {
@@ -181,8 +200,8 @@ func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 	if !strings.Contains(model.message, "再按一次 b") {
 		t.Fatalf("top confirmation message=%q", model.message)
 	}
-	if !model.pageAnchorVisible || model.pageAnchorLine != 4 {
-		t.Fatalf("b continuation anchor=(%d, %v), want previous first line 4", model.pageAnchorLine, model.pageAnchorVisible)
+	if !model.pageAnchorVisible || model.pageAnchorLine != 1 {
+		t.Fatalf("b continuation anchor=(%d, %v), want previous first line 1", model.pageAnchorLine, model.pageAnchorVisible)
 	}
 	model.handleKey(ctx, "b")
 	if model.index != 0 || model.scroll == 0 {
@@ -231,7 +250,10 @@ func TestRefreshMarksNewAndPreviouslyViewedRangeAfterSuccess(t *testing.T) {
 		t.Fatalf("last-read range=(%q, %q) before refresh finishes", model.lastReadTopKey, model.lastReadBottomKey)
 	}
 	if model.pendingReadTopKey != "answer:1" || model.pendingReadBottomKey != "answer:2" {
-		t.Fatalf("pending range=(%q, %q), want previous first and last viewed items", model.pendingReadTopKey, model.pendingReadBottomKey)
+		t.Fatalf("pending range=(%q, %q), want session first and furthest viewed items", model.pendingReadTopKey, model.pendingReadBottomKey)
+	}
+	if model.pendingRefreshTopKey != "answer:1" {
+		t.Fatalf("pendingRefreshTopKey=%q, want the current feed head", model.pendingRefreshTopKey)
 	}
 	if len(model.newItemKeys) != 0 {
 		t.Fatalf("newItemKeys=%v before refresh finishes", model.newItemKeys)
@@ -252,8 +274,8 @@ func TestRefreshMarksNewAndPreviouslyViewedRangeAfterSuccess(t *testing.T) {
 	if model.lastReadTopKey != "answer:1" || model.lastReadBottomKey != "answer:2" {
 		t.Fatalf("last-read range=(%q, %q), want previous first and last viewed items", model.lastReadTopKey, model.lastReadBottomKey)
 	}
-	if model.pendingReadTopKey != "" || model.pendingReadBottomKey != "" {
-		t.Fatalf("pending range=(%q, %q) after refresh finishes", model.pendingReadTopKey, model.pendingReadBottomKey)
+	if model.pendingReadTopKey != "" || model.pendingReadBottomKey != "" || model.pendingRefreshTopKey != "" {
+		t.Fatalf("pending state=(%q, %q, %q) after refresh finishes", model.pendingReadTopKey, model.pendingReadBottomKey, model.pendingRefreshTopKey)
 	}
 	if _, ok := model.newItemKeys["answer:new"]; !ok || len(model.newItemKeys) != 1 {
 		t.Fatalf("newItemKeys=%v, want only the item before the previous first item", model.newItemKeys)
@@ -280,6 +302,58 @@ func TestRefreshMarksNewAndPreviouslyViewedRangeAfterSuccess(t *testing.T) {
 	}
 	if strings.Contains(sidebar[13].text, "上次读到") {
 		t.Fatalf("unread prefetched item was marked as viewed: %q", sidebar[13].text)
+	}
+
+	model.index = 0
+	model.markCurrentViewed()
+	model.index = 3
+	model.markCurrentViewed()
+	model.captureRefreshBoundary()
+	if model.pendingReadTopKey != "answer:1" || model.pendingReadBottomKey != "answer:3" {
+		t.Fatalf("cumulative pending range=(%q, %q), want process-lifetime endpoints", model.pendingReadTopKey, model.pendingReadBottomKey)
+	}
+	if model.pendingRefreshTopKey != "answer:new" {
+		t.Fatalf("pendingRefreshTopKey=%q, want the latest feed head", model.pendingRefreshTopKey)
+	}
+
+	response = map[string]any{
+		"data": []any{
+			feedTestRaw("newer", "更新的问题"),
+			feedTestRaw("new", "新问题"),
+			feedTestRaw("1", "问题一"),
+			feedTestRaw("2", "问题二"),
+			feedTestRaw("3", "问题三"),
+		},
+		"paging": map[string]any{"is_end": true},
+	}
+	model.generation++
+	model.applyFetch(fetchResult{response: response, reset: true, generation: model.generation})
+	model.markCurrentViewed()
+	if model.lastReadTopKey != "answer:1" || model.lastReadBottomKey != "answer:3" {
+		t.Fatalf("cumulative last-read range=(%q, %q), want process-lifetime endpoints", model.lastReadTopKey, model.lastReadBottomKey)
+	}
+	if model.firstViewedKey != "answer:1" || model.furthestViewedKey != "answer:3" {
+		t.Fatalf("session viewed range=(%q, %q) regressed after refresh", model.firstViewedKey, model.furthestViewedKey)
+	}
+	if _, ok := model.newItemKeys["answer:newer"]; !ok || len(model.newItemKeys) != 1 {
+		t.Fatalf("newItemKeys=%v, want only content from the latest refresh", model.newItemKeys)
+	}
+}
+
+func TestSidebarReadBoundaryOverridesNewStyle(t *testing.T) {
+	model := &app{
+		items:             []feedItem{{key: "answer:1", title: "重叠状态", action: "某人赞同了回答"}},
+		newItemKeys:       map[string]struct{}{"answer:1": {}},
+		lastReadTopKey:    "answer:1",
+		lastReadBottomKey: "answer:1",
+		height:            14,
+	}
+	sidebar := renderSidebar(model, 40)
+	if sidebar[3].style != ansiBold+ansiCyan {
+		t.Fatalf("overlapping boundary title style=%q, want selected cyan", sidebar[3].style)
+	}
+	if !strings.HasPrefix(sidebar[4].text, "  上次读到↓↑ · ") || sidebar[4].style != ansiCyan {
+		t.Fatalf("overlapping boundary summary=%#v, want read-range marker", sidebar[4])
 	}
 }
 
@@ -475,14 +549,38 @@ func TestLongBodyScrollbarTracksReadingPosition(t *testing.T) {
 
 	model.scroll = 0
 	model.metrics = metrics
-	model.pageDownWithConfirmation(context.Background(), maxInt(1, metrics.bodyHeight/2))
+	model.pageDownWithConfirmation(context.Background(), maxInt(1, metrics.bodyHeight*7/8))
 	lines, _ = renderSingleApp(model)
 	anchors := pageAnchorLines(lines)
-	if len(anchors) != 1 || !strings.HasPrefix(anchors[0].suffix, "◂") {
+	if len(anchors) != 1 || !strings.Contains(anchors[0].text, "▸ ") {
 		t.Fatalf("page continuation anchors=%#v, want one visible marker", anchors)
 	}
-	if anchors[0].suffixStyle != ansiDim {
-		t.Fatalf("page continuation marker style=%q, want dim", anchors[0].suffixStyle)
+	if anchors[0].style != ansiBlue {
+		t.Fatalf("page continuation line style=%q, want soft blue", anchors[0].style)
+	}
+}
+
+func TestBlankContinuationAnchorUsesDashedLine(t *testing.T) {
+	model := &app{
+		items: []feedItem{{
+			kind:   "answer",
+			action: "某人赞同了回答",
+			title:  "多段正文",
+			author: "答主",
+			body:   "第一段\n\n第二段\n\n第三段\n\n第四段",
+		}},
+		width:             100,
+		height:            14,
+		pageAnchorLine:    1,
+		pageAnchorVisible: true,
+	}
+	lines, _ := renderSingleApp(model)
+	anchors := pageAnchorLines(lines)
+	if len(anchors) != 1 || !strings.Contains(anchors[0].text, "┄┄┄") {
+		t.Fatalf("blank continuation anchor does not contain a dashed line: %#v", anchors)
+	}
+	if anchors[0].style != ansiBlue {
+		t.Fatalf("blank continuation anchor style=%q, want soft blue", anchors[0].style)
 	}
 }
 
@@ -499,7 +597,7 @@ func scrollbarLines(lines []styledLine) []styledLine {
 func pageAnchorLines(lines []styledLine) []styledLine {
 	var result []styledLine
 	for _, line := range lines {
-		if strings.HasPrefix(line.suffix, "◂") {
+		if strings.Contains(line.text, "▸ ") {
 			result = append(result, line)
 		}
 	}
