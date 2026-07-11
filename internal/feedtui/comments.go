@@ -30,6 +30,7 @@ type feedComment struct {
 	isFollowing   bool
 	isFollowed    bool
 	voteCount     int
+	voted         bool
 	childComments int
 	createdAt     int64
 	children      []feedComment
@@ -104,6 +105,7 @@ func parseComment(raw map[string]any) feedComment {
 		isFollowing:   truthy(relationship["is_following"]),
 		isFollowed:    truthy(relationship["is_followed"]),
 		voteCount:     int(toInt64(firstNonEmptyAny(raw["vote_count"], raw["like_count"], 0))),
+		voted:         truthy(firstNonEmptyAny(raw["liked"], raw["is_liked"], false)),
 		childComments: int(toInt64(raw["child_comment_count"])),
 		createdAt:     toInt64(firstNonEmptyAny(raw["created_time"], raw["created"], 0)),
 	}
@@ -133,13 +135,22 @@ func formatCommentView(item feedItem, state *commentState, spinner int) (string,
 	if len(state.items) == 0 {
 		return "", label
 	}
-	label += fmt.Sprintf(" · 已加载 %d 条", countLoadedComments(state.items))
+	loadedComments := countLoadedComments(state.items)
+	label += fmt.Sprintf(" · 已加载 %d 条", loadedComments)
 	if state.loading {
 		label += " · " + spinnerFrames[spinner%len(spinnerFrames)] + " 正在加载更多"
 	} else if state.moreErr != nil {
 		label += " · 加载更多失败，按 space 重试"
 	} else if state.end {
-		label += " · 已到底"
+		pendingReplies := countPendingReplies(state.items)
+		switch {
+		case pendingReplies > 0:
+			label += fmt.Sprintf(" · %d 条回复按需加载", pendingReplies)
+		case item.commentCount > loadedComments:
+			label += " · 可见评论已全部加载"
+		default:
+			label += " · 已全部加载"
+		}
 	}
 	var builder strings.Builder
 	for index, comment := range state.items {
@@ -245,6 +256,17 @@ func countLoadedComments(comments []feedComment) int {
 	return count
 }
 
+func countPendingReplies(comments []feedComment) int {
+	count := 0
+	for _, comment := range comments {
+		loaded := countLoadedComments(comment.children)
+		if comment.childComments > loaded {
+			count += comment.childComments - loaded
+		}
+	}
+	return count
+}
+
 func formatComment(builder *strings.Builder, comment feedComment, prefix, contentPrefix string, tree bool, replyMarker string) {
 	var header strings.Builder
 	header.WriteString(comment.author)
@@ -258,7 +280,9 @@ func formatComment(builder *strings.Builder, comment feedComment, prefix, conten
 		header.WriteString(comment.replyTo)
 	}
 	meta := make([]string, 0, 3)
-	if comment.voteCount > 0 {
+	if comment.voted {
+		meta = append(meta, fmt.Sprintf("✓ 赞同 %d", comment.voteCount))
+	} else if comment.voteCount > 0 {
 		meta = append(meta, fmt.Sprintf("赞同 %d", comment.voteCount))
 	}
 	if comment.childComments > 0 && replyMarker != "" {

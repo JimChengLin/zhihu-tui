@@ -317,6 +317,57 @@ func TestCreateComment(t *testing.T) {
 	}
 }
 
+func TestReplyCommentToResource(t *testing.T) {
+	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v4/comment_v5/answers/123/comment" {
+			t.Fatalf("request=%s %s", r.Method, r.URL.Path)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["content"] != "回复内容" || payload["reply_comment_id"] != "789" {
+			t.Fatalf("payload=%#v", payload)
+		}
+		writeJSON(t, w, http.StatusCreated, map[string]any{
+			"id":      999,
+			"content": "回复内容",
+			"author":  map[string]any{"name": "当前用户"},
+		})
+	})
+	defer server.Close()
+
+	result, err := c.ReplyCommentToResource(context.Background(), "answer", "123", "789", " 回复内容 ")
+	if err != nil {
+		t.Fatalf("ReplyCommentToResource: %v", err)
+	}
+	if result["id"].(json.Number).String() != "999" {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
+func TestSetCommentLiked(t *testing.T) {
+	methods := make(chan string, 2)
+	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v4/comments/789/like" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		methods <- r.Method
+		w.WriteHeader(http.StatusNoContent)
+	})
+	defer server.Close()
+
+	if ok, err := c.LikeComment(context.Background(), "789"); err != nil || !ok {
+		t.Fatalf("LikeComment ok=%v err=%v", ok, err)
+	}
+	if ok, err := c.UnlikeComment(context.Background(), "789"); err != nil || !ok {
+		t.Fatalf("UnlikeComment ok=%v err=%v", ok, err)
+	}
+	if first, second := <-methods, <-methods; first != http.MethodPost || second != http.MethodDelete {
+		t.Fatalf("methods=%q,%q", first, second)
+	}
+}
+
 func TestGetAnswerIncludesCounts(t *testing.T) {
 	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v4/answers/123" {

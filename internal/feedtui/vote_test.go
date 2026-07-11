@@ -23,6 +23,16 @@ func (source *voteTestSource) VoteNeutral(_ context.Context, answerID string) (b
 	return true, nil
 }
 
+func (source *voteTestSource) LikeComment(_ context.Context, commentID string) (bool, error) {
+	source.votes <- "comment-up:" + commentID
+	return true, nil
+}
+
+func (source *voteTestSource) UnlikeComment(_ context.Context, commentID string) (bool, error) {
+	source.votes <- "comment-neutral:" + commentID
+	return true, nil
+}
+
 func TestToggleVoteUpdatesVisibleAndFoldedAnswer(t *testing.T) {
 	source := &voteTestSource{votes: make(chan string, 2)}
 	child := feedItem{
@@ -70,6 +80,71 @@ func TestToggleVoteRejectsNonAnswer(t *testing.T) {
 	model.toggleVote(context.Background())
 	if model.voting || model.message != "当前仅支持赞同回答" {
 		t.Fatalf("voting=%v message=%q", model.voting, model.message)
+	}
+}
+
+func TestToggleVoteUpdatesFocusedChildComment(t *testing.T) {
+	source := &voteTestSource{votes: make(chan string, 2)}
+	state := &commentState{
+		items: []feedComment{{
+			id:       "100",
+			author:   "根评论",
+			children: []feedComment{{id: "101", author: "子评论", voteCount: 3}},
+		}},
+		loaded: true,
+	}
+	model := &app{
+		source:            source,
+		items:             []feedItem{{key: "answer:42", id: "42", kind: "answer"}},
+		comments:          map[string]*commentState{"answer:42": state},
+		commentMode:       true,
+		pageAnchorVisible: true,
+		pageAnchorLine:    2,
+		metrics:           layoutMetrics{commentIDs: []string{"100", "100", "101"}},
+		voteResults:       make(chan voteResult, 1),
+	}
+
+	model.toggleVote(context.Background())
+	waitForVote(t, source.votes, "comment-up:101")
+	applyNextVoteResult(t, model)
+	child := state.items[0].children[0]
+	if !child.voted || child.voteCount != 4 || model.message != "已赞同评论" {
+		t.Fatalf("liked child=%#v message=%q", child, model.message)
+	}
+
+	model.toggleVote(context.Background())
+	waitForVote(t, source.votes, "comment-neutral:101")
+	applyNextVoteResult(t, model)
+	child = state.items[0].children[0]
+	if child.voted || child.voteCount != 3 || model.message != "已取消评论赞同" {
+		t.Fatalf("unliked child=%#v message=%q", child, model.message)
+	}
+}
+
+func TestCommentVoteRequiresBlueFocus(t *testing.T) {
+	model := &app{
+		items:       []feedItem{{key: "answer:42", id: "42", kind: "answer"}},
+		comments:    map[string]*commentState{"answer:42": {items: []feedComment{{id: "100"}}, loaded: true}},
+		commentMode: true,
+	}
+	model.toggleVote(context.Background())
+	if model.voting || model.message != "先用 j/k 选择一条评论" {
+		t.Fatalf("voting=%v message=%q", model.voting, model.message)
+	}
+}
+
+func TestParseCommentReadsLikeRelationship(t *testing.T) {
+	comment := parseComment(map[string]any{"id": "100", "content": "评论", "like_count": 7, "liked": true})
+	if !comment.voted || comment.voteCount != 7 {
+		t.Fatalf("comment=%#v", comment)
+	}
+}
+
+func TestRenderLikedCommentState(t *testing.T) {
+	state := &commentState{items: []feedComment{{id: "100", author: "用户", content: "评论", voteCount: 8, voted: true}}, loaded: true}
+	view, _ := formatCommentView(feedItem{}, state, 0)
+	if !strings.Contains(view, "✓ 赞同 8") {
+		t.Fatalf("comment view=%q", view)
 	}
 }
 

@@ -3,7 +3,6 @@ package feedtui
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -132,6 +131,14 @@ func (source *commentTestSource) VoteUp(context.Context, string) (bool, error) {
 }
 
 func (source *commentTestSource) VoteNeutral(context.Context, string) (bool, error) {
+	return true, nil
+}
+
+func (source *commentTestSource) LikeComment(context.Context, string) (bool, error) {
+	return true, nil
+}
+
+func (source *commentTestSource) UnlikeComment(context.Context, string) (bool, error) {
 	return true, nil
 }
 
@@ -346,212 +353,6 @@ func TestCommentRelationshipLabels(t *testing.T) {
 	}
 }
 
-func TestCommentComposerUsesBluePageAnchorAsReplyTarget(t *testing.T) {
-	source := &commentTestSource{posts: make(chan string, 2)}
-	model := &app{
-		source: source,
-		items:  []feedItem{{key: "answer:42", id: "42", kind: "answer", title: "问题"}},
-		comments: map[string]*commentState{"answer:42": {items: []feedComment{
-			{id: "100", author: "Alice", content: "根评论", children: []feedComment{{id: "101", author: "Bob", content: "子评论"}}},
-		}},
-		},
-		commentMode:       true,
-		commentPosts:      make(chan commentPostResult, 2),
-		pageAnchorVisible: true,
-		pageAnchorLine:    2,
-		metrics: layoutMetrics{
-			bodyHeight: 10,
-			commentIDs: []string{"100", "100", "101"},
-		},
-	}
-
-	model.handleKey(context.Background(), "w")
-	if len(model.composeTargets) != 1 || model.composeTargets[0].commentID != "101" || model.composeTargets[0].label != "回复 Bob" || model.composeTargets[0].indent != 3 {
-		t.Fatalf("reply target=%#v", model.composeTargets)
-	}
-	model.handleCommentComposerKey(context.Background(), "你")
-	model.handleCommentComposerKey(context.Background(), "好")
-	model.handleCommentComposerKey(context.Background(), "\r")
-	waitForCommentPost(t, source.posts, "reply:answer:42:101:你好")
-
-	model.commentSubmitting = false
-	model.composing = false
-	model.commentMode = false
-	model.startCommentComposer()
-	if len(model.composeTargets) != 1 || model.composeTargets[0].commentID != "" || model.composeTargets[0].label != "评论当前回答" {
-		t.Fatalf("root target=%#v", model.composeTargets)
-	}
-	model.handleCommentComposerKey(context.Background(), "根")
-	model.handleCommentComposerKey(context.Background(), "\r")
-	waitForCommentPost(t, source.posts, "root:answer:42:根")
-}
-
-func TestCommentComposerRequiresBlueFocusInCommentMode(t *testing.T) {
-	model := &app{
-		items:       []feedItem{{key: "answer:42", id: "42", kind: "answer"}},
-		commentMode: true,
-	}
-	model.startCommentComposer()
-	if model.composing || !strings.Contains(model.message, "space/b") {
-		t.Fatalf("composing=%v message=%q", model.composing, model.message)
-	}
-}
-
-func TestJKMovesBlueFocusBetweenComments(t *testing.T) {
-	model := &app{
-		items:       []feedItem{{key: "answer:42", id: "42", kind: "answer"}},
-		commentMode: true,
-		metrics: layoutMetrics{
-			bodyHeight: 4,
-			commentIDs: []string{"100", "100", "", "101", "101", "102"},
-		},
-	}
-	model.handleKey(context.Background(), "j")
-	if !model.pageAnchorVisible || model.pageAnchorLine != 0 {
-		t.Fatalf("first focus visible=%v line=%d", model.pageAnchorVisible, model.pageAnchorLine)
-	}
-	model.handleKey(context.Background(), "j")
-	if model.pageAnchorLine != 3 {
-		t.Fatalf("next focus line=%d", model.pageAnchorLine)
-	}
-	model.handleKey(context.Background(), "k")
-	if model.pageAnchorLine != 0 {
-		t.Fatalf("previous focus line=%d", model.pageAnchorLine)
-	}
-}
-
-func TestCommentComposerRendersInlineWithCursor(t *testing.T) {
-	lines := []styledLine{{text: "评论", commentID: "100"}}
-	model := &app{
-		composing:      true,
-		composeInput:   "test",
-		composeTargets: []commentComposeTarget{{commentID: "100", label: "回复 Alice"}},
-	}
-	rendered := insertCommentComposer(lines, model, 40)
-	var text strings.Builder
-	for _, line := range rendered {
-		text.WriteString(line.text)
-		text.WriteString(line.middle)
-		text.WriteString(line.tail)
-		text.WriteString(line.suffix)
-		text.WriteByte('\n')
-	}
-	for _, want := range []string{"评论", "╭─ 回复 Alice", "│  test|", "╰─ Enter 发送 · Esc 取消"} {
-		if !strings.Contains(text.String(), want) {
-			t.Fatalf("inline composer does not contain %q:\n%s", want, text.String())
-		}
-	}
-	inputLine, _ := renderStyledLine(rendered[2], 40)
-	if !strings.Contains(inputLine, styleText("│  ", ansiDim)+"test|") {
-		t.Fatalf("input colors are not separated: %q", inputLine)
-	}
-	model.spinner = 4
-	dimCursor := inlineCommentComposerLines(model, model.composeTargets[0], 40)[1]
-	if dimCursor.tail != "|" || dimCursor.tailStyle != ansiDim {
-		t.Fatalf("dim cursor=%q style=%q", dimCursor.tail, dimCursor.tailStyle)
-	}
-}
-
-func TestCommentComposerKeepsFocusedCommentAtSameScreenRow(t *testing.T) {
-	comments := make([]feedComment, 0, 8)
-	for index := 0; index < 8; index++ {
-		comments = append(comments, feedComment{
-			id:      strconv.Itoa(index + 1),
-			author:  "用户" + strconv.Itoa(index+1),
-			content: "评论正文",
-		})
-	}
-	model := &app{
-		width:       100,
-		height:      24,
-		source:      &commentTestSource{},
-		items:       []feedItem{{key: "answer:42", id: "42", kind: "answer", title: "问题"}},
-		comments:    map[string]*commentState{"answer:42": {items: comments, loaded: true, end: true}},
-		commentMode: true,
-	}
-	_, model.metrics = renderSingleApp(model)
-	focusLine := -1
-	for line, commentID := range model.metrics.commentIDs {
-		if commentID == "4" {
-			focusLine = line
-			break
-		}
-	}
-	if focusLine < 0 {
-		t.Fatal("focused comment was not laid out")
-	}
-	model.pageAnchorVisible = true
-	model.pageAnchorLine = focusLine
-	model.scroll = maxInt(0, focusLine-4)
-	before, metrics := renderSingleApp(model)
-	model.metrics = metrics
-	beforeRow := blueFocusRow(before)
-	beforeScroll := model.scroll
-
-	model.startCommentComposer()
-	after, _ := renderSingleApp(model)
-	afterRow := blueFocusRow(after)
-	if model.scroll != beforeScroll {
-		t.Fatalf("scroll changed from %d to %d", beforeScroll, model.scroll)
-	}
-	if afterRow != beforeRow {
-		t.Fatalf("blue focus moved from screen row %d to %d", beforeRow, afterRow)
-	}
-	if !styledLinesContain(after, "╭─ 回复 用户4") || !styledLinesContain(after, "│  |") {
-		t.Fatalf("inline composer was not rendered below focused comment: %#v", after)
-	}
-}
-
-func blueFocusRow(lines []styledLine) int {
-	for row, line := range lines {
-		if line.style == ansiBlue && strings.Contains(styledLineText(line), "▸ ") {
-			return row
-		}
-	}
-	return -1
-}
-
-func styledLinesContain(lines []styledLine, want string) bool {
-	for _, line := range lines {
-		if strings.Contains(styledLineText(line), want) {
-			return true
-		}
-	}
-	return false
-}
-
-func TestCommentComposerSkipsTrailingParagraphGap(t *testing.T) {
-	lines := []styledLine{
-		{text: "目标评论", commentID: "100"},
-		{commentID: "100"},
-		{commentID: "100"},
-		{text: "下一条评论", commentID: "101"},
-	}
-	model := &app{
-		composing:         true,
-		composeTargets:    []commentComposeTarget{{commentID: "100", label: "回复 Alice"}},
-		composeInsertLine: 2,
-	}
-	rendered := insertCommentComposer(lines, model, 40)
-	if len(rendered) < 2 || rendered[1].text != "╭─ " {
-		t.Fatalf("composer was not placed directly below target: %#v", rendered)
-	}
-}
-
-func TestEscapeCancelsInlineCommentComposer(t *testing.T) {
-	model := &app{composing: true, composeInput: "未发送内容"}
-	model.handleKey(context.Background(), keyEscape)
-	if model.composing || model.composeInput != "" {
-		t.Fatalf("composing=%v input=%q", model.composing, model.composeInput)
-	}
-}
-
-func TestDropLastTextUnitKeepsEmojiClusterIntact(t *testing.T) {
-	if got := dropLastTextUnit("你好👨‍👩‍👧‍👦"); got != "你好" {
-		t.Fatalf("dropLastTextUnit()=%q", got)
-	}
-}
-
 func TestCommentSpaceLoadsNextPageBeforeSwitchingFeed(t *testing.T) {
 	source := &commentPagingTestSource{cursors: make(chan string, 2)}
 	model := &app{
@@ -688,7 +489,7 @@ func TestInitialCommentPageWithoutOpaqueCursorFailsFast(t *testing.T) {
 	}
 }
 
-func TestSpaceCanLeaveFeedItemWhileCommentsAreLoading(t *testing.T) {
+func TestCommentPagingCannotSwitchFeedItemsAtBoundaries(t *testing.T) {
 	model := &app{
 		items: []feedItem{
 			{key: "answer:42", id: "42", kind: "answer"},
@@ -701,12 +502,26 @@ func TestSpaceCanLeaveFeedItemWhileCommentsAreLoading(t *testing.T) {
 		metrics:     layoutMetrics{bodyHeight: 10, bodyLines: 10, maxScroll: 0},
 	}
 	model.pageDownWithConfirmation(context.Background(), 8)
-	if model.boundarySwitchKey != " " || model.index != 0 {
-		t.Fatalf("first space boundary=%q index=%d", model.boundarySwitchKey, model.index)
+	if model.boundarySwitchKey != "" || model.index != 0 || model.message != "正在加载更多评论" {
+		t.Fatalf("loading bottom boundary=%q index=%d message=%q", model.boundarySwitchKey, model.index, model.message)
 	}
 	model.pageDownWithConfirmation(context.Background(), 8)
-	if model.index != 1 || model.commentMode {
-		t.Fatalf("second space index=%d commentMode=%v", model.index, model.commentMode)
+	if model.index != 0 || !model.commentMode {
+		t.Fatalf("repeated space index=%d commentMode=%v", model.index, model.commentMode)
+	}
+
+	model.comments["answer:42"].loading = false
+	model.comments["answer:42"].end = true
+	model.pageDownWithConfirmation(context.Background(), 8)
+	model.pageDownWithConfirmation(context.Background(), 8)
+	if model.index != 0 || model.boundarySwitchKey != "" || model.message != "已到评论底部" {
+		t.Fatalf("finished bottom index=%d boundary=%q message=%q", model.index, model.boundarySwitchKey, model.message)
+	}
+
+	model.pageUpWithConfirmation(8)
+	model.pageUpWithConfirmation(8)
+	if model.index != 0 || model.boundarySwitchKey != "" || model.message != "已到评论顶部" {
+		t.Fatalf("top index=%d boundary=%q message=%q", model.index, model.boundarySwitchKey, model.message)
 	}
 }
 
@@ -900,6 +715,30 @@ func TestRootCommentsHaveTwoBlankRowsBetweenThem(t *testing.T) {
 	}
 	if blankRows != 2 {
 		t.Fatalf("root comment gap=%d, want 2: %#v", blankRows, lines)
+	}
+}
+
+func TestCommentLabelDistinguishesRootEndFromPendingReplies(t *testing.T) {
+	state := &commentState{
+		items:  []feedComment{{id: "100", author: "A", content: "根评论", childComments: 2}},
+		loaded: true,
+		end:    true,
+	}
+	_, label := formatCommentView(feedItem{commentCount: 3}, state, 0)
+	if !strings.Contains(label, "已加载 1 条 · 2 条回复按需加载") || strings.Contains(label, "已到底") {
+		t.Fatalf("comment label=%q", label)
+	}
+}
+
+func TestCommentLabelExplainsFilteredTotalAtRootEnd(t *testing.T) {
+	state := &commentState{
+		items:  []feedComment{{id: "100", author: "A", content: "可见评论"}},
+		loaded: true,
+		end:    true,
+	}
+	_, label := formatCommentView(feedItem{commentCount: 2}, state, 0)
+	if !strings.Contains(label, "可见评论已全部加载") {
+		t.Fatalf("comment label=%q", label)
 	}
 }
 

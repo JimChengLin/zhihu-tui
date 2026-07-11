@@ -4,9 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
-
-	"github.com/rivo/uniseg"
 )
 
 const (
@@ -33,6 +30,8 @@ type styledLine struct {
 	padding     int
 	suffix      string
 	suffixStyle string
+	hasCursor   bool
+	cursorCell  int
 	raw         bool
 	commentID   string
 }
@@ -149,9 +148,6 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		bodyLines = insertCommentComposer(bodyLines, model, contentWidth)
 	}
 	fixedBottom := 4
-	if model.composing {
-		fixedBottom = 0
-	}
 	availableBodyHeight := model.height - len(lines) - fixedBottom
 	bodyHeight := availableBodyHeight
 	if bodyHeight < 1 {
@@ -181,6 +177,9 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 			}
 			body := bodyLine
 			body.text = strings.Repeat(" ", left) + bodyLine.text
+			if body.hasCursor {
+				body.cursorCell += left
+			}
 			lines = append(lines, body)
 			continue
 		}
@@ -190,6 +189,9 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		}
 		body := bodyLine
 		body.text = strings.Repeat(" ", left) + bodyLine.text
+		if body.hasCursor {
+			body.cursorCell += left
+		}
 		semanticWidth := stringCellWidth(body.text) + stringCellWidth(body.middle) + stringCellWidth(body.tail)
 		body.padding = maxInt(0, left+contentWidth+1-semanticWidth)
 		if model.pageAnchorVisible && model.scroll+row == model.pageAnchorLine {
@@ -211,47 +213,47 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		lines = append(lines, styledLine{})
 	}
 
-	if !model.composing {
-		lines = append(lines, line(strings.Repeat("─", contentWidth), ansiDim))
-		statusParts := make([]string, 0, 4)
-		if !model.hideItemPosition {
-			statusParts = append(statusParts, fmt.Sprintf("第 %d / %d 条", model.index+1, len(model.items)))
-		}
-		if model.commentMode {
-			statusParts = append(statusParts, "评论区")
-			state := model.currentCommentState()
-			if state != nil && state.loaded && !state.loading && state.err == nil && len(state.items) == 0 {
-				statusParts = append(statusParts, "暂无评论")
-			}
-		}
-		if len(bodyLines) > bodyHeight {
-			statusParts = append(statusParts, fmt.Sprintf("%s %d–%d / %d 行", model.readingAreaLabel(), model.scroll+1, end, len(bodyLines)))
-		}
-		if model.voting {
-			statusParts = append(statusParts, spinnerFrames[model.spinner%len(spinnerFrames)]+" "+model.message)
-		} else if model.loading {
-			loadingText := "正在预取后续动态"
-			if model.refreshing {
-				loadingText = "正在刷新关注流"
-			}
-			statusParts = append(statusParts, spinnerFrames[model.spinner%len(spinnerFrames)]+" "+loadingText)
-		} else if model.end {
-			statusParts = append(statusParts, "已到当前关注流末尾")
-		}
-		if model.message != "" && !model.voting {
-			statusParts = append(statusParts, model.message)
-		}
-		status := strings.Join(statusParts, "  ·  ")
-		lines = append(lines, line(truncateCells(status, contentWidth), ansiDim))
-		hints := "j/k 滚动  space/b 翻页  n/p 切换  v 赞同  w 评论  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
-		if model.commentMode {
-			hints = "j/k 选评论  space/b 翻页  e 展开回复  w 回复焦点评论  c 正文  ? 帮助  q 退出"
-		} else if model.zenMode {
-			hints = "j/k 滚动  space/b 翻页  n/p 切换  v 赞同  w 评论  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
-		}
-		lines = append(lines, line(truncateCells(hints, contentWidth), ansiCyan))
-		lines = append(lines, styledLine{})
+	lines = append(lines, line(strings.Repeat("─", contentWidth), ansiDim))
+	statusParts := make([]string, 0, 4)
+	if !model.hideItemPosition {
+		statusParts = append(statusParts, fmt.Sprintf("第 %d / %d 条", model.index+1, len(model.items)))
 	}
+	if model.commentMode {
+		statusParts = append(statusParts, "评论区")
+		state := model.currentCommentState()
+		if state != nil && state.loaded && !state.loading && state.err == nil && len(state.items) == 0 {
+			statusParts = append(statusParts, "暂无评论")
+		}
+	}
+	if len(bodyLines) > bodyHeight {
+		statusParts = append(statusParts, fmt.Sprintf("%s %d–%d / %d 行", model.readingAreaLabel(), model.scroll+1, end, len(bodyLines)))
+	}
+	if model.voting {
+		statusParts = append(statusParts, spinnerFrames[model.spinner%len(spinnerFrames)]+" "+model.message)
+	} else if model.loading {
+		loadingText := "正在预取后续动态"
+		if model.refreshing {
+			loadingText = "正在刷新关注流"
+		}
+		statusParts = append(statusParts, spinnerFrames[model.spinner%len(spinnerFrames)]+" "+loadingText)
+	} else if model.end {
+		statusParts = append(statusParts, "已到当前关注流末尾")
+	}
+	if model.message != "" && !model.voting {
+		statusParts = append(statusParts, model.message)
+	}
+	status := strings.Join(statusParts, "  ·  ")
+	lines = append(lines, line(truncateCells(status, contentWidth), ansiDim))
+	hints := "j/k 滚动  C-f/C-b 翻页  C-d/C-u 半页  n/p 切换  v 赞同  w 评论  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
+	if model.composing {
+		hints = "←/→ · C-b/C-f 移动  Home/End · C-a/C-e 首尾  Backspace/Delete · C-d 删除  Enter 发送  Esc 取消"
+	} else if model.commentMode {
+		hints = "j/k 选评论  C-f/C-b 翻页  C-d/C-u 半页  v 赞同  e 展开  w 回复  c 正文  ? 帮助  q 退出"
+	} else if model.zenMode {
+		hints = "j/k 滚动  C-f/C-b 翻页  C-d/C-u 半页  n/p 切换  v 赞同  w 评论  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
+	}
+	lines = append(lines, line(truncateCells(hints, contentWidth), ansiCyan))
+	lines = append(lines, styledLine{})
 
 	return fitHeight(lines, model.height), layoutMetrics{
 		bodyHeight: bodyHeight,
@@ -415,14 +417,7 @@ func inlineCommentComposerLines(model *app, target commentComposeTarget, width i
 		middleStyle: ansiDim,
 		commentID:   target.commentID,
 	}}
-	cursorStyle := ""
-	if model.spinner%8 >= 4 {
-		cursorStyle = ansiDim
-	}
-	inputLines := wrapText(model.composeInput, innerWidth)
-	if len(inputLines) == 0 {
-		inputLines = []string{""}
-	}
+	inputLines, cursorLine, cursorCell := wrapComposerInput(model.composeInput, model.composeCursor, innerWidth)
 	for index, inputLine := range inputLines {
 		line := styledLine{
 			text:      indent + "│  ",
@@ -430,9 +425,9 @@ func inlineCommentComposerLines(model *app, target commentComposeTarget, width i
 			middle:    inputLine,
 			commentID: target.commentID,
 		}
-		if index == len(inputLines)-1 {
-			line.tail = "|"
-			line.tailStyle = cursorStyle
+		if index == cursorLine {
+			line.hasCursor = true
+			line.cursorCell = stringCellWidth(line.text) + cursorCell
 		}
 		lines = append(lines, line)
 	}
@@ -453,8 +448,38 @@ func inlineCommentComposerLines(model *app, target commentComposeTarget, width i
 			commentID:   target.commentID,
 		})
 	}
-	lines = append(lines, styledLine{text: indent + "╰─ Enter 发送 · Esc 取消", style: ansiDim, commentID: target.commentID})
+	lines = append(lines, styledLine{text: indent + "╰─", style: ansiDim, commentID: target.commentID})
 	return lines
+}
+
+func wrapComposerInput(value string, cursor, width int) ([]string, int, int) {
+	width = maxInt(1, width)
+	units := textUnits(value)
+	cursor = minInt(maxInt(0, cursor), len(units))
+	lines := []string{""}
+	line, cells := 0, 0
+	cursorLine, cursorCell := 0, 0
+	for index, unit := range units {
+		unitWidth := stringCellWidth(unit)
+		if cells > 0 && cells+unitWidth > width {
+			lines = append(lines, "")
+			line++
+			cells = 0
+			if cursor == index {
+				cursorLine, cursorCell = line, 0
+			}
+		}
+		lines[line] += unit
+		cells += unitWidth
+		if cursor == index+1 {
+			cursorLine, cursorCell = line, cells
+		}
+	}
+	if cursor == len(units) && cells >= width {
+		lines = append(lines, "")
+		cursorLine, cursorCell = line+1, 0
+	}
+	return lines, cursorLine, cursorCell
 }
 
 func commentLineIDs(lines []styledLine) []string {
@@ -703,30 +728,15 @@ func mergeColumns(left styledLine, leftWidth int, right styledLine, rightWidth i
 	leftPadding := strings.Repeat(" ", maxInt(0, leftWidth-leftTextWidth))
 	rightText, _ := renderStyledLine(right, maxInt(1, rightWidth-1))
 	text := leftText + leftPadding + styleText(" │ ", ansiDim) + rightText
-	return styledLine{text: text, raw: true}
-}
-
-func renderStyledLine(line styledLine, maxWidth int) (string, int) {
-	suffix := truncateCells(line.suffix, maxWidth)
-	suffixWidth := stringCellWidth(suffix)
-	tail := truncateCells(line.tail, maxInt(0, maxWidth-suffixWidth))
-	tailWidth := stringCellWidth(tail)
-	contentWidth := maxInt(0, maxWidth-suffixWidth-tailWidth)
-	text := truncateCells(line.text, contentWidth)
-	textWidth := stringCellWidth(text)
-	middle := truncateCells(line.middle, maxInt(0, contentWidth-textWidth))
-	middleWidth := stringCellWidth(middle)
-	paddingWidth := minInt(line.padding, maxInt(0, maxWidth-suffixWidth-tailWidth-textWidth-middleWidth))
-	padding := strings.Repeat(" ", paddingWidth)
-	rendered := styleText(text, line.style) + styleText(middle, line.middleStyle) + styleText(tail, line.tailStyle) + padding + styleText(suffix, line.suffixStyle)
-	return rendered, textWidth + middleWidth + tailWidth + paddingWidth + suffixWidth
-}
-
-func styleText(text, style string) string {
-	if text == "" || style == "" {
-		return text
+	line := styledLine{text: text, raw: true}
+	if right.hasCursor {
+		line.hasCursor = true
+		line.cursorCell = leftWidth + 3 + right.cursorCell
+	} else if left.hasCursor {
+		line.hasCursor = true
+		line.cursorCell = left.cursorCell
 	}
-	return style + text + ansiReset
+	return line
 }
 
 func renderTooSmall(width, height int) []styledLine {
@@ -771,12 +781,13 @@ func renderHelp(width, height int) []styledLine {
 		description string
 	}{
 		{"j/k · ↓/↑", "正文滚动；评论区逐条移动蓝色焦点"},
-		{"space", "向下翻页；到底后再按一次切换下一条"},
-		{"b", "向上翻页；到顶后再按一次切换上一条"},
-		{"d / u", "向下 / 向上半页，不切换动态"},
+		{"space · Ctrl-F", "向下翻页；正文到底后再按一次切换下一条"},
+		{"b · Ctrl-B", "向上翻页；正文到顶后再按一次切换上一条"},
+		{"Ctrl-D / Ctrl-U", "向下 / 向上半页，保留蓝色续读焦点"},
+		{"Ctrl-E / Ctrl-Y", "向下 / 向上滚动一行"},
 		{"n/p · h/l · ←/→", "下一条 / 上一条"},
 		{"g / G", "第一条 / 最后一条已加载动态"},
-		{"v", "赞同回答 / 取消赞同"},
+		{"v", "赞同回答或蓝色焦点评论 / 取消赞同"},
 		{"w", "写评论 / 回复蓝色焦点所在评论"},
 		{"c", "加载评论 / 返回正文"},
 		{"e / Enter", "展开 / 收起蓝色焦点评论的回复或知乎聚合动态"},
@@ -816,181 +827,4 @@ func fitHeight(lines []styledLine, height int) []styledLine {
 		lines = append(lines, styledLine{})
 	}
 	return lines
-}
-
-func writeFrame(out interface{ Write([]byte) (int, error) }, lines []styledLine, width, height int) error {
-	var builder strings.Builder
-	builder.WriteString("\033[H")
-	for row := 0; row < height; row++ {
-		builder.WriteString("\033[2K")
-		if row < len(lines) {
-			if lines[row].raw {
-				builder.WriteString(lines[row].text)
-			} else {
-				text, _ := renderStyledLine(lines[row], maxInt(1, width-1))
-				builder.WriteString(text)
-			}
-		}
-		if row+1 < height {
-			builder.WriteString("\r\n")
-		}
-	}
-	_, err := out.Write([]byte(builder.String()))
-	return err
-}
-
-func wrapText(text string, width int) []string {
-	if width <= 0 {
-		return []string{""}
-	}
-	paragraphs := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	lines := make([]string, 0, len(paragraphs))
-	for index, paragraph := range paragraphs {
-		paragraph = strings.TrimSpace(paragraph)
-		if paragraph == "" {
-			if index > 0 && len(lines) > 0 && lines[len(lines)-1] != "" {
-				lines = append(lines, "")
-			}
-			continue
-		}
-		var builder strings.Builder
-		cells := 0
-		for _, token := range textTokens(paragraph) {
-			if token == " " {
-				if cells > 0 && cells < width {
-					builder.WriteByte(' ')
-					cells++
-				}
-				continue
-			}
-			tokenWidth := stringCellWidth(token)
-			if cells > 0 && cells+tokenWidth > width {
-				runes := []rune(token)
-				if len(runes) == 1 && isClosingPunctuation(runes[0]) {
-					current := textUnits(strings.TrimSpace(builder.String()))
-					last := current[len(current)-1]
-					prefix := strings.TrimSpace(strings.Join(current[:len(current)-1], ""))
-					if prefix != "" {
-						lines = append(lines, prefix)
-					}
-					builder.Reset()
-					builder.WriteString(last)
-					builder.WriteString(token)
-					cells = stringCellWidth(last) + tokenWidth
-					continue
-				}
-				lines = append(lines, strings.TrimSpace(builder.String()))
-				builder.Reset()
-				cells = 0
-			}
-			if tokenWidth <= width {
-				builder.WriteString(token)
-				cells += tokenWidth
-				continue
-			}
-			for _, unit := range textUnits(token) {
-				unitWidth := stringCellWidth(unit)
-				if cells > 0 && cells+unitWidth > width {
-					lines = append(lines, strings.TrimSpace(builder.String()))
-					builder.Reset()
-					cells = 0
-				}
-				builder.WriteString(unit)
-				cells += unitWidth
-			}
-		}
-		if builder.Len() > 0 {
-			lines = append(lines, strings.TrimSpace(builder.String()))
-		}
-	}
-	if len(lines) == 0 {
-		return []string{""}
-	}
-	return lines
-}
-
-func textTokens(text string) []string {
-	tokens := make([]string, 0, len([]rune(text)))
-	var ascii strings.Builder
-	flushASCII := func() {
-		if ascii.Len() > 0 {
-			tokens = append(tokens, ascii.String())
-			ascii.Reset()
-		}
-	}
-	for _, unit := range textUnits(text) {
-		runes := []rune(unit)
-		r := runes[0]
-		switch {
-		case len(runes) > 1:
-			flushASCII()
-			tokens = append(tokens, unit)
-		case unicode.IsSpace(r):
-			flushASCII()
-			if len(tokens) == 0 || tokens[len(tokens)-1] != " " {
-				tokens = append(tokens, " ")
-			}
-		case r >= 0x21 && r <= 0x7e:
-			ascii.WriteRune(r)
-		default:
-			flushASCII()
-			tokens = append(tokens, unit)
-		}
-	}
-	flushASCII()
-	return tokens
-}
-
-func textUnits(text string) []string {
-	graphemes := uniseg.NewGraphemes(text)
-	units := make([]string, 0, len([]rune(text)))
-	for graphemes.Next() {
-		units = append(units, graphemes.Str())
-	}
-	return units
-}
-
-func isClosingPunctuation(r rune) bool {
-	return strings.ContainsRune("，。！？；：、）】》〉」』…,.!?;:)]}", r)
-}
-
-func truncateCells(text string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	if stringCellWidth(text) <= width {
-		return text
-	}
-	if width == 1 {
-		return "…"
-	}
-	var builder strings.Builder
-	cells := 0
-	for _, unit := range textUnits(text) {
-		unitWidth := stringCellWidth(unit)
-		if cells+unitWidth > width-1 {
-			break
-		}
-		builder.WriteString(unit)
-		cells += unitWidth
-	}
-	return builder.String() + "…"
-}
-
-func stringCellWidth(text string) int {
-	return uniseg.StringWidth(text)
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
