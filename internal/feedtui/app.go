@@ -503,10 +503,6 @@ func (model *app) pageDownWithConfirmation(ctx context.Context, amount int) {
 		model.scroll = minInt(model.metrics.maxScroll, model.scroll+amount)
 		model.setPageAnchor(previousLastLine)
 		model.clearMessage()
-		if model.scroll == model.metrics.maxScroll {
-			model.setPageAnchor(model.metrics.bodyLines - 1)
-			model.armBoundarySwitch(" ", "已到正文底部，再按一次 space 切换下一条")
-		}
 		return
 	}
 	if model.consumeBoundarySwitch(" ") {
@@ -524,10 +520,6 @@ func (model *app) pageUpWithConfirmation(amount int) {
 		model.scroll = maxInt(0, model.scroll-amount)
 		model.setPageAnchor(previousFirstLine)
 		model.clearMessage()
-		if model.scroll == 0 {
-			model.setPageAnchor(0)
-			model.armBoundarySwitch("b", "已到正文顶部，再按一次 b 切换上一条")
-		}
 		return
 	}
 	if model.consumeBoundarySwitch("b") {

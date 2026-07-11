@@ -580,14 +580,21 @@ func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 		t.Fatalf("first space did not move down seven eighths of a page: index=%d scroll=%d", model.index, model.scroll)
 	}
 	model.handleKey(ctx, " ")
+	if model.scroll != 8 || model.index != 0 || model.boundarySwitchKey != "" {
+		t.Fatalf("space landing at bottom armed item switch: index=%d scroll=%d key=%q", model.index, model.scroll, model.boundarySwitchKey)
+	}
+	if model.message != "" {
+		t.Fatalf("bottom landing unexpectedly showed confirmation: %q", model.message)
+	}
+	if !model.pageAnchorVisible || model.pageAnchorLine != 14 {
+		t.Fatalf("space continuation anchor=(%d, %v), want previous last line 14", model.pageAnchorLine, model.pageAnchorVisible)
+	}
+	model.handleKey(ctx, " ")
 	if model.scroll != 8 || model.index != 0 || model.boundarySwitchKey != " " {
-		t.Fatalf("space landing at bottom did not arm confirmation: index=%d scroll=%d key=%q", model.index, model.scroll, model.boundarySwitchKey)
+		t.Fatalf("space at bottom did not arm confirmation: index=%d scroll=%d key=%q", model.index, model.scroll, model.boundarySwitchKey)
 	}
-	if !strings.Contains(model.message, "再按一次 space") {
-		t.Fatalf("bottom confirmation message=%q", model.message)
-	}
-	if !model.pageAnchorVisible || model.pageAnchorLine != 15 {
-		t.Fatalf("space bottom anchor=(%d, %v), want final body line 15", model.pageAnchorLine, model.pageAnchorVisible)
+	if !strings.Contains(model.message, "再按一次 space") || model.pageAnchorLine != 15 {
+		t.Fatalf("bottom confirmation anchor=%d message=%q", model.pageAnchorLine, model.message)
 	}
 	model.handleKey(ctx, " ")
 	if model.index != 1 || model.scroll != 0 {
@@ -600,14 +607,21 @@ func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 		t.Fatalf("first b did not move up seven eighths of a page: index=%d scroll=%d", model.index, model.scroll)
 	}
 	model.handleKey(ctx, "b")
+	if model.scroll != 0 || model.index != 1 || model.boundarySwitchKey != "" {
+		t.Fatalf("b landing at top armed item switch: index=%d scroll=%d key=%q", model.index, model.scroll, model.boundarySwitchKey)
+	}
+	if model.message != "" {
+		t.Fatalf("top landing unexpectedly showed confirmation: %q", model.message)
+	}
+	if !model.pageAnchorVisible || model.pageAnchorLine != 1 {
+		t.Fatalf("b continuation anchor=(%d, %v), want previous first line 1", model.pageAnchorLine, model.pageAnchorVisible)
+	}
+	model.handleKey(ctx, "b")
 	if model.scroll != 0 || model.index != 1 || model.boundarySwitchKey != "b" {
-		t.Fatalf("b landing at top did not arm confirmation: index=%d scroll=%d key=%q", model.index, model.scroll, model.boundarySwitchKey)
+		t.Fatalf("b at top did not arm confirmation: index=%d scroll=%d key=%q", model.index, model.scroll, model.boundarySwitchKey)
 	}
-	if !strings.Contains(model.message, "再按一次 b") {
-		t.Fatalf("top confirmation message=%q", model.message)
-	}
-	if !model.pageAnchorVisible || model.pageAnchorLine != 0 {
-		t.Fatalf("b top anchor=(%d, %v), want first body line 0", model.pageAnchorLine, model.pageAnchorVisible)
+	if !strings.Contains(model.message, "再按一次 b") || model.pageAnchorLine != 0 {
+		t.Fatalf("top confirmation anchor=%d message=%q", model.pageAnchorLine, model.message)
 	}
 	model.handleKey(ctx, "b")
 	if model.index != 0 || model.scroll == 0 {
@@ -1097,6 +1111,41 @@ func TestBlankContinuationAnchorUsesDashedLine(t *testing.T) {
 	}
 	if anchors[0].style != ansiBlue {
 		t.Fatalf("blank continuation anchor style=%q, want soft blue", anchors[0].style)
+	}
+}
+
+func TestHelpUsesAlignedCommandColumns(t *testing.T) {
+	lines := renderHelp(100, 24)
+	if strings.TrimSpace(lines[0].text) != "快捷键" {
+		t.Fatalf("help title=%q", lines[0].text)
+	}
+	descriptions := []string{
+		"向下滚动；正文底部停止",
+		"向上滚动；正文顶部停止",
+		"向下翻页；到底后再按一次切换下一条",
+		"向上翻页；到顶后再按一次切换上一条",
+		"向下 / 向上半页，不切换动态",
+		"下一条 / 上一条",
+		"第一条 / 最后一条已加载动态",
+		"加载评论 / 返回正文",
+		"展开 / 收起知乎聚合动态",
+		"专注阅读 / 恢复双栏",
+		"用默认浏览器打开当前动态",
+		"刷新；新标题变绿 / 标记进程阅读范围",
+		"退出并恢复终端",
+	}
+	descriptionColumn := -1
+	for index, description := range descriptions {
+		prefix, _, found := strings.Cut(lines[index+2].text, description)
+		if !found {
+			t.Fatalf("help line %d has no description %q: %q", index, description, lines[index+2].text)
+		}
+		column := stringCellWidth(prefix)
+		if descriptionColumn < 0 {
+			descriptionColumn = column
+		} else if column != descriptionColumn {
+			t.Fatalf("help description column=%d, want %d: %q", column, descriptionColumn, lines[index+2].text)
+		}
 	}
 }
 

@@ -197,9 +197,9 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	}
 	status := strings.Join(statusParts, "  ·  ")
 	lines = append(lines, line(truncateCells(status, contentWidth), ansiDim))
-	hints := "j/k 滚动  space/b 翻页  n/p 切换  e 展开  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
+	hints := "j/k 滚动  space/b 翻页  n/p 切换  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
 	if model.zenMode {
-		hints = "j/k 滚动  space/b 翻页  n/p 切换  e 展开  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
+		hints = "j/k 滚动  space/b 翻页  n/p 切换  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
 	}
 	lines = append(lines, line(truncateCells(hints, contentWidth), ansiCyan))
 	lines = append(lines, styledLine{})
@@ -588,25 +588,36 @@ func renderHelp(width, height int) []styledLine {
 	contentWidth := minInt(width-6, 76)
 	left := maxInt(2, (width-contentWidth)/2)
 	pad := strings.Repeat(" ", left)
-	lines := []styledLine{
-		{text: pad + "知乎关注 · 快捷键", style: ansiBold + ansiCyan},
-		{},
-		{text: pad + "j / ↓       向下滚动；正文底部停止"},
-		{text: pad + "k / ↑       向上滚动；正文顶部停止"},
-		{text: pad + "space        向下翻页；到底后再按一次切换下一条"},
-		{text: pad + "b            向上翻页；到顶后再按一次切换上一条"},
-		{text: pad + "d / u        向下 / 向上半页，不切换动态"},
-		{text: pad + "n/p · h/l · ←/→  下一条 / 上一条"},
-		{text: pad + "g / G        第一条 / 最后一条已加载动态"},
-		{text: pad + "c            加载评论 / 返回正文"},
-		{text: pad + "e / Enter    展开 / 收起知乎聚合动态"},
-		{text: pad + "z            专注阅读 / 恢复双栏"},
-		{text: pad + "o            用默认浏览器打开当前动态"},
-		{text: pad + "r            刷新；新标题变绿 / 标记进程阅读范围"},
-		{text: pad + "q / Ctrl-C   退出并恢复终端"},
-		{},
-		{text: pad + "按 ? 返回阅读。", style: ansiCyan},
+	entries := []struct {
+		keys        string
+		description string
+	}{
+		{"j / ↓", "向下滚动；正文底部停止"},
+		{"k / ↑", "向上滚动；正文顶部停止"},
+		{"space", "向下翻页；到底后再按一次切换下一条"},
+		{"b", "向上翻页；到顶后再按一次切换上一条"},
+		{"d / u", "向下 / 向上半页，不切换动态"},
+		{"n/p · h/l · ←/→", "下一条 / 上一条"},
+		{"g / G", "第一条 / 最后一条已加载动态"},
+		{"c", "加载评论 / 返回正文"},
+		{"e / Enter", "展开 / 收起知乎聚合动态"},
+		{"z", "专注阅读 / 恢复双栏"},
+		{"o", "用默认浏览器打开当前动态"},
+		{"r", "刷新；新标题变绿 / 标记进程阅读范围"},
+		{"q / Ctrl-C", "退出并恢复终端"},
 	}
+	keyWidth := 0
+	for _, entry := range entries {
+		keyWidth = maxInt(keyWidth, stringCellWidth(entry.keys))
+	}
+	lines := []styledLine{
+		{text: pad + "快捷键", style: ansiBold + ansiCyan},
+		{},
+	}
+	for _, entry := range entries {
+		lines = append(lines, styledLine{text: pad + padCells(entry.keys, keyWidth) + "  " + entry.description})
+	}
+	lines = append(lines, styledLine{}, styledLine{text: pad + "按 ? 返回阅读。", style: ansiCyan})
 	return fitHeight(lines, height)
 }
 
