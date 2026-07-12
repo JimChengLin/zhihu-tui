@@ -34,6 +34,19 @@ func TestRootHelpAdvertisesInteractiveModes(t *testing.T) {
 	}
 }
 
+func TestRootHelpOmitsRemovedCommands(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := Run([]string{"--help"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("Run(--help)=%d, stderr=%q", code, stderr.String())
+	}
+	for _, removed := range []string{"search, hot, question", "feeds, topic"} {
+		if strings.Contains(stdout.String(), removed) {
+			t.Fatalf("root help still contains removed command list fragment %q:\n%s", removed, stdout.String())
+		}
+	}
+}
+
 func TestFeedTUIDispatchesBeforeRegularFeedOptions(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

@@ -91,8 +91,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = runSearch(ctx, rest, stdout)
 	case "hot":
 		err = runHot(ctx, rest, stdout)
-	case "question":
-		err = runQuestion(ctx, rest, stdout)
 	case "answers":
 		err = runAnswers(ctx, rest, stdout)
 	case "answer":
@@ -101,8 +99,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = runFeed(ctx, rest, stdout)
 	case "feeds":
 		err = runFeeds(ctx, rest, stdout)
-	case "topic":
-		err = runTopic(ctx, rest, stdout)
 	case "user":
 		err = runUser(ctx, rest, stdout)
 	case "user-answers":
@@ -157,7 +153,7 @@ func printRootHelp(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  login, logout, status, whoami")
-	fmt.Fprintln(w, "  search, hot, question, answers, answer, feed, feeds, topic")
+	fmt.Fprintln(w, "  search, hot, answers, answer, feed, feeds")
 	fmt.Fprintln(w, "  user, user-answers, user-articles, followers, following")
 	fmt.Fprintln(w, "  vote, follow-question, collections, notifications")
 	fmt.Fprintln(w, "  reply-comment")
@@ -178,8 +174,6 @@ func printCommandHelp(w io.Writer, cmd string) {
 		fmt.Fprintln(w, "Usage: zhihu search QUERY [-t TYPE] [-l LIMIT] [-a ANSWERS] [--json]")
 	case "hot":
 		fmt.Fprintln(w, "Usage: zhihu hot [-l LIMIT] [--json]")
-	case "question":
-		fmt.Fprintln(w, "Usage: zhihu question QUESTION_ID [--json]")
 	case "answers":
 		fmt.Fprintln(w, "Usage: zhihu answers QUESTION_ID [-l LIMIT] [--sort default|created] [--json]")
 	case "answer":
@@ -190,8 +184,6 @@ func printCommandHelp(w io.Writer, cmd string) {
 		fmt.Fprintln(w, "  zhihu feed --tui")
 	case "feeds":
 		fmt.Fprintln(w, "Usage: zhihu feeds [-l LIMIT] [-c COMMENT_LIMIT]")
-	case "topic":
-		fmt.Fprintln(w, "Usage: zhihu topic TOPIC_ID [--json]")
 	case "user":
 		fmt.Fprintln(w, "Usage: zhihu user URL_TOKEN [--json]")
 	case "user-answers", "user-articles", "followers", "following":
@@ -425,34 +417,6 @@ func runHot(ctx context.Context, args []string, out io.Writer) error {
 	return nil
 }
 
-func runQuestion(ctx context.Context, args []string, out io.Writer) error {
-	opts, err := parseOptions(args, specs(opt("--json", "json", false)))
-	if err != nil {
-		return err
-	}
-	if len(opts.positionals) != 1 {
-		return fmt.Errorf("usage: zhihu question QUESTION_ID")
-	}
-	c, err := authenticatedClient()
-	if err != nil {
-		return err
-	}
-	defer c.Close()
-	q, err := c.GetQuestion(ctx, opts.positionals[0])
-	if err != nil {
-		return err
-	}
-	if opts.has("json") {
-		return printJSON(out, q)
-	}
-	fmt.Fprintln(out, display.StripHTML(toString(q["title"])))
-	if detail := display.StripHTML(toString(q["detail"])); detail != "" {
-		fmt.Fprintln(out, detail)
-	}
-	fmt.Fprintln(out, display.StatsLine(map[string]any{"Answers": q["answer_count"], "Followers": q["follower_count"], "Views": q["visit_count"]}))
-	return nil
-}
-
 func runAnswers(ctx context.Context, args []string, out io.Writer) error {
 	opts, err := parseOptions(args, specs(opt("-l", "limit", true), opt("--limit", "limit", true), opt("--sort", "sort", true), opt("--json", "json", false)))
 	if err != nil {
@@ -581,41 +545,6 @@ func runFeeds(ctx context.Context, args []string, out io.Writer) error {
 					fmt.Fprintf(out, "   %d. %s\n", j+1, display.StripHTML(toString(comment["content"])))
 				}
 			}
-		}
-	}
-	return nil
-}
-
-func runTopic(ctx context.Context, args []string, out io.Writer) error {
-	opts, err := parseOptions(args, specs(opt("--json", "json", false)))
-	if err != nil {
-		return err
-	}
-	if len(opts.positionals) != 1 {
-		return fmt.Errorf("usage: zhihu topic TOPIC_ID")
-	}
-	c, err := authenticatedClient()
-	if err != nil {
-		return err
-	}
-	defer c.Close()
-	topic, err := c.GetTopic(ctx, opts.positionals[0])
-	if err != nil {
-		return err
-	}
-	if opts.has("json") {
-		return printJSON(out, topic)
-	}
-	fmt.Fprintf(out, "# %s\n", toString(topic["name"]))
-	if intro := display.StripHTML(toString(topic["introduction"])); intro != "" {
-		fmt.Fprintln(out, intro)
-	}
-	fmt.Fprintln(out, display.StatsLine(map[string]any{"Followers": topic["followers_count"], "Questions": topic["questions_count"]}))
-	hot, err := c.GetTopicHotQuestions(ctx, opts.positionals[0], 0, 10)
-	if err == nil {
-		for i, raw := range asSlice(hot["data"]) {
-			item := mapValue(raw)
-			fmt.Fprintf(out, "%d. %s\n", i+1, display.StripHTML(toString(item["title"])))
 		}
 	}
 	return nil

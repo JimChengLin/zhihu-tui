@@ -144,11 +144,6 @@ func (c *Client) GetHotList(ctx context.Context, limit int) (map[string]any, err
 	return map[string]any{"data": []any{}}, nil
 }
 
-func (c *Client) GetQuestion(ctx context.Context, questionID string) (map[string]any, error) {
-	params := url.Values{"include": {"data[*].author,answer_count,follower_count,visit_count,comment_count,created_time,updated_time,detail,topics"}}
-	return c.getMap(ctx, c.endpoints.APIV4+"/questions/"+url.PathEscape(questionID), params)
-}
-
 func (c *Client) GetQuestionAnswers(ctx context.Context, questionID string, offset, limit int, sortBy string) (map[string]any, error) {
 	params := url.Values{
 		"include": {"data[*].content,voteup_count,comment_count,created_time,updated_time,author"},
@@ -245,15 +240,6 @@ func (c *Client) GetFollowingFeed(ctx context.Context, nextURL string, limit int
 		params = url.Values{"limit": {strconv.Itoa(limit)}}
 	}
 	return c.getMap(ctx, target, params)
-}
-
-func (c *Client) GetTopic(ctx context.Context, topicID string) (map[string]any, error) {
-	return c.getMap(ctx, c.endpoints.APIV4+"/topics/"+url.PathEscape(topicID), nil)
-}
-
-func (c *Client) GetTopicHotQuestions(ctx context.Context, topicID string, offset, limit int) (map[string]any, error) {
-	params := url.Values{"offset": {strconv.Itoa(offset)}, "limit": {strconv.Itoa(limit)}}
-	return c.getMap(ctx, c.endpoints.APIV4+"/topics/"+url.PathEscape(topicID)+"/feeds/essence", params)
 }
 
 func (c *Client) FollowQuestion(ctx context.Context, questionID string) (bool, error) {
@@ -601,9 +587,6 @@ func checkStatus(resp *http.Response, label string) error {
 func checkExpectedStatus(resp *http.Response, okStatuses map[int]bool, label string) error {
 	if resp.StatusCode == http.StatusUnauthorized {
 		return LoginError{Message: "session expired or not logged in"}
-	}
-	if resp.StatusCode == http.StatusForbidden {
-		return LoginError{Message: "access denied; check login status"}
 	}
 	if okStatuses[resp.StatusCode] {
 		return nil

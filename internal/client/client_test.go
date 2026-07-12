@@ -124,12 +124,13 @@ func TestGetPinArticleAndComment(t *testing.T) {
 
 func TestGetSelfInfoStatusErrors(t *testing.T) {
 	tests := []struct {
-		status int
-		want   any
+		status  int
+		want    any
+		message string
 	}{
-		{http.StatusUnauthorized, LoginError{}},
-		{http.StatusForbidden, LoginError{}},
-		{http.StatusInternalServerError, DataFetchError{}},
+		{http.StatusUnauthorized, LoginError{}, ""},
+		{http.StatusForbidden, DataFetchError{}, "err"},
+		{http.StatusInternalServerError, DataFetchError{}, "err"},
 	}
 	for _, tt := range tests {
 		t.Run(http.StatusText(tt.status), func(t *testing.T) {
@@ -153,6 +154,9 @@ func TestGetSelfInfoStatusErrors(t *testing.T) {
 				if !errors.As(err, &target) {
 					t.Fatalf("err=%T, want DataFetchError", err)
 				}
+			}
+			if tt.message != "" && !strings.Contains(err.Error(), tt.message) {
+				t.Fatalf("err=%q, want response body %q", err, tt.message)
 			}
 		})
 	}
