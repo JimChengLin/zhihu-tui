@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"zhihucli2/internal/cli"
+	"github.com/JimChengLin/zhihu-tui/internal/cli"
 )
 
 func main() {

@@ -1,6 +1,9 @@
-zhihu-cli Go
+zhihu-tui
 
-This project is a Go translation inspired by BAIGUANGMEI/zhihu-cli:
+This project references portions of the public Zhihu API research from
+BAIGUANGMEI/zhihu-cli, including API endpoints, request parameters, and
+authentication flows:
 https://github.com/BAIGUANGMEI/zhihu-cli
 
-The referenced project is licensed under Apache License 2.0.
+BAIGUANGMEI/zhihu-cli is distributed under the Apache License 2.0.
+This attribution is retained in accordance with that license.

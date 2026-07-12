@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"zhihucli2/internal/client"
+	"github.com/JimChengLin/zhihu-tui/internal/client"
 )
 
 func testNotificationFormatter(t *testing.T, handler http.HandlerFunc) (*notificationFormatter, func()) {

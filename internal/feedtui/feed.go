@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"zhihucli2/internal/display"
+	"github.com/JimChengLin/zhihu-tui/internal/display"
 )
 
 var htmlBreakPattern = regexp.MustCompile(`(?i)<(?:br\s*/?|/?(?:p|div|li|blockquote|h[1-6]))[^>]*>`)

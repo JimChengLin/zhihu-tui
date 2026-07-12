@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"zhihucli2/internal/auth"
-	"zhihucli2/internal/client"
-	"zhihucli2/internal/config"
-	"zhihucli2/internal/display"
-	"zhihucli2/internal/feedtui"
+	"github.com/JimChengLin/zhihu-tui/internal/auth"
+	"github.com/JimChengLin/zhihu-tui/internal/client"
+	"github.com/JimChengLin/zhihu-tui/internal/config"
+	"github.com/JimChengLin/zhihu-tui/internal/display"
+	"github.com/JimChengLin/zhihu-tui/internal/feedtui"
 )
 
 type optionSpec struct {
@@ -58,7 +58,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if args[0] == "--version" || args[0] == "version" {
-		fmt.Fprintf(stdout, "zhihu-cli %s\n", config.Version)
+		fmt.Fprintf(stdout, "zhihu-tui %s\n", config.Version)
 		return 0
 	}
 	if args[0] == "-v" || args[0] == "--verbose" {
@@ -150,7 +150,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 
 func printRootHelp(w io.Writer) {
-	fmt.Fprintln(w, "zhihu-cli - Zhihu from your terminal")
+	fmt.Fprintln(w, "zhihu-tui - Zhihu from your terminal")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  zhihu <command> [options]")

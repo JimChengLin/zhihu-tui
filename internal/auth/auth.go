@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"zhihucli2/internal/config"
+	"github.com/JimChengLin/zhihu-tui/internal/config"
 )
 
 type cookieFile struct {

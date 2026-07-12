@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"zhihucli2/internal/display"
+	"github.com/JimChengLin/zhihu-tui/internal/display"
 )
 
 const commentPageSize = 20

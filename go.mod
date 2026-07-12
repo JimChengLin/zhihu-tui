@@ -1,4 +1,4 @@
-module zhihucli2
+module github.com/JimChengLin/zhihu-tui
 
 go 1.25
 
