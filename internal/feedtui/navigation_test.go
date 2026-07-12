@@ -138,6 +138,29 @@ func TestHalfPageKeysKeepContinuationAnchorWithoutSwitchingItem(t *testing.T) {
 	}
 }
 
+func TestFKeyPagesDownAndConfirmsNextItem(t *testing.T) {
+	model := &app{
+		items:   []feedItem{{key: "1"}, {key: "2"}},
+		metrics: layoutMetrics{bodyHeight: 8, bodyLines: 16, maxScroll: 8},
+	}
+	model.handleKey(context.Background(), "f")
+	if model.scroll != 7 || model.index != 0 || model.pageAnchorLine != 7 {
+		t.Fatalf("first f scroll=%d index=%d anchor=%d", model.scroll, model.index, model.pageAnchorLine)
+	}
+	model.handleKey(context.Background(), "f")
+	if model.scroll != 8 || model.index != 0 || model.pageAnchorLine != 14 {
+		t.Fatalf("second f scroll=%d index=%d anchor=%d", model.scroll, model.index, model.pageAnchorLine)
+	}
+	model.handleKey(context.Background(), "f")
+	if model.index != 0 || model.boundarySwitchKey != "f" || !strings.Contains(model.message, "再按一次 f") {
+		t.Fatalf("boundary f index=%d key=%q message=%q", model.index, model.boundarySwitchKey, model.message)
+	}
+	model.handleKey(context.Background(), "f")
+	if model.index != 1 {
+		t.Fatalf("confirmed f index=%d", model.index)
+	}
+}
+
 func TestHalfPageScrollDoesNotUseControlDU(t *testing.T) {
 	model := &app{
 		items:   []feedItem{{key: "1"}},

@@ -474,6 +474,8 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 		}
 	case " ":
 		model.pageDownWithConfirmation(ctx, maxInt(1, model.metrics.bodyHeight*7/8))
+	case "f":
+		model.pageDownWithBoundary(ctx, maxInt(1, model.metrics.bodyHeight*7/8), "f", "f")
 	case keyCtrlF:
 		model.pageDownWithBoundary(ctx, maxInt(1, model.metrics.bodyHeight*7/8), keyCtrlF, "Ctrl-F")
 	case "b":
@@ -490,7 +492,7 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 		} else if !model.toggleFoldedGroup() {
 			model.scrollDown(maxInt(1, model.metrics.bodyHeight/2))
 		}
-	case "f", keyPageDown, "d":
+	case keyPageDown, "d":
 		model.scrollDown(maxInt(1, model.metrics.bodyHeight/2))
 	case keyPageUp, "u":
 		model.scrollUp(maxInt(1, model.metrics.bodyHeight/2))
