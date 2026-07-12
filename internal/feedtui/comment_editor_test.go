@@ -88,6 +88,50 @@ func TestPublishedReplyIsInsertedWithoutResettingCommentTree(t *testing.T) {
 	}
 }
 
+func TestPublishedRootCommentIsPrependedAndFocused(t *testing.T) {
+	state := &commentState{
+		items: []feedComment{
+			{id: "100", author: "Alice", content: "原评论一"},
+			{id: "101", author: "Bob", content: "原评论二"},
+		},
+		expandedChildren: map[string]bool{"100": true},
+		loaded:           true,
+		nextCursor:       "20",
+	}
+	model := &app{
+		width:       100,
+		height:      24,
+		items:       []feedItem{{key: "answer:42", id: "42", kind: "answer", title: "问题", commentCount: 2}},
+		comments:    map[string]*commentState{"answer:42": state},
+		commentMode: true,
+		scroll:      8,
+		composing:   true,
+	}
+
+	model.applyCommentPost(context.Background(), commentPostResult{
+		itemKey:  "answer:42",
+		content:  "刚发布的评论",
+		response: map[string]any{"id": "102", "content": "刚发布的评论", "author": map[string]any{"name": "我"}},
+	})
+
+	if len(state.items) != 3 || state.items[0].id != "102" || state.items[1].id != "100" {
+		t.Fatalf("root comment order=%#v", state.items)
+	}
+	if !state.loaded || state.nextCursor != "20" || !state.expandedChildren["100"] {
+		t.Fatalf("comment state was reset: %#v", state)
+	}
+	if model.scroll != 0 || !model.pageAnchorVisible || model.pageAnchorLine != 0 {
+		t.Fatalf("published comment focus scroll=%d anchor=(%d,%v)", model.scroll, model.pageAnchorLine, model.pageAnchorVisible)
+	}
+	_, metrics := renderSingleApp(model)
+	if len(metrics.commentIDs) == 0 || metrics.commentIDs[0] != "102" {
+		t.Fatalf("first rendered comment IDs=%#v", metrics.commentIDs)
+	}
+	if model.items[0].commentCount != 3 || model.composing || model.message != "评论已发布" {
+		t.Fatalf("item=%#v composing=%v message=%q", model.items[0], model.composing, model.message)
+	}
+}
+
 func TestCommentComposerRequiresBlueFocusInCommentMode(t *testing.T) {
 	model := &app{
 		items:       []feedItem{{key: "answer:42", id: "42", kind: "answer"}},

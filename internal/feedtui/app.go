@@ -417,7 +417,7 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 		}
 		return false
 	}
-	preservesCommentFocus := model.commentMode && (key == "j" || key == "k" || key == "J" || key == "K" || key == keyDown || key == keyUp || key == keyCtrlE || key == keyCtrlY || key == "e" || key == "\r")
+	preservesCommentFocus := model.commentMode && (key == "j" || key == "k" || key == "J" || key == "K" || key == keyDown || key == keyUp || key == keyCtrlE || key == keyCtrlY || key == "e" || key == "v" || key == "\r")
 	if key != model.boundarySwitchKey && key != "w" && !preservesCommentFocus {
 		model.clearBoundarySwitch()
 	}
@@ -480,10 +480,6 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 		model.pageUpWithConfirmation(maxInt(1, model.metrics.bodyHeight*7/8))
 	case keyCtrlB:
 		model.pageUpWithBoundary(maxInt(1, model.metrics.bodyHeight*7/8), keyCtrlB, "Ctrl-B")
-	case keyCtrlD:
-		model.scrollDown(maxInt(1, model.metrics.bodyHeight/2))
-	case keyCtrlU:
-		model.scrollUp(maxInt(1, model.metrics.bodyHeight/2))
 	case keyCtrlE:
 		model.scrollViewportDown()
 	case keyCtrlY:

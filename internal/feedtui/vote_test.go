@@ -133,6 +133,39 @@ func TestCommentVoteRequiresBlueFocus(t *testing.T) {
 	}
 }
 
+func TestCommentVoteKeepsFocusSelectedByJK(t *testing.T) {
+	source := &voteTestSource{votes: make(chan string, 1)}
+	state := &commentState{
+		items:  []feedComment{{id: "100", author: "用户", content: "评论"}},
+		loaded: true,
+	}
+	model := &app{
+		source:      source,
+		items:       []feedItem{{key: "answer:42", id: "42", kind: "answer"}},
+		comments:    map[string]*commentState{"answer:42": state},
+		commentMode: true,
+		metrics: layoutMetrics{
+			bodyHeight: 4,
+			commentIDs: []string{"100", "100"},
+		},
+		voteResults: make(chan voteResult, 1),
+	}
+
+	model.handleKey(context.Background(), "j")
+	if !model.pageAnchorVisible || model.pageAnchorLine != 0 {
+		t.Fatalf("comment focus=(%d, %v)", model.pageAnchorLine, model.pageAnchorVisible)
+	}
+	model.handleKey(context.Background(), "v")
+	waitForVote(t, source.votes, "comment-up:100")
+	if !model.pageAnchorVisible || model.pageAnchorLine != 0 {
+		t.Fatalf("comment focus was cleared by v: (%d, %v)", model.pageAnchorLine, model.pageAnchorVisible)
+	}
+	applyNextVoteResult(t, model)
+	if !state.items[0].voted || state.items[0].voteCount != 1 {
+		t.Fatalf("comment vote state=%#v", state.items[0])
+	}
+}
+
 func TestParseCommentReadsLikeRelationship(t *testing.T) {
 	comment := parseComment(map[string]any{"id": "100", "content": "评论", "like_count": 7, "liked": true})
 	if !comment.voted || comment.voteCount != 7 {

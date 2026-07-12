@@ -138,18 +138,23 @@ func TestHalfPageKeysKeepContinuationAnchorWithoutSwitchingItem(t *testing.T) {
 	}
 }
 
+func TestHalfPageScrollDoesNotUseControlDU(t *testing.T) {
+	model := &app{
+		items:   []feedItem{{key: "1"}},
+		scroll:  4,
+		metrics: layoutMetrics{bodyHeight: 8, bodyLines: 24, maxScroll: 16},
+	}
+	model.handleKey(context.Background(), keyCtrlD)
+	model.handleKey(context.Background(), keyCtrlU)
+	if model.scroll != 4 || model.pageAnchorVisible {
+		t.Fatalf("Ctrl-D/U changed reading position: scroll=%d anchor=%v", model.scroll, model.pageAnchorVisible)
+	}
+}
+
 func TestVimControlKeysScrollAndConfirmBoundaries(t *testing.T) {
 	model := &app{
 		items:   []feedItem{{key: "1"}, {key: "2"}},
 		metrics: layoutMetrics{bodyHeight: 8, bodyLines: 24, maxScroll: 16},
-	}
-	model.handleKey(context.Background(), keyCtrlD)
-	if model.scroll != 4 || model.pageAnchorLine != 7 {
-		t.Fatalf("Ctrl-D scroll=%d anchor=%d", model.scroll, model.pageAnchorLine)
-	}
-	model.handleKey(context.Background(), keyCtrlU)
-	if model.scroll != 0 || model.pageAnchorLine != 4 {
-		t.Fatalf("Ctrl-U scroll=%d anchor=%d", model.scroll, model.pageAnchorLine)
 	}
 	model.handleKey(context.Background(), keyCtrlE)
 	if model.scroll != 1 {

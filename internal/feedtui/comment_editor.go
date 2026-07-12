@@ -256,12 +256,16 @@ func (model *app) applyCommentPost(ctx context.Context, result commentPostResult
 				state.expandedChildren[rootID] = true
 			}
 		} else {
-			state.items = append(state.items, posted)
+			state.items = append([]feedComment{posted}, state.items...)
 			inserted = true
 		}
 	}
 	if len(model.items) > 0 && model.items[model.index].key == result.itemKey {
 		model.commentMode = true
+		if inserted && !result.reply {
+			model.scroll = 0
+			model.setPageAnchor(0)
+		}
 		if !inserted && (state == nil || !state.loaded) {
 			model.scroll = 0
 			model.startComments(ctx, model.items[model.index])

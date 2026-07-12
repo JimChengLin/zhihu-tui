@@ -244,13 +244,13 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	}
 	status := strings.Join(statusParts, "  ·  ")
 	lines = append(lines, line(truncateCells(status, contentWidth), ansiDim))
-	hints := "j/k 滚动  C-f/C-b 翻页  C-d/C-u 半页  n/p 切换  v 赞同  w 评论  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
+	hints := "j/k 滚动  C-f/C-b 翻页  d/u 半页  n/p 切换  v 赞同  w 评论  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
 	if model.composing {
 		hints = "←/→ · C-b/C-f 移动  Home/End · C-a/C-e 首尾  Backspace/Delete · C-d 删除  Enter 发送  Esc 取消"
 	} else if model.commentMode {
-		hints = "j/k 选评论  C-f/C-b 翻页  C-d/C-u 半页  v 赞同  e 展开  w 回复  c 正文  ? 帮助  q 退出"
+		hints = "j/k 选评论  C-f/C-b 翻页  d/u 半页  v 赞同  e 展开  w 回复  c 正文  ? 帮助  q 退出"
 	} else if model.zenMode {
-		hints = "j/k 滚动  C-f/C-b 翻页  C-d/C-u 半页  n/p 切换  v 赞同  w 评论  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
+		hints = "j/k 滚动  C-f/C-b 翻页  d/u 半页  n/p 切换  v 赞同  w 评论  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
 	}
 	lines = append(lines, line(truncateCells(hints, contentWidth), ansiCyan))
 	lines = append(lines, styledLine{})
@@ -783,7 +783,7 @@ func renderHelp(width, height int) []styledLine {
 		{"j/k · ↓/↑", "正文滚动；评论区逐条移动蓝色焦点"},
 		{"space · Ctrl-F", "向下翻页；正文到底后再按一次切换下一条"},
 		{"b · Ctrl-B", "向上翻页；正文到顶后再按一次切换上一条"},
-		{"Ctrl-D / Ctrl-U", "向下 / 向上半页，保留蓝色续读焦点"},
+		{"d / u", "向下 / 向上半页，保留蓝色续读焦点"},
 		{"Ctrl-E / Ctrl-Y", "向下 / 向上滚动一行"},
 		{"n/p · h/l · ←/→", "下一条 / 上一条"},
 		{"g / G", "第一条 / 最后一条已加载动态"},
