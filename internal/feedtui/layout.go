@@ -72,9 +72,6 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	}
 
 	action := item.action
-	if item.serverFolded {
-		action = "知乎收起 · " + action
-	}
 	if relative := formatRelativeTime(item.createdAt, time.Now()); relative != "" {
 		action += "  ·  " + relative
 	}
@@ -244,14 +241,7 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	}
 	status := strings.Join(statusParts, "  ·  ")
 	lines = append(lines, line(truncateCells(status, contentWidth), ansiDim))
-	hints := "j/k 滚动  f/b 翻页  d/u 半页  n/p 切换  v 赞同  w 评论  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
-	if model.composing {
-		hints = "←/→ · C-b/C-f 移动  Home/End · C-a/C-e 首尾  Backspace/Delete · C-d 删除  Enter 发送  Esc 取消"
-	} else if model.commentMode {
-		hints = "j/k 选评论  f/b 翻页  d/u 半页  v 赞同  e 展开  w 回复  c 正文  ? 帮助  q 退出"
-	} else if model.zenMode {
-		hints = "j/k 滚动  f/b 翻页  d/u 半页  n/p 切换  v 赞同  w 评论  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
-	}
+	hints := footerHints(model, contentWidth)
 	lines = append(lines, line(truncateCells(hints, contentWidth), ansiCyan))
 	lines = append(lines, styledLine{})
 
@@ -261,6 +251,25 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		maxScroll:  maxScroll,
 		commentIDs: commentLineIDs(bodyLines),
 	}
+}
+
+func footerHints(model *app, width int) string {
+	full := "j/k 滚动  f/b 翻页  d/u 半页  n/p 切换  v 赞同  w 评论  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
+	compact := "j/k 滚动  f/b 页  d/u 半页  n/p 切换  c 评论  r 刷新  ? 帮助  q 退出"
+	switch {
+	case model.composing:
+		full = "←/→ · C-b/C-f 移动  Home/End · C-a/C-e 首尾  Backspace/Delete · C-d 删除  Enter 发送  Esc 取消"
+		compact = "←/→ 移动  Home/End 首尾  BS/Del 删除  Enter 发送  Esc 取消"
+	case model.commentMode:
+		full = "j/k 选评论  f/b 翻页  d/u 半页  v 赞同  e 展开  w 回复  c 正文  ? 帮助  q 退出"
+		compact = "j/k 选择  f/b 页  d/u 半页  e 展开  c 正文  ? 帮助  q 退出"
+	case model.zenMode:
+		full = "j/k 滚动  f/b 翻页  d/u 半页  n/p 切换  v 赞同  w 评论  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
+	}
+	if stringCellWidth(full) <= width {
+		return full
+	}
+	return compact
 }
 
 func styledLineText(line styledLine) string {

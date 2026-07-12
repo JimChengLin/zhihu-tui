@@ -100,6 +100,31 @@ func TestRenderAppUsesResponsiveWideLayout(t *testing.T) {
 	}
 }
 
+func TestCompactFooterKeepsHelpAndQuitVisible(t *testing.T) {
+	model := &app{
+		items:  []feedItem{{kind: "answer", title: "问题", body: "正文"}},
+		width:  80,
+		height: 24,
+	}
+	lines, _ := renderSingleApp(model)
+	hints := lines[model.height-2].text
+	for _, want := range []string{"f/b 页", "d/u 半页", "? 帮助", "q 退出"} {
+		if !strings.Contains(hints, want) {
+			t.Fatalf("compact reading footer missing %q: %q", want, hints)
+		}
+	}
+
+	model.commentMode = true
+	model.comments = map[string]*commentState{"": {items: []feedComment{{id: "1", content: "评论"}}, loaded: true}}
+	lines, _ = renderSingleApp(model)
+	hints = lines[model.height-2].text
+	for _, want := range []string{"j/k 选择", "e 展开", "c 正文", "? 帮助", "q 退出"} {
+		if !strings.Contains(hints, want) {
+			t.Fatalf("compact comment footer missing %q: %q", want, hints)
+		}
+	}
+}
+
 func TestSidebarSelectionStaysPutWhenNextPageArrives(t *testing.T) {
 	items := make([]feedItem, 10)
 	for index := range items {

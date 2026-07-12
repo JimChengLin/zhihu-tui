@@ -351,8 +351,9 @@ func TestParseFeedItemsExpandsServerFoldedGroup(t *testing.T) {
 	model.index = 2
 	model.width = 100
 	lines, _ := renderSingleApp(model)
-	if !strings.Contains(strings.Join(styledLineTexts(lines), "\n"), "知乎收起 · 另一位用户 赞同了回答") {
-		t.Fatal("folded activity is not identified in the reading pane")
+	renderedChild := strings.Join(styledLineTexts(lines), "\n")
+	if !strings.Contains(renderedChild, "另一位用户 赞同了回答") || strings.Contains(renderedChild, "知乎收起 ·") {
+		t.Fatalf("expanded folded activity has a redundant container label: %q", renderedChild)
 	}
 	if !model.toggleFoldedGroup() || len(model.items) != 2 || model.index != 1 || model.items[1].groupOpen {
 		t.Fatalf("group did not collapse from its child: index=%d items=%#v", model.index, model.items)
