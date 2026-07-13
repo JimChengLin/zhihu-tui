@@ -539,6 +539,9 @@ func layoutFoldedGroupPreview(children []feedItem, width int) []styledLine {
 
 func foldedItemEventLabel(item feedItem) string {
 	author := firstNonEmpty(item.author, "匿名用户")
+	if strings.HasPrefix(item.action, author+" ") {
+		return item.action
+	}
 	if item.kind == "answer" {
 		for _, verb := range []string{"赞同了回答", "收藏了回答"} {
 			actor := strings.TrimSpace(strings.TrimSuffix(item.action, verb))

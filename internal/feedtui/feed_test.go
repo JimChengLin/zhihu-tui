@@ -477,6 +477,18 @@ func TestFoldedPreviewDescribesAnswerActorAndAuthor(t *testing.T) {
 	}
 }
 
+func TestFoldedPreviewDoesNotRepeatAuthorInOwnActivity(t *testing.T) {
+	for _, item := range []feedItem{
+		{kind: "pin", author: "一直住顶楼", action: "一直住顶楼 发布了想法"},
+		{kind: "article", author: "作者甲", action: "作者甲 发布了文章"},
+		{kind: "answer", author: "答主乙", action: "答主乙 回答了问题"},
+	} {
+		if got := foldedItemEventLabel(item); got != item.action {
+			t.Fatalf("foldedItemEventLabel(%#v)=%q, want %q", item, got, item.action)
+		}
+	}
+}
+
 func TestFoldedPreviewLabelsContentAuthorRoles(t *testing.T) {
 	lines := layoutFoldedGroupPreview([]feedItem{
 		{kind: "question", title: "航天问题", author: "不方的圆", action: "codedump 关注了问题", body: "问题详情"},
