@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/JimChengLin/zhihu-tui/internal/display"
 )
@@ -466,6 +467,7 @@ func plainText(value string) string {
 	}
 	value = htmlBreakPattern.ReplaceAllString(value, "\n")
 	value = display.StripHTML(value)
+	value = stripSpuriousZWNJ(value)
 	lines := strings.Split(strings.ReplaceAll(value, "\r\n", "\n"), "\n")
 	inCodeBlock := false
 	for i := range lines {
@@ -484,6 +486,27 @@ func plainText(value string) string {
 	}
 	value = strings.TrimSpace(strings.Join(lines, "\n"))
 	return repeatedBlankLinesPattern.ReplaceAllString(value, "\n\n")
+}
+
+func stripSpuriousZWNJ(value string) string {
+	if !strings.ContainsRune(value, '\u200c') {
+		return value
+	}
+	runes := []rune(value)
+	var cleaned strings.Builder
+	cleaned.Grow(len(value))
+	for index, current := range runes {
+		if current == '\u200c' && !hasArabicNeighbor(runes, index) {
+			continue
+		}
+		cleaned.WriteRune(current)
+	}
+	return cleaned.String()
+}
+
+func hasArabicNeighbor(runes []rune, index int) bool {
+	return index > 0 && unicode.Is(unicode.Arabic, runes[index-1]) ||
+		index+1 < len(runes) && unicode.Is(unicode.Arabic, runes[index+1])
 }
 
 func firstParagraph(value string) string {

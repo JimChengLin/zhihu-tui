@@ -108,6 +108,16 @@ func TestParseFeedItemFormatsStructuredPinContent(t *testing.T) {
 	}
 }
 
+func TestPlainTextRemovesSpuriousZWNJWithoutBreakingArabicText(t *testing.T) {
+	if got := plainText(`<p>比勒陀利亚‌-台北-特拉维夫。</p>`); got != "比勒陀利亚-台北-特拉维夫。" {
+		t.Fatalf("CJK text still contains a spurious ZWNJ: %q", got)
+	}
+	const persian = "می‌روم"
+	if got := plainText(persian); got != persian {
+		t.Fatalf("meaningful Arabic-script ZWNJ was removed: %q", got)
+	}
+}
+
 func TestTitledPinSeparatesOfficialTitleFromBody(t *testing.T) {
 	raw := map[string]any{
 		"id":          "activity-pin",
