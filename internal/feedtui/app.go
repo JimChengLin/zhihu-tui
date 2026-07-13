@@ -27,8 +27,7 @@ type feedSource interface {
 	GetUserProfile(context.Context, string) (map[string]any, error)
 	CreateComment(context.Context, string, string, string) (map[string]any, error)
 	ReplyCommentToResource(context.Context, string, string, string, string) (map[string]any, error)
-	VoteUp(context.Context, string) (bool, error)
-	VoteNeutral(context.Context, string) (bool, error)
+	SetContentVote(context.Context, string, string, bool) (bool, error)
 	LikeComment(context.Context, string) (bool, error)
 	UnlikeComment(context.Context, string) (bool, error)
 }
@@ -103,12 +102,13 @@ type fetchResult struct {
 }
 
 type voteResult struct {
-	answerID  string
-	itemKey   string
-	commentID string
-	voted     bool
-	ok        bool
-	err       error
+	contentKind string
+	contentID   string
+	itemKey     string
+	commentID   string
+	voted       bool
+	ok          bool
+	err         error
 }
 
 type commentPostResult struct {

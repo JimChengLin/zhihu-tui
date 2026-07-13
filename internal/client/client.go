@@ -473,7 +473,11 @@ func isNotificationReadTab(tab string) bool {
 }
 
 func (c *Client) vote(ctx context.Context, answerID, voteType string) (bool, error) {
-	resp, err := c.doJSONRequest(ctx, http.MethodPost, c.endpoints.APIV4+"/answers/"+url.PathEscape(answerID)+"/voters", map[string]any{"type": voteType}, nil)
+	return c.voteResource(ctx, "answers", answerID, voteType)
+}
+
+func (c *Client) voteResource(ctx context.Context, resourceType, resourceID, voteType string) (bool, error) {
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, c.endpoints.APIV4+"/"+resourceType+"/"+url.PathEscape(resourceID)+"/voters", map[string]any{"type": voteType}, nil)
 	if err != nil {
 		return false, err
 	}

@@ -379,6 +379,76 @@ func TestSetCommentLiked(t *testing.T) {
 	}
 }
 
+func TestSetContentVoteUsesContentRoutes(t *testing.T) {
+	tests := []struct {
+		contentType string
+		path        string
+	}{
+		{contentType: "answer", path: "/api/v4/answers/123/voters"},
+		{contentType: "article", path: "/api/v4/articles/123/voters"},
+	}
+	for _, test := range tests {
+		t.Run(test.contentType, func(t *testing.T) {
+			var voteTypes []string
+			c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != test.path {
+					t.Fatalf("request=%s %s", r.Method, r.URL.Path)
+				}
+				var payload map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Fatal(err)
+				}
+				voteTypes = append(voteTypes, payload["type"].(string))
+				w.WriteHeader(http.StatusOK)
+			})
+			defer server.Close()
+
+			if ok, err := c.SetContentVote(context.Background(), test.contentType, "123", true); err != nil || !ok {
+				t.Fatalf("vote up ok=%v err=%v", ok, err)
+			}
+			if ok, err := c.SetContentVote(context.Background(), test.contentType, "123", false); err != nil || !ok {
+				t.Fatalf("vote neutral ok=%v err=%v", ok, err)
+			}
+			if strings.Join(voteTypes, ",") != "up,neutral" {
+				t.Fatalf("vote types=%v", voteTypes)
+			}
+		})
+	}
+}
+
+func TestSetContentVoteLikesPin(t *testing.T) {
+	methods := make(chan string, 2)
+	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v4/pins/123/likers" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		methods <- r.Method
+		w.WriteHeader(http.StatusNoContent)
+	})
+	defer server.Close()
+
+	if ok, err := c.SetContentVote(context.Background(), "pin", "123", true); err != nil || !ok {
+		t.Fatalf("like pin ok=%v err=%v", ok, err)
+	}
+	if ok, err := c.SetContentVote(context.Background(), "pin", "123", false); err != nil || !ok {
+		t.Fatalf("unlike pin ok=%v err=%v", ok, err)
+	}
+	if first, second := <-methods, <-methods; first != http.MethodPost || second != http.MethodDelete {
+		t.Fatalf("methods=%q,%q", first, second)
+	}
+}
+
+func TestSetContentVoteRejectsUnsupportedContent(t *testing.T) {
+	c, server := testClient(t, func(http.ResponseWriter, *http.Request) {
+		t.Fatal("unsupported content made a request")
+	})
+	defer server.Close()
+
+	if _, err := c.SetContentVote(context.Background(), "question", "123", true); err == nil {
+		t.Fatal("unsupported content vote succeeded")
+	}
+}
+
 func TestGetAnswerIncludesCounts(t *testing.T) {
 	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v4/answers/123" {

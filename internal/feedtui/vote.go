@@ -18,11 +18,11 @@ func (model *app) toggleVote(ctx context.Context) {
 		return
 	}
 	item := model.items[model.index]
-	if item.kind != "answer" {
+	if !supportsContentVote(item.kind) {
 		if len(item.foldedItems) > 0 {
-			model.setMessage("请先展开并选择具体回答", 3*time.Second)
+			model.setMessage("请先展开并选择具体动态", 3*time.Second)
 		} else {
-			model.setMessage("当前仅支持赞同回答", 3*time.Second)
+			model.setMessage("当前动态不支持赞同", 3*time.Second)
 		}
 		return
 	}
@@ -37,18 +37,21 @@ func (model *app) toggleVote(ctx context.Context) {
 	}
 	model.messageUntil = time.Time{}
 	go func() {
-		var ok bool
-		var err error
-		if voted {
-			ok, err = model.source.VoteUp(ctx, item.id)
-		} else {
-			ok, err = model.source.VoteNeutral(ctx, item.id)
-		}
+		ok, err := model.source.SetContentVote(ctx, item.kind, item.id, voted)
 		select {
-		case model.voteResults <- voteResult{answerID: item.id, voted: voted, ok: ok, err: err}:
+		case model.voteResults <- voteResult{contentKind: item.kind, contentID: item.id, voted: voted, ok: ok, err: err}:
 		case <-ctx.Done():
 		}
 	}()
+}
+
+func supportsContentVote(kind string) bool {
+	switch kind {
+	case "answer", "article", "pin":
+		return true
+	default:
+		return false
+	}
 }
 
 func (model *app) toggleCommentVote(ctx context.Context) {
@@ -105,7 +108,7 @@ func (model *app) applyVote(result voteResult) {
 		model.setMessage(action+"失败：知乎未接受请求", 4*time.Second)
 		return
 	}
-	updateVoteInItems(model.items, result.answerID, result.voted)
+	updateVoteInItems(model.items, result.contentKind, result.contentID, result.voted)
 	if result.voted {
 		model.setMessage("已赞同", 2*time.Second)
 	} else {
@@ -160,14 +163,14 @@ func updateCommentVote(comments []feedComment, commentID string, voted bool) boo
 	return false
 }
 
-func updateVoteInItems(items []feedItem, answerID string, voted bool) {
+func updateVoteInItems(items []feedItem, contentKind, contentID string, voted bool) {
 	for index := range items {
-		updateFeedItemVote(&items[index], answerID, voted)
+		updateFeedItemVote(&items[index], contentKind, contentID, voted)
 	}
 }
 
-func updateFeedItemVote(item *feedItem, answerID string, voted bool) {
-	if item.kind == "answer" && item.id == answerID && item.voted != voted {
+func updateFeedItemVote(item *feedItem, contentKind, contentID string, voted bool) {
+	if item.kind == contentKind && item.id == contentID && item.voted != voted {
 		if item.hasVoteCount {
 			if voted {
 				item.voteCount++
@@ -179,6 +182,6 @@ func updateFeedItemVote(item *feedItem, answerID string, voted bool) {
 		item.voted = voted
 	}
 	for index := range item.foldedItems {
-		updateFeedItemVote(&item.foldedItems[index], answerID, voted)
+		updateFeedItemVote(&item.foldedItems[index], contentKind, contentID, voted)
 	}
 }

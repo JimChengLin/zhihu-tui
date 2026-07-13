@@ -134,6 +134,44 @@ func (c *Client) VoteNeutral(ctx context.Context, answerID string) (bool, error)
 	return c.vote(ctx, answerID, "neutral")
 }
 
+func (c *Client) SetContentVote(ctx context.Context, contentType, contentID string, voted bool) (bool, error) {
+	contentType = strings.TrimSpace(contentType)
+	contentID = strings.TrimSpace(contentID)
+	if contentID == "" {
+		return false, DataFetchError{Message: "content ID cannot be empty"}
+	}
+	voteType := "neutral"
+	if voted {
+		voteType = "up"
+	}
+	switch contentType {
+	case "answer":
+		return c.voteResource(ctx, "answers", contentID, voteType)
+	case "article":
+		return c.voteResource(ctx, "articles", contentID, voteType)
+	case "pin":
+		return c.setPinLiked(ctx, contentID, voted)
+	default:
+		return false, DataFetchError{Message: "voting is not supported for content type: " + contentType}
+	}
+}
+
+func (c *Client) setPinLiked(ctx context.Context, pinID string, liked bool) (bool, error) {
+	method := http.MethodPost
+	if !liked {
+		method = http.MethodDelete
+	}
+	resp, err := c.do(ctx, method, c.endpoints.APIV4+"/pins/"+url.PathEscape(pinID)+"/likers", nil, nil)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if err := checkExpectedStatus(resp, map[int]bool{http.StatusOK: true, http.StatusCreated: true, http.StatusNoContent: true}, "pin like"); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (c *Client) LikeComment(ctx context.Context, commentID string) (bool, error) {
 	return c.setCommentLiked(ctx, commentID, true)
 }

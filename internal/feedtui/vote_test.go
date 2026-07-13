@@ -13,13 +13,12 @@ type voteTestSource struct {
 	votes chan string
 }
 
-func (source *voteTestSource) VoteUp(_ context.Context, answerID string) (bool, error) {
-	source.votes <- "up:" + answerID
-	return true, nil
-}
-
-func (source *voteTestSource) VoteNeutral(_ context.Context, answerID string) (bool, error) {
-	source.votes <- "neutral:" + answerID
+func (source *voteTestSource) SetContentVote(_ context.Context, contentType, contentID string, voted bool) (bool, error) {
+	action := "neutral"
+	if voted {
+		action = "up"
+	}
+	source.votes <- contentType + ":" + action + ":" + contentID
 	return true, nil
 }
 
@@ -63,22 +62,39 @@ func TestToggleVoteUpdatesVisibleAndFoldedAnswer(t *testing.T) {
 	}
 
 	model.toggleVote(context.Background())
-	waitForVote(t, source.votes, "up:42")
+	waitForVote(t, source.votes, "answer:up:42")
 	applyNextVoteResult(t, model)
 	assertVoteState(t, model.items[1], true, 13)
 	assertVoteState(t, model.items[0].foldedItems[0], true, 13)
 
 	model.toggleVote(context.Background())
-	waitForVote(t, source.votes, "neutral:42")
+	waitForVote(t, source.votes, "answer:neutral:42")
 	applyNextVoteResult(t, model)
 	assertVoteState(t, model.items[1], false, 12)
 	assertVoteState(t, model.items[0].foldedItems[0], false, 12)
 }
 
-func TestToggleVoteRejectsNonAnswer(t *testing.T) {
-	model := &app{items: []feedItem{{kind: "pin"}}}
+func TestToggleVoteSupportsArticleAndPin(t *testing.T) {
+	for _, kind := range []string{"article", "pin"} {
+		t.Run(kind, func(t *testing.T) {
+			source := &voteTestSource{votes: make(chan string, 1)}
+			model := &app{
+				source:      source,
+				items:       []feedItem{{id: "42", kind: kind, stats: "赞同 3", voteCount: 3, hasVoteCount: true}},
+				voteResults: make(chan voteResult, 1),
+			}
+			model.toggleVote(context.Background())
+			waitForVote(t, source.votes, kind+":up:42")
+			applyNextVoteResult(t, model)
+			assertVoteState(t, model.items[0], true, 4)
+		})
+	}
+}
+
+func TestToggleVoteRejectsUnsupportedContent(t *testing.T) {
+	model := &app{items: []feedItem{{kind: "question"}}}
 	model.toggleVote(context.Background())
-	if model.voting || model.message != "当前仅支持赞同回答" {
+	if model.voting || model.message != "当前动态不支持赞同" {
 		t.Fatalf("voting=%v message=%q", model.voting, model.message)
 	}
 }

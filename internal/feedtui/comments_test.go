@@ -126,11 +126,7 @@ func (source *commentTestSource) GetUserProfile(_ context.Context, urlToken stri
 	}, nil
 }
 
-func (source *commentTestSource) VoteUp(context.Context, string) (bool, error) {
-	return true, nil
-}
-
-func (source *commentTestSource) VoteNeutral(context.Context, string) (bool, error) {
+func (source *commentTestSource) SetContentVote(context.Context, string, string, bool) (bool, error) {
 	return true, nil
 }
 
