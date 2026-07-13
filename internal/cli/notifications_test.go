@@ -89,6 +89,11 @@ func TestFormatActorWithProfile(t *testing.T) {
 			profile: map[string]any{},
 			want:    "dave",
 		},
+		{
+			name:    "灵剑（作者）",
+			profile: map[string]any{"follower_count": 510000},
+			want:    "灵剑（作者，粉丝 51.0万）",
+		},
 	}
 	for _, tt := range tests {
 		if got := formatActorWithProfile(tt.name, tt.profile); got != tt.want {
@@ -147,17 +152,37 @@ func TestNotificationFormatterActorCacheUsesTTL(t *testing.T) {
 	}
 }
 
+func TestNotificationFormatterUsesActorNameWhenProfileMissing(t *testing.T) {
+	calls := 0
+	formatter, closeServer := testNotificationFormatter(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Path != "/api/v4/members/alice" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		writeNotificationTestJSON(t, w, http.StatusNotFound, map[string]any{"error": "missing"})
+	})
+	defer closeServer()
+	actors := []any{map[string]any{"name": "Alice", "url_token": "alice"}}
+
+	for i := 0; i < 2; i++ {
+		got, err := formatter.formatActors(context.Background(), actors)
+		if err != nil {
+			t.Fatalf("formatActors: %v", err)
+		}
+		if got != "Alice" {
+			t.Fatalf("formatActors=%q, want Alice", got)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("profile calls=%d, want 1", calls)
+	}
+}
+
 func TestNotificationFormatterSupportsObjectActor(t *testing.T) {
 	formatter, closeServer := testNotificationFormatter(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v4/members/ling-jian-94":
 			writeNotificationTestJSON(t, w, http.StatusOK, map[string]any{"follower_count": 12})
-		case "/api/v4/answers/285324941":
-			writeNotificationTestJSON(t, w, http.StatusOK, map[string]any{
-				"voteup_count":   539,
-				"favlists_count": 79,
-				"thanks_count":   39,
-			})
 		default:
 			t.Fatalf("path=%s", r.URL.Path)
 		}
@@ -187,13 +212,77 @@ func TestNotificationFormatterSupportsObjectActor(t *testing.T) {
 		t.Fatalf("format notification: %v", err)
 	}
 	want := strings.Join([]string{
-		"灵剑（作者）（粉丝 12） 回复了回答下的所有人",
+		"灵剑（作者，粉丝 12） 回复了回答下的所有人",
 		"  评论：看到 Bun 项目用 Claude Code 重写代码，结论很明显了",
 		"  回答：有没有可能运用人工神经网络翻译编程语言？",
-		"  赞同 539 · 收藏 79 · 感谢 39",
 	}, "\n")
 	if got != want {
 		t.Fatalf("formatted notification:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestNotificationFormatterDoesNotFetchTargetMetaForIncomingComment(t *testing.T) {
+	formatter, closeServer := testNotificationFormatter(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/members/alice" {
+			writeNotificationTestJSON(t, w, http.StatusOK, map[string]any{"follower_count": 12})
+			return
+		}
+		t.Fatalf("unexpected detail request: %s", r.URL.Path)
+	})
+	defer closeServer()
+
+	n := map[string]any{
+		"content": map[string]any{
+			"actors": []any{map[string]any{"name": "Alice", "url_token": "alice"}},
+			"verb":   "回复了回答下你的评论",
+			"target": map[string]any{
+				"text": "问题标题",
+				"link": "https://www.zhihu.com/answer/456",
+			},
+		},
+		"target": map[string]any{
+			"type":    "comment",
+			"content": "<p>回复内容</p>",
+		},
+	}
+
+	got, err := formatter.format(context.Background(), n)
+	if err != nil {
+		t.Fatalf("format notification: %v", err)
+	}
+	want := strings.Join([]string{
+		"Alice（粉丝 12） 回复了回答下你的评论",
+		"  评论：回复内容",
+		"  回答：问题标题",
+	}, "\n")
+	if got != want {
+		t.Fatalf("formatted notification:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestNotificationTargetMetaHandlesNotFound(t *testing.T) {
+	formatter, closeServer := testNotificationFormatter(t, func(w http.ResponseWriter, r *http.Request) {
+		writeNotificationTestJSON(t, w, http.StatusNotFound, map[string]any{"error": "missing"})
+	})
+	defer closeServer()
+
+	got, err := formatter.formatTargetMeta(context.Background(), "https://www.zhihu.com/answer/456")
+	if err != nil {
+		t.Fatalf("formatTargetMeta: %v", err)
+	}
+	if want := notificationUnavailableMeta("answer"); got != want {
+		t.Fatalf("formatTargetMeta=%q, want %q", got, want)
+	}
+}
+
+func TestNotificationTargetMetaKeepsNonNotFoundError(t *testing.T) {
+	formatter, closeServer := testNotificationFormatter(t, func(w http.ResponseWriter, r *http.Request) {
+		writeNotificationTestJSON(t, w, http.StatusInternalServerError, map[string]any{"error": "failed"})
+	})
+	defer closeServer()
+
+	if _, err := formatter.formatTargetMeta(context.Background(), "https://www.zhihu.com/answer/456"); err == nil {
+		t.Fatal("expected non-404 target error")
 	}
 }
 
@@ -363,13 +452,10 @@ func TestShouldUseSelfFollowerStats(t *testing.T) {
 
 func TestShouldUseCommentStats(t *testing.T) {
 	n := map[string]any{"target": map[string]any{"type": "comment"}}
-	if !shouldUseCommentStats(n, false) {
-		t.Fatal("comment notification without incoming comment should use comment stats")
+	if !shouldUseCommentStats(n) {
+		t.Fatal("comment notification should use comment stats")
 	}
-	if shouldUseCommentStats(n, true) {
-		t.Fatal("incoming comment notification should keep target stats")
-	}
-	if shouldUseCommentStats(map[string]any{"target": map[string]any{"type": "answer"}}, false) {
+	if shouldUseCommentStats(map[string]any{"target": map[string]any{"type": "answer"}}) {
 		t.Fatal("answer notification should not use comment stats")
 	}
 }

@@ -129,6 +129,7 @@ func TestGetSelfInfoStatusErrors(t *testing.T) {
 		message string
 	}{
 		{http.StatusUnauthorized, LoginError{}, ""},
+		{http.StatusNotFound, DataFetchError{}, "err"},
 		{http.StatusForbidden, DataFetchError{}, "err"},
 		{http.StatusInternalServerError, DataFetchError{}, "err"},
 	}
@@ -153,6 +154,12 @@ func TestGetSelfInfoStatusErrors(t *testing.T) {
 				var target DataFetchError
 				if !errors.As(err, &target) {
 					t.Fatalf("err=%T, want DataFetchError", err)
+				}
+				if target.StatusCode != tt.status {
+					t.Fatalf("status code=%d, want %d", target.StatusCode, tt.status)
+				}
+				if got, want := IsNotFoundError(err), tt.status == http.StatusNotFound; got != want {
+					t.Fatalf("IsNotFoundError=%v, want %v", got, want)
 				}
 			}
 			if tt.message != "" && !strings.Contains(err.Error(), tt.message) {

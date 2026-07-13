@@ -1768,6 +1768,11 @@ func (f *notificationFormatter) formatActors(ctx context.Context, actors []any) 
 		}
 		profile, err := f.client.GetUserProfile(ctx, token)
 		if err != nil {
+			if client.IsNotFoundError(err) {
+				f.actorCache[token] = notificationActorCacheEntry{text: name, cachedAt: now}
+				parts = append(parts, name)
+				continue
+			}
 			return "", err
 		}
 		enriched := formatActorWithProfile(name, profile)
@@ -1795,14 +1800,21 @@ func formatActorWithProfile(name string, profile map[string]any) string {
 	if len(details) == 0 {
 		return name
 	}
+	if strings.HasSuffix(name, "（作者）") {
+		name = strings.TrimSuffix(name, "（作者）")
+		details = append([]string{"作者"}, details...)
+	}
 	return name + "（" + strings.Join(details, "，") + "）"
 }
 
 func (f *notificationFormatter) formatNotificationMeta(ctx context.Context, n map[string]any, hasIncomingComment bool, rawLink string) (string, error) {
+	if hasIncomingComment {
+		return "", nil
+	}
 	if shouldUseSelfFollowerStats(n) {
 		return f.formatSelfFollowerMeta(ctx)
 	}
-	if shouldUseCommentStats(n, hasIncomingComment) {
+	if shouldUseCommentStats(n) {
 		return f.formatCommentMeta(ctx, n)
 	}
 	return f.formatTargetMeta(ctx, rawLink)
@@ -1834,10 +1846,7 @@ func (f *notificationFormatter) formatSelfFollowerMeta(ctx context.Context) (str
 	return "", nil
 }
 
-func shouldUseCommentStats(n map[string]any, hasIncomingComment bool) bool {
-	if hasIncomingComment {
-		return false
-	}
+func shouldUseCommentStats(n map[string]any) bool {
 	return toString(mapValue(n["target"])["type"]) == "comment"
 }
 
@@ -1852,6 +1861,11 @@ func (f *notificationFormatter) formatCommentMeta(ctx context.Context, n map[str
 	}
 	data, err := f.client.GetComment(ctx, commentID)
 	if err != nil {
+		if client.IsNotFoundError(err) {
+			meta := notificationUnavailableMeta("comment")
+			f.targetCache[cacheKey] = meta
+			return meta, nil
+		}
 		return "", err
 	}
 	meta := formatCommentStats(data)
@@ -1882,6 +1896,11 @@ func (f *notificationFormatter) formatTargetMeta(ctx context.Context, rawLink st
 		data, err = f.client.GetPin(ctx, target.id)
 	}
 	if err != nil {
+		if client.IsNotFoundError(err) {
+			meta := notificationUnavailableMeta(target.kind)
+			f.targetCache[rawLink] = meta
+			return meta, nil
+		}
 		return "", err
 	}
 	meta := formatTargetStats(target.kind, data)
@@ -1962,6 +1981,21 @@ func notificationTargetLabel(rawLink string) string {
 		return "文章"
 	default:
 		return "内容"
+	}
+}
+
+func notificationUnavailableMeta(kind string) string {
+	switch kind {
+	case "comment":
+		return "评论已删除或不可见"
+	case "answer":
+		return "回答已删除或不可见"
+	case "article":
+		return "文章已删除或不可见"
+	case "pin":
+		return "想法已删除或不可见"
+	default:
+		return "内容已删除或不可见"
 	}
 }
 

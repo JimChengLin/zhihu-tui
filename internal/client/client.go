@@ -35,11 +35,17 @@ func (e LoginError) Error() string {
 }
 
 type DataFetchError struct {
-	Message string
+	Message    string
+	StatusCode int
 }
 
 func (e DataFetchError) Error() string {
 	return e.Message
+}
+
+func IsNotFoundError(err error) bool {
+	var target DataFetchError
+	return errors.As(err, &target) && target.StatusCode == http.StatusNotFound
 }
 
 type Endpoints struct {
@@ -592,7 +598,10 @@ func checkExpectedStatus(resp *http.Response, okStatuses map[int]bool, label str
 		return nil
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
-	return DataFetchError{Message: fmt.Sprintf("%s failed with status %d: %s", label, resp.StatusCode, string(body))}
+	return DataFetchError{
+		Message:    fmt.Sprintf("%s failed with status %d: %s", label, resp.StatusCode, string(body)),
+		StatusCode: resp.StatusCode,
+	}
 }
 
 func decodeMap(r io.Reader) (map[string]any, error) {
