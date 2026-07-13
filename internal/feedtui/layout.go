@@ -80,6 +80,9 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	}
 
 	title := item.title
+	if item.pinTitle != "" {
+		title = item.pinTitle
+	}
 	if len(item.foldedItems) > 0 {
 		if item.groupOpen {
 			title = "▾ " + title
@@ -87,7 +90,7 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 			title = "▸ " + title
 		}
 	}
-	if item.kind != "pin" || item.body == "" {
+	if item.kind != "pin" || item.body == "" || item.pinTitle != "" {
 		titleLines := wrapText(title, contentWidth)
 		if len(titleLines) > 3 {
 			titleLines = titleLines[:3]

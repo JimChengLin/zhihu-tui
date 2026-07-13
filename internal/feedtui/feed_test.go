@@ -108,6 +108,76 @@ func TestParseFeedItemFormatsStructuredPinContent(t *testing.T) {
 	}
 }
 
+func TestTitledPinSeparatesOfficialTitleFromBody(t *testing.T) {
+	raw := map[string]any{
+		"id":          "activity-pin",
+		"action_text": "一直住顶楼发布了想法",
+		"target": map[string]any{
+			"id":   "789",
+			"type": "pin",
+			"content": []any{
+				map[string]any{
+					"type":    "text",
+					"content": "关于丁克vs生孩子<br><p>这两天有个粉丝加我微信。</p><p>我的回答就不贴了。</p>",
+				},
+			},
+			"author": map[string]any{"name": "一直住顶楼"},
+		},
+	}
+
+	item, ok := parseFeedItem(raw)
+	if !ok {
+		t.Fatal("parseFeedItem returned false")
+	}
+	if item.title != "关于丁克vs生孩子" || item.pinTitle != item.title {
+		t.Fatalf("title=%q pinTitle=%q", item.title, item.pinTitle)
+	}
+	if item.body != "这两天有个粉丝加我微信。\n\n我的回答就不贴了。" {
+		t.Fatalf("body=%q", item.body)
+	}
+
+	model := &app{items: []feedItem{item}, width: 100, height: 16}
+	lines, _ := renderSingleApp(model)
+	rendered := strings.Join(styledLineTexts(lines), "\n")
+	if !strings.Contains(rendered, "关于丁克vs生孩子") {
+		t.Fatalf("titled pin has no visible title: %q", rendered)
+	}
+	if strings.Contains(rendered, "关于丁克vs生孩子 |") {
+		t.Fatalf("titled pin has a redundant separator: %q", rendered)
+	}
+	if strings.Count(rendered, "关于丁克vs生孩子") != 1 {
+		t.Fatalf("titled pin title rendered more than once: %q", rendered)
+	}
+	for _, line := range lines {
+		if strings.Contains(line.text, "关于丁克vs生孩子") && line.style != ansiBold+ansiBlue {
+			t.Fatalf("titled pin title style=%q, want blue title", line.style)
+		}
+	}
+}
+
+func TestTitleOnlyPinLeavesBodyBlank(t *testing.T) {
+	raw := map[string]any{
+		"target": map[string]any{
+			"id":      "789",
+			"type":    "pin",
+			"content": []any{map[string]any{"type": "text", "content": "只有标题<br><p></p>"}},
+		},
+	}
+	item, ok := parseFeedItem(raw)
+	if !ok {
+		t.Fatal("parseFeedItem returned false")
+	}
+	if item.pinTitle != "只有标题" || item.body != "" {
+		t.Fatalf("pinTitle=%q body=%q", item.pinTitle, item.body)
+	}
+
+	lines, _ := renderSingleApp(&app{items: []feedItem{item}, width: 100, height: 16})
+	rendered := strings.Join(styledLineTexts(lines), "\n")
+	if !strings.Contains(rendered, "只有标题") || strings.Contains(rendered, "没有正文摘要") {
+		t.Fatalf("title-only pin did not preserve a blank body: %q", rendered)
+	}
+}
+
 func TestSingleParagraphPinRendersAsCompleteBody(t *testing.T) {
 	raw := map[string]any{
 		"id":          "activity-pin",

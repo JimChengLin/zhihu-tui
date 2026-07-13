@@ -19,6 +19,7 @@ var imageTagPattern = regexp.MustCompile(`(?is)<img\b[^>]*>`)
 var codeBlockPattern = regexp.MustCompile(`(?is)<pre\b[^>]*>(.*?)</pre\s*>`)
 var classCodeBlockPattern = regexp.MustCompile(`(?is)<code\b[^>]*\bclass\s*=\s*(?:"[^"]*"|'[^']*')[^>]*>(.*?)</code\s*>`)
 var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
+var pinTitlePattern = regexp.MustCompile(`(?is)^\s*([^<\r\n]+?)\s*<br\s*/?>\s*<p(?:\s[^>]*)?>`)
 
 const (
 	codeBlockStartMarker = "\ue000code-block-start\ue001"
@@ -31,6 +32,7 @@ type feedItem struct {
 	kind            string
 	action          string
 	title           string
+	pinTitle        string
 	author          string
 	headline        string
 	body            string
@@ -119,6 +121,10 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 		toString(question["title"]),
 		toString(target["name"]),
 	))
+	pinTitle := ""
+	if kind == "pin" {
+		pinTitle = firstNonEmpty(title, pinContentTitle(target["content"]))
+	}
 	body, imageCount := feedContentText(target["content"])
 	if body == "" {
 		body = plainText(firstNonEmpty(
@@ -130,6 +136,10 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 	if referenced := referencedImageCount(raw, target); referenced > imageCount {
 		body = appendImagePlaceholders(body, imageCount+1, referenced)
 		imageCount = referenced
+	}
+	if pinTitle != "" && firstParagraph(body) == pinTitle {
+		body = strings.TrimSpace(strings.TrimPrefix(body, pinTitle))
+		title = pinTitle
 	}
 	if title == "" {
 		bodyTitle := firstParagraph(body)
@@ -172,6 +182,7 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 		kind:            kind,
 		action:          action,
 		title:           title,
+		pinTitle:        pinTitle,
 		author:          authorName,
 		headline:        compactLine(plainText(toString(author["headline"]))),
 		body:            body,
@@ -185,6 +196,26 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 		hasVoteCount:    hasVoteCount,
 		voted:           feedItemVoted(target),
 	}, true
+}
+
+func pinContentTitle(value any) string {
+	content := ""
+	if text, ok := value.(string); ok {
+		content = text
+	} else {
+		for _, rawNode := range asSlice(value) {
+			node := mapValue(rawNode)
+			if strings.EqualFold(toString(node["type"]), "text") {
+				content = toString(node["content"])
+				break
+			}
+		}
+	}
+	match := pinTitlePattern.FindStringSubmatch(content)
+	if len(match) != 2 {
+		return ""
+	}
+	return plainText(match[1])
 }
 
 func contentText(value string) (string, int) {
