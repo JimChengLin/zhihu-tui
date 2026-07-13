@@ -147,6 +147,56 @@ func TestNotificationFormatterActorCacheUsesTTL(t *testing.T) {
 	}
 }
 
+func TestNotificationFormatterSupportsObjectActor(t *testing.T) {
+	formatter, closeServer := testNotificationFormatter(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v4/members/ling-jian-94":
+			writeNotificationTestJSON(t, w, http.StatusOK, map[string]any{"follower_count": 12})
+		case "/api/v4/answers/285324941":
+			writeNotificationTestJSON(t, w, http.StatusOK, map[string]any{
+				"voteup_count":   539,
+				"favlists_count": 79,
+				"thanks_count":   39,
+			})
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	})
+	defer closeServer()
+
+	n := map[string]any{
+		"content": map[string]any{
+			"actors": map[string]any{
+				"name":      "灵剑（作者）",
+				"url_token": "ling-jian-94",
+			},
+			"verb": "回复了回答下的所有人",
+			"target": map[string]any{
+				"text": "有没有可能运用人工神经网络翻译编程语言？",
+				"link": "https://www.zhihu.com/answer/285324941",
+			},
+		},
+		"target": map[string]any{
+			"type":    "comment",
+			"content": "<p>看到 Bun 项目用 Claude Code 重写代码，结论很明显了</p>",
+		},
+	}
+
+	got, err := formatter.format(context.Background(), n)
+	if err != nil {
+		t.Fatalf("format notification: %v", err)
+	}
+	want := strings.Join([]string{
+		"灵剑（作者）（粉丝 12） 回复了回答下的所有人",
+		"  评论：看到 Bun 项目用 Claude Code 重写代码，结论很明显了",
+		"  回答：有没有可能运用人工神经网络翻译编程语言？",
+		"  赞同 539 · 收藏 79 · 感谢 39",
+	}, "\n")
+	if got != want {
+		t.Fatalf("formatted notification:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestFormatTargetStats(t *testing.T) {
 	tests := []struct {
 		name string
@@ -555,6 +605,43 @@ func TestNotificationSignatureNormalizesSingleActorMergeCount(t *testing.T) {
 	}
 	if got, want := notificationSignature(withoutMergeCount), notificationSignature(withMergeCount); got != want {
 		t.Fatalf("signatures differ: %q != %q", got, want)
+	}
+}
+
+func TestNotificationActorObjectMatchesSingleElementArray(t *testing.T) {
+	actor := map[string]any{
+		"name":      "Alice",
+		"url_token": "alice",
+	}
+	notification := func(actors any) map[string]any {
+		return map[string]any{
+			"type":        "notification",
+			"create_time": 123,
+			"merge_count": 1,
+			"content": map[string]any{
+				"actors": actors,
+				"verb":   "回复了回答下的所有人",
+				"target": map[string]any{
+					"link": "https://www.zhihu.com/answer/456",
+					"text": "问题标题",
+				},
+			},
+		}
+	}
+	objectActor := notification(actor)
+	arrayActor := notification([]any{actor})
+
+	if got := notificationActors(objectActor); len(got) != 1 || toString(mapValue(got[0])["url_token"]) != "alice" {
+		t.Fatalf("notificationActors(object)=%#v", got)
+	}
+	if got, want := notificationSignature(objectActor), notificationSignature(arrayActor); got != want {
+		t.Fatalf("signatures differ: %q != %q", got, want)
+	}
+	if got, want := notificationID(objectActor), notificationID(arrayActor); got != want {
+		t.Fatalf("notification IDs differ: %q != %q", got, want)
+	}
+	if got, want := formatNotificationBase(objectActor), formatNotificationBase(arrayActor); got != want {
+		t.Fatalf("notification bases differ: %q != %q", got, want)
 	}
 }
 

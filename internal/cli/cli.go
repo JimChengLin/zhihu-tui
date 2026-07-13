@@ -1085,7 +1085,7 @@ func (l *notificationDebugLogger) LogNotification(ts time.Time, phase string, in
 		"content_target_text":      truncateWithDots(compactPlainText(toString(contentTarget["text"])), 200),
 		"group_target_type":        groupType,
 		"group_target_id":          groupID,
-		"actors":                   notificationDebugActors(asSlice(content["actors"])),
+		"actors":                   notificationDebugActors(notificationActors(n)),
 		"seen_state_found":         hadSeenState,
 		"seen_state_signature":     "",
 		"seen_state_signatures":    []string{},
@@ -1703,7 +1703,7 @@ func (f *notificationFormatter) format(ctx context.Context, n map[string]any) (s
 	target := mapValue(content["target"])
 	targetText := compactPlainText(toString(target["text"]))
 	verb := strings.TrimSpace(toString(content["verb"]))
-	actorText, err := f.formatActors(ctx, asSlice(content["actors"]))
+	actorText, err := f.formatActors(ctx, notificationActors(n))
 	if err != nil {
 		return "", err
 	}
@@ -2130,9 +2130,20 @@ func notificationSignature(n map[string]any) string {
 	return strings.Join([]string{notificationMergeCount(n, len(actorKeys)), strings.Join(actorKeys, ",")}, "|")
 }
 
+func notificationActors(n map[string]any) []any {
+	raw := mapValue(n["content"])["actors"]
+	switch actors := raw.(type) {
+	case []any:
+		return actors
+	case map[string]any:
+		return []any{actors}
+	default:
+		return nil
+	}
+}
+
 func notificationActorKeys(n map[string]any) []string {
-	content := mapValue(n["content"])
-	actors := asSlice(content["actors"])
+	actors := notificationActors(n)
 	actorKeys := make([]string, 0, len(actors))
 	for _, raw := range actors {
 		actor := mapValue(raw)
@@ -2171,7 +2182,7 @@ func notificationID(n map[string]any) string {
 	}
 	content := mapValue(n["content"])
 	target := mapValue(content["target"])
-	actors := asSlice(content["actors"])
+	actors := notificationActors(n)
 	names := make([]string, 0, len(actors))
 	for _, actor := range actors {
 		names = append(names, toString(mapValue(actor)["url_token"]))
@@ -2240,7 +2251,7 @@ func formatNotificationBase(n map[string]any) string {
 	target := mapValue(content["target"])
 	targetText := display.StripHTML(toString(target["text"]))
 	verb := strings.TrimSpace(toString(content["verb"]))
-	actors := asSlice(content["actors"])
+	actors := notificationActors(n)
 	names := make([]string, 0, len(actors))
 	for _, actor := range actors {
 		name := toString(mapValue(actor)["name"])
