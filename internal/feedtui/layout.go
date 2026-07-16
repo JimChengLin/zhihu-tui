@@ -372,6 +372,12 @@ func layoutBodyLines(body string, width int) []styledLine {
 			result = append(result, styledLine{text: text, style: ansiBlue, commentID: currentCommentID})
 			continue
 		}
+		if strings.HasPrefix(sourceLine, linkCardQuoteMarker) {
+			flushProse()
+			text := truncateCells(strings.TrimPrefix(sourceLine, linkCardQuoteMarker), width)
+			result = append(result, styledLine{text: text, commentID: currentCommentID})
+			continue
+		}
 		if strings.HasPrefix(sourceLine, linkCardExcerptMarker) {
 			flushProse()
 			text := truncateCells(strings.TrimPrefix(sourceLine, linkCardExcerptMarker), maxInt(1, width-2))
@@ -598,6 +604,7 @@ func foldedItemExcerpt(item feedItem) (text string, hasMore bool) {
 	meaningful := make([]string, 0, 2)
 	for _, sourceLine := range strings.Split(item.body, "\n") {
 		sourceLine = strings.TrimPrefix(sourceLine, linkCardTitleMarker)
+		sourceLine = strings.TrimPrefix(sourceLine, linkCardQuoteMarker)
 		sourceLine = strings.TrimPrefix(sourceLine, linkCardExcerptMarker)
 		sourceLine = strings.TrimPrefix(sourceLine, linkCardMetadataMarker)
 		text := compactLine(sourceLine)

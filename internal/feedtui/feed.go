@@ -26,6 +26,7 @@ const (
 	codeBlockStartMarker   = "\ue000code-block-start\ue001"
 	codeBlockEndMarker     = "\ue000code-block-end\ue001"
 	linkCardTitleMarker    = "\ue000link-card-title\ue001"
+	linkCardQuoteMarker    = "\ue000link-card-quote\ue001"
 	linkCardExcerptMarker  = "\ue000link-card-excerpt\ue001"
 	linkCardMetadataMarker = "\ue000link-card-metadata\ue001"
 )
@@ -368,16 +369,21 @@ func formatLinkCard(node map[string]any) string {
 	if title == "引用想法" {
 		title = ""
 	}
-	cardTitle := "引用想法"
+	lines := make([]string, 0, 3)
 	if title != "" {
-		cardTitle = title
+		if toString(node["card_error"]) != "" {
+			title += "（详情加载失败）"
+		}
+		lines = append(lines, linkCardTitleMarker+"↳ "+title)
+	} else if toString(node["card_error"]) != "" {
+		lines = append(lines, linkCardTitleMarker+"↳ 引用想法（详情加载失败）")
 	}
-	if toString(node["card_error"]) != "" {
-		cardTitle += "（详情加载失败）"
-	}
-	lines := []string{linkCardTitleMarker + "↳ " + cardTitle}
 	if excerpt := pinLinkCardExcerpt(detail); excerpt != "" {
-		lines = append(lines, linkCardExcerptMarker+excerpt)
+		if title == "" && toString(node["card_error"]) == "" {
+			lines = append(lines, linkCardQuoteMarker+"↳ "+excerpt)
+		} else {
+			lines = append(lines, linkCardExcerptMarker+excerpt)
+		}
 	}
 	if stats := linkCardStats(detail); stats != "" {
 		lines = append(lines, linkCardMetadataMarker+stats+"  ·  想法")
@@ -434,18 +440,17 @@ func linkCardExcerpt(detail map[string]any) string {
 
 func pinLinkCardTitle(detail map[string]any) string {
 	content := pinLinkCardContent(detail)
-	if before, _, found := strings.Cut(content, " | "); found {
-		content = before
+	before, _, found := strings.Cut(content, " | ")
+	if !found {
+		return ""
 	}
-	return strings.TrimSpace(strings.TrimSuffix(firstParagraph(plainText(content)), "|"))
+	return strings.TrimSpace(strings.TrimSuffix(firstParagraph(plainText(before)), "|"))
 }
 
 func pinLinkCardExcerpt(detail map[string]any) string {
 	content := pinLinkCardContent(detail)
 	if _, after, found := strings.Cut(content, " | "); found {
 		content = after
-	} else if title := pinLinkCardTitle(detail); title != "" {
-		content = strings.TrimSpace(strings.TrimPrefix(plainText(content), title))
 	}
 	return truncateCells(compactLine(plainText(content)), 512)
 }

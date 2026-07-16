@@ -312,6 +312,24 @@ func TestPinLinkCardExcerptFallsBackToExcerptTitle(t *testing.T) {
 	}
 }
 
+func TestPinLinkCardWithoutTitleSkipsBlueTitle(t *testing.T) {
+	detail := map[string]any{
+		"content":    []any{map[string]any{"type": "text", "content": "<p>这是一条没有标题的想法正文。</p>"}},
+		"like_count": 3,
+	}
+	card := formatLinkCard(map[string]any{
+		"data_content_type": "PIN",
+		"data_draft_title":  "引用想法",
+		"card_detail":       detail,
+	})
+	if strings.Contains(card, linkCardTitleMarker) || strings.Contains(card, "↳ 引用想法") {
+		t.Fatalf("untitled pin rendered a blue title: %q", card)
+	}
+	lines := layoutBodyLines(card, 80)
+	assertLinkCardLine(t, lines, "↳ 这是一条没有标题的想法正文。", "", false)
+	assertLinkCardLine(t, lines, "赞同 3", ansiDim, true)
+}
+
 func assertLinkCardLine(t *testing.T, lines []styledLine, text, style string, indented bool) {
 	t.Helper()
 	for _, line := range lines {
