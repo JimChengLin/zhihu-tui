@@ -584,6 +584,19 @@ func TestFoldedPreviewMarksOnlyTruncatedExcerpts(t *testing.T) {
 	}
 }
 
+func TestFoldedPreviewOmitsMissingExcerpt(t *testing.T) {
+	lines := layoutFoldedGroupPreview([]feedItem{
+		{kind: "question", title: "如何评价游戏小丑牌？", author: "西行寺振凯", action: "codedump 关注了问题"},
+	}, 60)
+	rendered := strings.Join(styledLineTexts(lines), "\n")
+	if strings.Contains(rendered, "暂无正文摘要") {
+		t.Fatalf("folded preview rendered a meaningless empty excerpt: %q", rendered)
+	}
+	if len(lines) != 2 || lines[0].text != "如何评价游戏小丑牌？" || lines[1].text != "codedump 关注了 西行寺振凯 的问题" {
+		t.Fatalf("folded preview=%#v, want only title and activity", lines)
+	}
+}
+
 func TestFoldedPreviewDescribesAnswerActorAndAuthor(t *testing.T) {
 	lines := layoutFoldedGroupPreview([]feedItem{
 		{kind: "answer", title: "问题", author: "好好睡觉", action: "codedump 赞同了回答", body: "回答摘要"},

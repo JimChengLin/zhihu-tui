@@ -617,10 +617,7 @@ func foldedItemExcerpt(item feedItem) (text string, hasMore bool) {
 		meaningful = meaningful[1:]
 	}
 	if len(meaningful) == 0 {
-		if item.kind == "pin" {
-			return "", false
-		}
-		return "暂无正文摘要", false
+		return "", false
 	}
 	return meaningful[0], len(meaningful) > 1
 }
