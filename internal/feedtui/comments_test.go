@@ -95,6 +95,10 @@ func (source *commentTestSource) GetAnswer(context.Context, string) (map[string]
 	return nil, nil
 }
 
+func (source *commentTestSource) GetArticle(context.Context, string) (map[string]any, error) {
+	return nil, nil
+}
+
 func (source *commentTestSource) GetCommentsPage(_ context.Context, resourceType, resourceID, _ string, _ int, _ string) (map[string]any, error) {
 	source.calls <- resourceType + ":" + resourceID
 	return map[string]any{

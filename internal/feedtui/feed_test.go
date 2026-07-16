@@ -7,10 +7,12 @@ import (
 )
 
 type pinCardTestSource struct {
-	detail       map[string]any
-	answerDetail map[string]any
-	calls        []string
-	answerCalls  []string
+	detail        map[string]any
+	answerDetail  map[string]any
+	articleDetail map[string]any
+	calls         []string
+	answerCalls   []string
+	articleCalls  []string
 }
 
 func (source *pinCardTestSource) GetPin(_ context.Context, id string) (map[string]any, error) {
@@ -21,6 +23,11 @@ func (source *pinCardTestSource) GetPin(_ context.Context, id string) (map[strin
 func (source *pinCardTestSource) GetAnswer(_ context.Context, id string) (map[string]any, error) {
 	source.answerCalls = append(source.answerCalls, id)
 	return source.answerDetail, nil
+}
+
+func (source *pinCardTestSource) GetArticle(_ context.Context, id string) (map[string]any, error) {
+	source.articleCalls = append(source.articleCalls, id)
+	return source.articleDetail, nil
 }
 
 func TestParseFeedItemFormatsFollowingActivity(t *testing.T) {
@@ -252,12 +259,12 @@ func TestPinLinkCardLoadsAndRendersReferencedPin(t *testing.T) {
 	}
 	source := &pinCardTestSource{detail: map[string]any{
 		"content": []any{
-			map[string]any{"type": "text", "content": "北大才女用算法贩毒一年赚 1 亿美金，最终被判30年 | <p>正文</p>"},
+			map[string]any{"type": "text", "content": "我提一个思路 | <p>「训练出优秀的大模型」，跟「能提供优秀的网络服务」其实是两个有区别的技能，他们所涉及的人才与技能都不同。所以，现实中确实会出现有的模型很厉害，但他们的网络服务很糟糕。</p><p>第二段不应塞进卡片。</p>"},
 			map[string]any{"type": "image", "url": "cover.jpg"},
 		},
-		"like_count":     69,
-		"favorite_count": 40,
-		"comment_count":  47,
+		"like_count":     2,
+		"favorite_count": 0,
+		"comment_count":  1,
 	}}
 
 	hydrateFeedLinkCards(context.Background(), source, response)
@@ -270,18 +277,53 @@ func TestPinLinkCardLoadsAndRendersReferencedPin(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"最终判了五年",
-		"↳ 引用想法",
-		"北大才女用算法贩毒一年赚 1 亿美金，最终被判30年",
-		"赞同 69  ·  收藏 40  ·  评论 47",
-		"▣ 图片",
+		"↳ 我提一个思路",
+		"「训练出优秀的大模型」，跟「能提供优秀的网络服务」其实是两个有区别的技能",
+		"赞同 2  ·  收藏 0  ·  评论 1  ·  想法",
 	} {
 		if !strings.Contains(items[0].body, expected) {
 			t.Fatalf("pin body has no %q: %q", expected, items[0].body)
 		}
 	}
-	if strings.Count(items[0].body, "引用想法") != 1 {
-		t.Fatalf("generic card title was rendered twice: %q", items[0].body)
+	if strings.Contains(items[0].body, "引用想法") {
+		t.Fatalf("generic card label hid the official title: %q", items[0].body)
 	}
+	lines := layoutBodyLines(items[0].body, 100)
+	assertLinkCardLine(t, lines, "↳ 我提一个思路", ansiBlue, false)
+	assertLinkCardLine(t, lines, "「训练出优秀的大模型」", "", true)
+	assertLinkCardLine(t, lines, "赞同 2", ansiDim, true)
+	for _, line := range lines {
+		if strings.Contains(line.text, "「训练出优秀的大模型」") && (strings.Contains(line.text, "第二段不应塞进卡片") || !strings.HasSuffix(line.text, "…")) {
+			t.Fatalf("pin card excerpt was not clipped to one visual line: %#v", line)
+		}
+	}
+}
+
+func TestPinLinkCardExcerptFallsBackToExcerptTitle(t *testing.T) {
+	detail := map[string]any{
+		"excerpt_title": "卡片标题 | <p>卡片摘要。</p>",
+		"like_count":    3,
+	}
+	card := formatLinkCard(map[string]any{"data_content_type": "PIN", "card_detail": detail})
+	for _, want := range []string{"↳ 卡片标题", "卡片摘要。", "赞同 3  ·  想法"} {
+		if !strings.Contains(card, want) {
+			t.Fatalf("card has no %q: %q", want, card)
+		}
+	}
+}
+
+func assertLinkCardLine(t *testing.T, lines []styledLine, text, style string, indented bool) {
+	t.Helper()
+	for _, line := range lines {
+		if !strings.Contains(line.text, text) {
+			continue
+		}
+		if line.style != style || strings.HasPrefix(line.text, "  ") != indented {
+			t.Fatalf("link card line=%#v, want style=%q indented=%v", line, style, indented)
+		}
+		return
+	}
+	t.Fatalf("link card has no rendered line containing %q: %#v", text, lines)
 }
 
 func TestAnswerLinkCardLoadsAnswerFromURL(t *testing.T) {
@@ -301,7 +343,7 @@ func TestAnswerLinkCardLoadsAnswerFromURL(t *testing.T) {
 	source := &pinCardTestSource{answerDetail: map[string]any{
 		"author":         map[string]any{"name": "厂长L"},
 		"question":       map[string]any{"title": "如何评价 GPT-5.6？"},
-		"content":        "<p>回答的真实摘要。</p>",
+		"content":        "<p>回答的真实摘要。</p><p>第二段仍应压在同一个预览里。</p>",
 		"voteup_count":   102,
 		"comment_count":  9,
 		"favlists_count": 15,
@@ -316,10 +358,9 @@ func TestAnswerLinkCardLoadsAnswerFromURL(t *testing.T) {
 		t.Fatalf("items=%#v", items)
 	}
 	for _, want := range []string{
-		"↳ 引用回答 · 厂长L",
-		"如何评价 GPT-5.6？",
+		"↳ 如何评价 GPT-5.6？",
 		"回答的真实摘要。",
-		"赞同 102  ·  收藏 15  ·  评论 9",
+		"厂长L  ·  赞同 102  ·  收藏 15  ·  评论 9  ·  回答",
 	} {
 		if !strings.Contains(items[0].body, want) {
 			t.Fatalf("answer card has no %q: %q", want, items[0].body)
@@ -328,6 +369,57 @@ func TestAnswerLinkCardLoadsAnswerFromURL(t *testing.T) {
 	if strings.Contains(items[0].body, "暂无摘要") || strings.Contains(items[0].body, "引用想法") {
 		t.Fatalf("answer card used pin fallback: %q", items[0].body)
 	}
+	lines := layoutBodyLines(items[0].body, 60)
+	assertLinkCardLine(t, lines, "↳ 如何评价 GPT-5.6？", ansiBlue, false)
+	assertLinkCardLine(t, lines, "回答的真实摘要。", "", true)
+	assertLinkCardLine(t, lines, "厂长L", ansiDim, true)
+}
+
+func TestArticleLinkCardLoadsArticleIDFromURL(t *testing.T) {
+	linkCard := map[string]any{
+		"type":              "link_card",
+		"data_content_type": "ARTICLE",
+		"data_content_id":   "278687758",
+		"url":               "https://zhuanlan.zhihu.com/p/2058691694200202460",
+	}
+	response := map[string]any{"data": []any{map[string]any{
+		"target": map[string]any{
+			"id":      "outer-pin",
+			"type":    "pin",
+			"content": []any{linkCard},
+		},
+	}}}
+	source := &pinCardTestSource{articleDetail: map[string]any{
+		"id":             "2058691694200202460",
+		"title":          "Uber 如何把 MySQL 主库故障时间从 2 分钟压到 10 秒",
+		"excerpt":        `<img src="cover.jpg">本文是对 Uber MySQL 高可用改造的整理与翻译。`,
+		"author":         map[string]any{"name": "马甲"},
+		"voteup_count":   8,
+		"favlists_count": 21,
+		"comment_count":  1,
+	}}
+
+	hydrateFeedLinkCards(context.Background(), source, response)
+	if len(source.articleCalls) != 1 || source.articleCalls[0] != "2058691694200202460" {
+		t.Fatalf("article calls=%#v", source.articleCalls)
+	}
+	items := parseFeedItems(asSlice(response["data"]))
+	if len(items) != 1 {
+		t.Fatalf("items=%#v", items)
+	}
+	for _, want := range []string{
+		"↳ Uber 如何把 MySQL 主库故障时间从 2 分钟压到 10 秒",
+		"本文是对 Uber MySQL 高可用改造的整理与翻译。",
+		"马甲  ·  赞同 8  ·  收藏 21  ·  评论 1  ·  文章",
+	} {
+		if !strings.Contains(items[0].body, want) {
+			t.Fatalf("article card has no %q: %q", want, items[0].body)
+		}
+	}
+	lines := layoutBodyLines(items[0].body, 70)
+	assertLinkCardLine(t, lines, "↳ Uber 如何把 MySQL", ansiBlue, false)
+	assertLinkCardLine(t, lines, "本文是对 Uber", "", true)
+	assertLinkCardLine(t, lines, "马甲", ansiDim, true)
 }
 
 func TestFeedItemKeyIgnoresVolatileActivityID(t *testing.T) {

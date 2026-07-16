@@ -366,6 +366,24 @@ func layoutBodyLines(body string, width int) []styledLine {
 				continue
 			}
 		}
+		if strings.HasPrefix(sourceLine, linkCardTitleMarker) {
+			flushProse()
+			text := truncateCells(strings.TrimPrefix(sourceLine, linkCardTitleMarker), width)
+			result = append(result, styledLine{text: text, style: ansiBlue, commentID: currentCommentID})
+			continue
+		}
+		if strings.HasPrefix(sourceLine, linkCardExcerptMarker) {
+			flushProse()
+			text := truncateCells(strings.TrimPrefix(sourceLine, linkCardExcerptMarker), maxInt(1, width-2))
+			result = append(result, styledLine{text: "  " + text, commentID: currentCommentID})
+			continue
+		}
+		if strings.HasPrefix(sourceLine, linkCardMetadataMarker) {
+			flushProse()
+			text := truncateCells(strings.TrimPrefix(sourceLine, linkCardMetadataMarker), maxInt(1, width-2))
+			result = append(result, styledLine{text: "  " + text, style: ansiDim, commentID: currentCommentID})
+			continue
+		}
 		switch sourceLine {
 		case codeBlockStartMarker:
 			flushProse()
@@ -579,6 +597,9 @@ func foldedItemAuthorLabel(item feedItem) string {
 func foldedItemExcerpt(item feedItem) (text string, hasMore bool) {
 	meaningful := make([]string, 0, 2)
 	for _, sourceLine := range strings.Split(item.body, "\n") {
+		sourceLine = strings.TrimPrefix(sourceLine, linkCardTitleMarker)
+		sourceLine = strings.TrimPrefix(sourceLine, linkCardExcerptMarker)
+		sourceLine = strings.TrimPrefix(sourceLine, linkCardMetadataMarker)
 		text := compactLine(sourceLine)
 		if text == "" || text == codeBlockStartMarker || text == codeBlockEndMarker {
 			continue

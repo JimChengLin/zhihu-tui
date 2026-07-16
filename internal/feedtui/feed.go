@@ -23,8 +23,11 @@ var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
 var pinTitlePattern = regexp.MustCompile(`(?is)^\s*([^<\r\n]+?)\s*<br\s*/?>\s*<p(?:\s[^>]*)?>`)
 
 const (
-	codeBlockStartMarker = "\ue000code-block-start\ue001"
-	codeBlockEndMarker   = "\ue000code-block-end\ue001"
+	codeBlockStartMarker   = "\ue000code-block-start\ue001"
+	codeBlockEndMarker     = "\ue000code-block-end\ue001"
+	linkCardTitleMarker    = "\ue000link-card-title\ue001"
+	linkCardExcerptMarker  = "\ue000link-card-excerpt\ue001"
+	linkCardMetadataMarker = "\ue000link-card-metadata\ue001"
 )
 
 type feedItem struct {
@@ -282,7 +285,7 @@ func hydrateFeedLinkCards(ctx context.Context, source linkCardSource, response m
 				continue
 			}
 			kind := strings.ToUpper(strings.TrimSpace(toString(node["data_content_type"])))
-			if kind != "PIN" && kind != "ANSWER" {
+			if kind != "PIN" && kind != "ANSWER" && kind != "ARTICLE" {
 				continue
 			}
 			id := linkCardContentID(node, kind)
@@ -311,6 +314,8 @@ func hydrateFeedLinkCards(ctx context.Context, source linkCardSource, response m
 			var err error
 			if ref.kind == "ANSWER" {
 				detail, err = source.GetAnswer(ctx, ref.id)
+			} else if ref.kind == "ARTICLE" {
+				detail, err = source.GetArticle(ctx, ref.id)
 			} else {
 				detail, err = source.GetPin(ctx, ref.id)
 			}
@@ -331,7 +336,7 @@ func hydrateFeedLinkCards(ctx context.Context, source linkCardSource, response m
 
 func linkCardContentID(node map[string]any, kind string) string {
 	id := strings.TrimSpace(toString(node["data_content_id"]))
-	if kind != "ANSWER" {
+	if kind != "ANSWER" && kind != "ARTICLE" {
 		return id
 	}
 	parsed, err := url.Parse(toString(node["url"]))
@@ -340,7 +345,10 @@ func linkCardContentID(node map[string]any, kind string) string {
 	}
 	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
 	for index := range parts {
-		if parts[index] == "answer" && index+1 < len(parts) {
+		if kind == "ANSWER" && parts[index] == "answer" && index+1 < len(parts) {
+			return parts[index+1]
+		}
+		if kind == "ARTICLE" && parts[index] == "p" && index+1 < len(parts) {
 			return parts[index+1]
 		}
 	}
@@ -353,67 +361,103 @@ func formatLinkCard(node map[string]any) string {
 	if kind == "ANSWER" {
 		return formatAnswerLinkCard(node, detail)
 	}
-	title := firstNonEmpty(pinLinkCardTitle(detail), toString(node["data_draft_title"]))
-	label := "↳ 引用想法"
-	if toString(node["card_error"]) != "" {
-		label += "（详情加载失败）"
+	if kind == "ARTICLE" {
+		return formatArticleLinkCard(node, detail)
 	}
-	lines := []string{label}
-	if title != "" && title != "引用想法" {
-		lines = append(lines, title)
+	title := firstNonEmpty(pinLinkCardTitle(detail), toString(node["data_draft_title"]))
+	if title == "引用想法" {
+		title = ""
+	}
+	cardTitle := "引用想法"
+	if title != "" {
+		cardTitle = title
+	}
+	if toString(node["card_error"]) != "" {
+		cardTitle += "（详情加载失败）"
+	}
+	lines := []string{linkCardTitleMarker + "↳ " + cardTitle}
+	if excerpt := pinLinkCardExcerpt(detail); excerpt != "" {
+		lines = append(lines, linkCardExcerptMarker+excerpt)
 	}
 	if stats := linkCardStats(detail); stats != "" {
-		lines = append(lines, stats)
-	}
-	for _, rawNode := range asSlice(detail["content"]) {
-		if strings.EqualFold(toString(mapValue(rawNode)["type"]), "image") {
-			lines = append(lines, "▣ 图片")
-			break
-		}
+		lines = append(lines, linkCardMetadataMarker+stats+"  ·  想法")
 	}
 	return strings.Join(lines, "\n")
 }
 
 func formatAnswerLinkCard(node, detail map[string]any) string {
-	label := "↳ 引用回答"
-	if author := strings.TrimSpace(toString(mapValue(detail["author"])["name"])); author != "" {
-		label += " · " + author
-	}
+	title := firstNonEmpty(toString(mapValue(detail["question"])["title"]), toString(node["data_draft_title"]), "引用回答")
 	if toString(node["card_error"]) != "" {
-		label += "（详情加载失败）"
+		title += "（详情加载失败）"
 	}
-	lines := []string{label}
-	if title := firstNonEmpty(toString(mapValue(detail["question"])["title"]), toString(node["data_draft_title"])); title != "" {
-		lines = append(lines, plainText(title))
+	lines := []string{linkCardTitleMarker + "↳ " + plainText(title)}
+	if excerpt := linkCardExcerpt(detail); excerpt != "" {
+		lines = append(lines, linkCardExcerptMarker+excerpt)
 	}
-	if excerpt := truncateCells(plainText(firstNonEmpty(toString(detail["excerpt_new"]), toString(detail["excerpt"]), toString(detail["content"]))), 140); excerpt != "" {
-		lines = append(lines, excerpt)
+	metadata := make([]string, 0, 3)
+	if author := strings.TrimSpace(toString(mapValue(detail["author"])["name"])); author != "" {
+		metadata = append(metadata, author)
 	}
 	if stats := linkCardStats(detail); stats != "" {
-		lines = append(lines, stats)
+		metadata = append(metadata, stats)
 	}
-	if imageTagPattern.MatchString(toString(detail["content"])) {
-		lines = append(lines, "▣ 图片")
-	}
+	metadata = append(metadata, "回答")
+	lines = append(lines, linkCardMetadataMarker+strings.Join(metadata, "  ·  "))
 	return strings.Join(lines, "\n")
 }
 
+func formatArticleLinkCard(node, detail map[string]any) string {
+	title := firstNonEmpty(toString(detail["title"]), toString(node["data_draft_title"]), "引用文章")
+	if toString(node["card_error"]) != "" {
+		title += "（详情加载失败）"
+	}
+	lines := []string{linkCardTitleMarker + "↳ " + plainText(title)}
+	if excerpt := linkCardExcerpt(detail); excerpt != "" {
+		lines = append(lines, linkCardExcerptMarker+excerpt)
+	}
+	metadata := make([]string, 0, 3)
+	if author := strings.TrimSpace(toString(mapValue(detail["author"])["name"])); author != "" {
+		metadata = append(metadata, author)
+	}
+	if stats := linkCardStats(detail); stats != "" {
+		metadata = append(metadata, stats)
+	}
+	metadata = append(metadata, "文章")
+	lines = append(lines, linkCardMetadataMarker+strings.Join(metadata, "  ·  "))
+	return strings.Join(lines, "\n")
+}
+
+func linkCardExcerpt(detail map[string]any) string {
+	value := firstNonEmpty(toString(detail["excerpt_new"]), toString(detail["excerpt"]), toString(detail["content"]))
+	return truncateCells(compactLine(plainText(value)), 512)
+}
+
 func pinLinkCardTitle(detail map[string]any) string {
-	var content string
-	for _, rawNode := range asSlice(detail["content"]) {
-		node := mapValue(rawNode)
-		if strings.EqualFold(toString(node["type"]), "text") {
-			content = toString(node["content"])
-			break
-		}
-	}
-	if content == "" {
-		content = toString(detail["excerpt_title"])
-	}
+	content := pinLinkCardContent(detail)
 	if before, _, found := strings.Cut(content, " | "); found {
 		content = before
 	}
 	return strings.TrimSpace(strings.TrimSuffix(firstParagraph(plainText(content)), "|"))
+}
+
+func pinLinkCardExcerpt(detail map[string]any) string {
+	content := pinLinkCardContent(detail)
+	if _, after, found := strings.Cut(content, " | "); found {
+		content = after
+	} else if title := pinLinkCardTitle(detail); title != "" {
+		content = strings.TrimSpace(strings.TrimPrefix(plainText(content), title))
+	}
+	return truncateCells(compactLine(plainText(content)), 512)
+}
+
+func pinLinkCardContent(detail map[string]any) string {
+	for _, rawNode := range asSlice(detail["content"]) {
+		node := mapValue(rawNode)
+		if strings.EqualFold(toString(node["type"]), "text") {
+			return toString(node["content"])
+		}
+	}
+	return toString(detail["excerpt_title"])
 }
 
 func linkCardStats(detail map[string]any) string {
