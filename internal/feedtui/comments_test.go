@@ -742,6 +742,18 @@ func TestCommentLabelExplainsFilteredTotalAtRootEnd(t *testing.T) {
 	}
 }
 
+func TestCommentLabelOmitsRedundantFullyLoadedStatus(t *testing.T) {
+	state := &commentState{
+		items:  []feedComment{{id: "100", author: "A", content: "评论"}},
+		loaded: true,
+		end:    true,
+	}
+	_, label := formatCommentView(feedItem{commentCount: 1}, state, 0)
+	if label != "评论区 · 共 1 条 · 已加载 1 条" {
+		t.Fatalf("comment label=%q", label)
+	}
+}
+
 func TestParentAndFirstChildHaveConnectedBreathingRoom(t *testing.T) {
 	state := &commentState{
 		items: []feedComment{{

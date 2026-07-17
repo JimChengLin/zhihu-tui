@@ -148,8 +148,6 @@ func formatCommentView(item feedItem, state *commentState, spinner int) (string,
 			label += fmt.Sprintf(" · %d 条回复按需加载", pendingReplies)
 		case item.commentCount > loadedComments:
 			label += " · 可见评论已全部加载"
-		default:
-			label += " · 已全部加载"
 		}
 	}
 	var builder strings.Builder
