@@ -585,7 +585,7 @@ func normalizeAction(value string) string {
 
 func feedStats(target map[string]any) string {
 	parts := make([]string, 0, 3)
-	if value, ok := firstPresent(target["voteup_count"], mapValue(mapValue(target["reaction"])["statistics"])["like_count"], target["like_count"]); ok {
+	if value, ok := feedVoteValue(target); ok {
 		parts = append(parts, "赞同 "+display.FormatCount(value))
 	}
 	if value, ok := firstPresent(target["comment_count"]); ok {
@@ -594,16 +594,30 @@ func feedStats(target map[string]any) string {
 	if value, ok := firstPresent(target["favorite_count"], target["favlists_count"], mapValue(mapValue(target["reaction"])["statistics"])["favorites"]); ok {
 		parts = append(parts, "收藏 "+display.FormatCount(value))
 	}
+	if value, ok := feedReactionLikeValue(target); ok && toInt64(value) > 0 {
+		parts = append(parts, "喜欢 "+display.FormatCount(value))
+	}
 	return strings.Join(parts, "  ·  ")
 }
 
 func feedVoteCount(target map[string]any) (int64, bool) {
-	value, ok := firstPresent(
-		target["voteup_count"],
-		mapValue(mapValue(target["reaction"])["statistics"])["like_count"],
-		target["like_count"],
-	)
+	value, ok := feedVoteValue(target)
 	return toInt64(value), ok
+}
+
+func feedVoteValue(target map[string]any) (any, bool) {
+	statistics := mapValue(mapValue(target["reaction"])["statistics"])
+	return firstPresent(
+		target["voteup_count"],
+		target["like_count"],
+		statistics["up_vote_count"],
+		statistics["applaud_count"],
+	)
+}
+
+func feedReactionLikeValue(target map[string]any) (any, bool) {
+	statistics := mapValue(mapValue(target["reaction"])["statistics"])
+	return firstPresent(statistics["like_count"])
 }
 
 func feedItemVoted(target map[string]any) bool {

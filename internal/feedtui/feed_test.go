@@ -115,6 +115,45 @@ func TestParseFeedItemFormatsStructuredPinContent(t *testing.T) {
 	}
 }
 
+func TestParsePinUsesAggregateVoteCount(t *testing.T) {
+	raw := map[string]any{
+		"action_text": "张帅赞同了想法",
+		"target": map[string]any{
+			"id":             "2061022964812982162",
+			"type":           "pin",
+			"content":        []any{map[string]any{"type": "text", "content": "我不想这么说，但"}},
+			"like_count":     91,
+			"comment_count":  72,
+			"favorite_count": 22,
+			"reaction": map[string]any{
+				"statistics": map[string]any{
+					"like_count":    1,
+					"up_vote_count": 91,
+				},
+			},
+		},
+	}
+	item, ok := parseFeedItem(raw)
+	if !ok {
+		t.Fatal("parseFeedItem returned false")
+	}
+	if item.stats != "赞同 91  ·  评论 72  ·  收藏 22  ·  喜欢 1" || !item.hasVoteCount || item.voteCount != 91 {
+		t.Fatalf("stats=%q voteCount=%d known=%v", item.stats, item.voteCount, item.hasVoteCount)
+	}
+}
+
+func TestFeedStatsOmitsZeroReactionLikes(t *testing.T) {
+	stats := feedStats(map[string]any{
+		"voteup_count": 4,
+		"reaction": map[string]any{
+			"statistics": map[string]any{"like_count": 0},
+		},
+	})
+	if stats != "赞同 4" {
+		t.Fatalf("stats=%q, want no zero-value reaction like", stats)
+	}
+}
+
 func TestPlainTextRemovesSpuriousZWNJWithoutBreakingArabicText(t *testing.T) {
 	if got := plainText(`<p>比勒陀利亚‌-台北-特拉维夫。</p>`); got != "比勒陀利亚-台北-特拉维夫。" {
 		t.Fatalf("CJK text still contains a spurious ZWNJ: %q", got)
