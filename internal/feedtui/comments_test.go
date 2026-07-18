@@ -235,6 +235,44 @@ func TestToggleCommentsLoadsAndReturnsToBody(t *testing.T) {
 	}
 }
 
+func TestToggleCommentsRestoresBodyPageAnchor(t *testing.T) {
+	tests := []struct {
+		name   string
+		key    keyEvent
+		scroll int
+	}{
+		{name: "space", key: " "},
+		{name: "b", key: "b", scroll: 8},
+		{name: "d", key: "d"},
+		{name: "u", key: "u", scroll: 8},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			model := &app{
+				items:    []feedItem{{key: "answer:42", id: "42", kind: "answer", commentCount: 1}},
+				comments: map[string]*commentState{"answer:42": {loaded: true, items: []feedComment{{id: "100"}}}},
+				scroll:   test.scroll,
+				metrics:  layoutMetrics{bodyHeight: 8, bodyLines: 24, maxScroll: 16},
+			}
+			model.handleKey(context.Background(), test.key)
+			bodyScroll := model.scroll
+			bodyAnchorLine := model.pageAnchorLine
+			if !model.pageAnchorVisible {
+				t.Fatal("navigation key did not create a body page anchor")
+			}
+
+			model.handleKey(context.Background(), "c")
+			if !model.commentMode || model.pageAnchorVisible {
+				t.Fatalf("entered comments with commentMode=%v anchor=(%d,%v)", model.commentMode, model.pageAnchorLine, model.pageAnchorVisible)
+			}
+			model.handleKey(context.Background(), "c")
+			if model.commentMode || model.scroll != bodyScroll || !model.pageAnchorVisible || model.pageAnchorLine != bodyAnchorLine {
+				t.Fatalf("returned to body with commentMode=%v scroll=%d anchor=(%d,%v), want scroll=%d anchor=(%d,true)", model.commentMode, model.scroll, model.pageAnchorLine, model.pageAnchorVisible, bodyScroll, bodyAnchorLine)
+			}
+		})
+	}
+}
+
 func joinedBodyLines(body string, width int) string {
 	var result strings.Builder
 	for _, line := range layoutBodyLines(body, width) {

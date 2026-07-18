@@ -74,6 +74,8 @@ type app struct {
 	furthestViewedKey      string
 	commentMode            bool
 	bodyScroll             int
+	bodyPageAnchorLine     int
+	bodyPageAnchorVisible  bool
 	comments               map[string]*commentState
 	commentFetches         chan commentFetchResult
 	commentRelations       map[string]commentRelation
@@ -419,7 +421,7 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 		return false
 	}
 	preservesCommentFocus := model.commentMode && (key == "j" || key == "k" || key == "J" || key == "K" || key == keyDown || key == keyUp || key == keyCtrlE || key == keyCtrlY || key == "e" || key == "v" || key == "\r")
-	if key != model.boundarySwitchKey && key != "w" && !preservesCommentFocus {
+	if key != model.boundarySwitchKey && key != "c" && key != "w" && !preservesCommentFocus {
 		model.clearBoundarySwitch()
 	}
 	switch key {

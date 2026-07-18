@@ -8,13 +8,15 @@ import (
 )
 
 func (model *app) toggleComments(ctx context.Context) {
-	model.clearPageAnchor()
 	if len(model.items) == 0 {
 		return
 	}
 	if model.commentMode {
+		model.clearPageAnchor()
 		model.commentMode = false
 		model.scroll = model.bodyScroll
+		model.pageAnchorLine = model.bodyPageAnchorLine
+		model.pageAnchorVisible = model.bodyPageAnchorVisible
 		return
 	}
 	item := model.items[model.index]
@@ -29,6 +31,9 @@ func (model *app) toggleComments(ctx context.Context) {
 		return
 	}
 	model.bodyScroll = model.scroll
+	model.bodyPageAnchorLine = model.pageAnchorLine
+	model.bodyPageAnchorVisible = model.pageAnchorVisible
+	model.clearPageAnchor()
 	model.scroll = 0
 	model.commentMode = true
 	model.startComments(ctx, item)
