@@ -137,9 +137,6 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	}
 	lines = append(lines, line(strings.Repeat("─", contentWidth), ansiDim))
 
-	if body == "" && len(item.foldedItems) == 0 && item.kind != "pin" && !model.commentMode {
-		body = "这条动态没有正文摘要；按 o 在知乎中查看完整内容。"
-	}
 	bodyLines := layoutBodyLines(body, contentWidth)
 	if len(item.foldedItems) > 0 && !model.commentMode {
 		bodyLines = layoutFoldedGroupPreview(item.foldedItems, contentWidth)

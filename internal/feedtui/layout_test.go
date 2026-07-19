@@ -213,6 +213,23 @@ func TestCommentHeaderOwnsCommentCount(t *testing.T) {
 	}
 }
 
+func TestEmptyFeedBodyStaysBlank(t *testing.T) {
+	model := &app{
+		items: []feedItem{{
+			kind:   "question",
+			title:  "只有标题的问题",
+			author: "提问者",
+		}},
+		width:  100,
+		height: 16,
+	}
+	lines, _ := renderSingleApp(model)
+	rendered := strings.Join(styledLineTexts(lines), "\n")
+	if strings.Contains(rendered, "没有正文摘要") || strings.Contains(rendered, "查看完整内容") {
+		t.Fatalf("empty feed body rendered a placeholder: %q", rendered)
+	}
+}
+
 func TestLongBodyScrollbarTracksReadingPosition(t *testing.T) {
 	model := &app{
 		items: []feedItem{{
