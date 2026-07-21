@@ -60,8 +60,12 @@ func takeUnrepresentedFeedLeaves(item feedItem, represented map[string]struct{})
 }
 
 func appendOrMergeFeedGroup(items []feedItem, item feedItem) []feedItem {
+	return insertOrMergeFeedGroup(items, item, len(items))
+}
+
+func insertOrMergeFeedGroup(items []feedItem, item feedItem, index int) []feedItem {
 	if len(item.foldedItems) == 0 {
-		return append(items, item)
+		return insertFeedItem(items, item, index)
 	}
 	for index := range items {
 		if items[index].key != item.key || len(items[index].foldedItems) == 0 {
@@ -71,7 +75,53 @@ func appendOrMergeFeedGroup(items []feedItem, item feedItem) []feedItem {
 		items[index].title = updateFoldedGroupCount(items[index].title, len(items[index].foldedItems))
 		return items
 	}
-	return append(items, item)
+	return insertFeedItem(items, item, index)
+}
+
+func insertFeedItem(items []feedItem, item feedItem, index int) []feedItem {
+	index = minInt(maxInt(0, index), len(items))
+	items = append(items, feedItem{})
+	copy(items[index+1:], items[index:])
+	items[index] = item
+	return items
+}
+
+func retainedFeedInsertionIndex(items, previousItems []feedItem, previousIndex int) int {
+	for index := previousIndex + 1; index < len(previousItems); index++ {
+		if currentIndex := overlappingFeedItemIndex(items, previousItems[index]); currentIndex >= 0 {
+			return currentIndex
+		}
+	}
+	for index := previousIndex - 1; index >= 0; index-- {
+		if currentIndex := overlappingFeedItemIndex(items, previousItems[index]); currentIndex >= 0 {
+			return currentIndex + 1
+		}
+	}
+	return len(items)
+}
+
+func overlappingFeedItemIndex(items []feedItem, target feedItem) int {
+	targetKeys := make(map[string]struct{})
+	collectFeedItemKeys(target, targetKeys)
+	for index, item := range items {
+		if feedItemContainsAnyKey(item, targetKeys) {
+			return index
+		}
+	}
+	return -1
+}
+
+func feedItemContainsAnyKey(item feedItem, keys map[string]struct{}) bool {
+	if len(item.foldedItems) == 0 {
+		_, found := keys[item.key]
+		return found
+	}
+	for _, child := range item.foldedItems {
+		if feedItemContainsAnyKey(child, keys) {
+			return true
+		}
+	}
+	return false
 }
 
 func updateFoldedGroupCount(title string, count int) string {

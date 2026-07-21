@@ -992,6 +992,51 @@ func TestRefreshKeepsLoadedItemsMissingFromLatestSnapshot(t *testing.T) {
 	}
 }
 
+func TestRepeatedRefreshKeepsOmittedReadBoundaryInOrder(t *testing.T) {
+	model := &app{
+		generation: 1,
+		items: []feedItem{
+			{key: "answer:1", title: "读到这里"},
+			{key: "answer:2", title: "后续一"},
+			{key: "answer:3", title: "后续二"},
+		},
+		firstViewedKey:    "answer:1",
+		furthestViewedKey: "answer:3",
+	}
+	refresh := func(ids ...string) {
+		model.captureRefreshBoundary()
+		data := make([]any, len(ids))
+		for index, id := range ids {
+			data[index] = feedTestRaw(id, "问题 "+id)
+		}
+		model.generation++
+		model.applyFetch(fetchResult{
+			reset:      true,
+			generation: model.generation,
+			response: map[string]any{
+				"data":   data,
+				"paging": map[string]any{"is_end": true},
+			},
+		})
+	}
+
+	refresh("new", "2", "3")
+	model.markCurrentViewed()
+	refresh("newer", "2", "3")
+
+	wantKeys := []string{"answer:newer", "answer:new", "answer:1", "answer:2", "answer:3"}
+	gotKeys := make([]string, len(model.items))
+	for index, item := range model.items {
+		gotKeys[index] = item.key
+	}
+	if strings.Join(gotKeys, "\n") != strings.Join(wantKeys, "\n") {
+		t.Fatalf("repeated refresh keys=%q, want retained history in previous order %q", gotKeys, wantKeys)
+	}
+	if model.lastReadTopKey != "answer:new" {
+		t.Fatalf("lastReadTopKey=%q, want the previously displayed refresh head", model.lastReadTopKey)
+	}
+}
+
 func TestRefreshMarksNewAndPreviouslyViewedRangeAfterSuccess(t *testing.T) {
 	model := &app{
 		generation: 1,

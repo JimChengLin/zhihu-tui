@@ -368,12 +368,13 @@ func (model *app) applyFetch(result fetchResult) {
 		for _, item := range model.items {
 			collectFeedItemKeys(item, representedLeaves)
 		}
-		for _, item := range previousItems {
+		for previousIndex, item := range previousItems {
 			item, _, kept := takeUnrepresentedFeedLeaves(item, representedLeaves)
 			if !kept {
 				continue
 			}
-			model.items = appendOrMergeFeedGroup(model.items, item)
+			insertionIndex := retainedFeedInsertionIndex(model.items, previousItems, previousIndex)
+			model.items = insertOrMergeFeedGroup(model.items, item, insertionIndex)
 		}
 	}
 
