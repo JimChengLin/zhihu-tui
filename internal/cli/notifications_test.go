@@ -302,8 +302,14 @@ func TestFormatTargetStats(t *testing.T) {
 		{
 			name: "article zero like",
 			kind: "article",
-			data: map[string]any{"voteup_count": 2, "liked_count": 0, "favlists_count": 1},
-			want: "赞同 2 · 喜欢 0 · 收藏 1",
+			data: map[string]any{"voteup_count": 2, "liked_count": json.Number("0"), "favlists_count": 1},
+			want: "赞同 2 · 收藏 1",
+		},
+		{
+			name: "answer zero favorite",
+			kind: "answer",
+			data: map[string]any{"voteup_count": 3, "favorite_count": json.Number("0")},
+			want: "赞同 3",
 		},
 		{
 			name: "pin",
@@ -317,6 +323,19 @@ func TestFormatTargetStats(t *testing.T) {
 				},
 			},
 			want: "赞同 19 · 喜欢 2 · 收藏 5",
+		},
+		{
+			name: "pin zero like and favorite",
+			kind: "pin",
+			data: map[string]any{
+				"reaction_count": 3,
+				"like_count":     3,
+				"favorite_count": json.Number("0"),
+				"reaction": map[string]any{
+					"statistics": map[string]any{"like_count": json.Number("0")},
+				},
+			},
+			want: "赞同 3",
 		},
 		{
 			name: "missing fields",
