@@ -308,8 +308,15 @@ func TestFormatTargetStats(t *testing.T) {
 		{
 			name: "pin",
 			kind: "pin",
-			data: map[string]any{"reaction_count": 19, "like_count": 19, "favorite_count": 5},
-			want: "赞同 19 · 喜欢 19 · 收藏 5",
+			data: map[string]any{
+				"reaction_count": 19,
+				"like_count":     19,
+				"favorite_count": 5,
+				"reaction": map[string]any{
+					"statistics": map[string]any{"like_count": 2},
+				},
+			},
+			want: "赞同 19 · 喜欢 2 · 收藏 5",
 		},
 		{
 			name: "missing fields",
@@ -333,16 +340,22 @@ func TestNotificationFormatterClearTargetCacheRefreshesTargetMeta(t *testing.T) 
 		if r.URL.Path != "/api/v4/pins/123" {
 			t.Fatalf("path=%s", r.URL.Path)
 		}
-		counts := []int{26, 27}
+		counts := []struct {
+			votes int
+			likes int
+		}{{votes: 26, likes: 2}, {votes: 27, likes: 3}}
 		if calls >= len(counts) {
 			t.Fatalf("unexpected request %d", calls+1)
 		}
 		count := counts[calls]
 		calls++
 		writeNotificationTestJSON(t, w, http.StatusOK, map[string]any{
-			"reaction_count": count,
-			"like_count":     count,
+			"reaction_count": count.votes,
+			"like_count":     count.votes,
 			"favorite_count": 12,
+			"reaction": map[string]any{
+				"statistics": map[string]any{"like_count": count.likes},
+			},
 		})
 	})
 	defer closeServer()
@@ -352,7 +365,7 @@ func TestNotificationFormatterClearTargetCacheRefreshesTargetMeta(t *testing.T) 
 	if err != nil {
 		t.Fatalf("first formatTargetMeta: %v", err)
 	}
-	if first != "赞同 26 · 喜欢 26 · 收藏 12" {
+	if first != "赞同 26 · 喜欢 2 · 收藏 12" {
 		t.Fatalf("first=%q", first)
 	}
 	formatter.clearTargetCache()
@@ -360,7 +373,7 @@ func TestNotificationFormatterClearTargetCacheRefreshesTargetMeta(t *testing.T) 
 	if err != nil {
 		t.Fatalf("second formatTargetMeta: %v", err)
 	}
-	if second != "赞同 27 · 喜欢 27 · 收藏 12" {
+	if second != "赞同 27 · 喜欢 3 · 收藏 12" {
 		t.Fatalf("second=%q", second)
 	}
 }

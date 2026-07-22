@@ -1920,8 +1920,9 @@ func formatTargetStats(kind string, data map[string]any) string {
 		appendFirstCount(&stats, "喜欢", data["liked_count"], data["like_count"])
 		appendFirstCount(&stats, "收藏", data["favorite_count"], data["favlists_count"])
 	case "pin":
+		reactionStats := mapValue(mapValue(data["reaction"])["statistics"])
 		appendFirstCount(&stats, "赞同", data["reaction_count"], data["voteup_count"])
-		appendFirstCount(&stats, "喜欢", data["like_count"], data["liked_count"])
+		appendFirstCount(&stats, "喜欢", reactionStats["like_count"])
 		appendFirstCount(&stats, "收藏", data["favorite_count"], data["favlists_count"])
 	}
 	return strings.Join(stats, " · ")
