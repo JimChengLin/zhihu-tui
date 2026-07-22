@@ -1914,7 +1914,7 @@ func formatTargetStats(kind string, data map[string]any) string {
 	case "answer":
 		appendFirstCount(&stats, "赞同", data["voteup_count"])
 		appendFirstNonZeroCount(&stats, "收藏", data["favorite_count"], data["favlists_count"])
-		appendFirstCount(&stats, "感谢", data["thanks_count"])
+		appendFirstNonZeroCount(&stats, "感谢", data["thanks_count"])
 	case "article":
 		appendFirstCount(&stats, "赞同", data["voteup_count"])
 		appendFirstNonZeroCount(&stats, "喜欢", data["liked_count"], data["like_count"])

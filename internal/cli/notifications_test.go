@@ -306,9 +306,13 @@ func TestFormatTargetStats(t *testing.T) {
 			want: "赞同 2 · 收藏 1",
 		},
 		{
-			name: "answer zero favorite",
+			name: "answer zero favorite and thanks",
 			kind: "answer",
-			data: map[string]any{"voteup_count": 3, "favorite_count": json.Number("0")},
+			data: map[string]any{
+				"voteup_count":   3,
+				"favorite_count": json.Number("0"),
+				"thanks_count":   json.Number("0"),
+			},
 			want: "赞同 3",
 		},
 		{
