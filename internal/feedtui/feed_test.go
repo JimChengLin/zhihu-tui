@@ -113,6 +113,25 @@ func TestParseFollowedQuestionShowsQuestionAndCommentStats(t *testing.T) {
 	}
 }
 
+func TestParseFollowedQuestionPrefersFullDetailOverExcerpt(t *testing.T) {
+	item, ok := parseFeedItem(map[string]any{
+		"verb": "QUESTION_FOLLOW",
+		"target": map[string]any{
+			"id":          "123",
+			"type":        "question",
+			"title":       "测试问题",
+			"excerpt_new": "第一段被缩略了…",
+			"detail":      "<p>第一段完整内容。</p><p>第二段完整内容。</p>",
+		},
+	})
+	if !ok {
+		t.Fatal("parseFeedItem returned false")
+	}
+	if item.body != "第一段完整内容。\n\n第二段完整内容。" {
+		t.Fatalf("body=%q", item.body)
+	}
+}
+
 func TestParseFeedItemFormatsStructuredPinContent(t *testing.T) {
 	raw := map[string]any{
 		"id":          "activity-pin",

@@ -135,11 +135,7 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 	}
 	body, imageCount := feedContentText(target["content"])
 	if body == "" {
-		body = plainText(firstNonEmpty(
-			toString(target["excerpt_new"]),
-			toString(target["excerpt"]),
-			toString(target["detail"]),
-		))
+		body = feedBodyFallback(kind, target)
 	}
 	if referenced := referencedImageCount(raw, target); referenced > imageCount {
 		body = appendImagePlaceholders(body, imageCount+1, referenced)
@@ -212,6 +208,21 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 		hasFollowerCount: hasFollowerCount,
 		followed:         feedItemFollowed(target),
 	}, true
+}
+
+func feedBodyFallback(kind string, target map[string]any) string {
+	if kind == "question" {
+		return plainText(firstNonEmpty(
+			toString(target["detail"]),
+			toString(target["excerpt_new"]),
+			toString(target["excerpt"]),
+		))
+	}
+	return plainText(firstNonEmpty(
+		toString(target["excerpt_new"]),
+		toString(target["excerpt"]),
+		toString(target["detail"]),
+	))
 }
 
 func pinContentTitle(value any) string {
