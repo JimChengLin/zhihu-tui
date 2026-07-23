@@ -85,6 +85,34 @@ func TestParseFeedItemFormatsFollowingActivity(t *testing.T) {
 	}
 }
 
+func TestParseFollowedQuestionShowsQuestionAndCommentStats(t *testing.T) {
+	item, ok := parseFeedItem(map[string]any{
+		"verb":  "QUESTION_FOLLOW",
+		"actor": map[string]any{"name": "Alice"},
+		"target": map[string]any{
+			"id":             "123",
+			"type":           "question",
+			"title":          "测试问题",
+			"follower_count": 456,
+			"answer_count":   78,
+			"comment_count":  9,
+			"relationship":   map[string]any{"is_following": true},
+		},
+	})
+	if !ok {
+		t.Fatal("parseFeedItem returned false")
+	}
+	if item.stats != "关注 456  ·  回答 78  ·  评论 9" {
+		t.Fatalf("stats=%q", item.stats)
+	}
+	if !item.followed || !item.hasFollowerCount || item.followerCount != 456 {
+		t.Fatalf("question follow state=%#v", item)
+	}
+	if !item.hasCommentCount || item.commentCount != 9 {
+		t.Fatalf("comment count=%d known=%v", item.commentCount, item.hasCommentCount)
+	}
+}
+
 func TestParseFeedItemFormatsStructuredPinContent(t *testing.T) {
 	raw := map[string]any{
 		"id":          "activity-pin",

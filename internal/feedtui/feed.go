@@ -32,28 +32,31 @@ const (
 )
 
 type feedItem struct {
-	key             string
-	id              string
-	kind            string
-	action          string
-	title           string
-	pinTitle        string
-	author          string
-	headline        string
-	body            string
-	stats           string
-	createdAt       int64
-	url             string
-	imageCount      int
-	commentCount    int
-	hasCommentCount bool
-	voteCount       int64
-	hasVoteCount    bool
-	voted           bool
-	serverFolded    bool
-	foldedItems     []feedItem
-	foldedParent    string
-	groupOpen       bool
+	key              string
+	id               string
+	kind             string
+	action           string
+	title            string
+	pinTitle         string
+	author           string
+	headline         string
+	body             string
+	stats            string
+	createdAt        int64
+	url              string
+	imageCount       int
+	commentCount     int
+	hasCommentCount  bool
+	voteCount        int64
+	hasVoteCount     bool
+	voted            bool
+	followerCount    int64
+	hasFollowerCount bool
+	followed         bool
+	serverFolded     bool
+	foldedItems      []feedItem
+	foldedParent     string
+	groupOpen        bool
 }
 
 func parseFeedItems(data []any) []feedItem {
@@ -180,26 +183,34 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 	}
 
 	voteCount, hasVoteCount := feedVoteCount(target)
+	followerCount, hasFollowerCount := feedFollowerCount(target)
 	commentCount, hasCommentCount := firstPresent(target["comment_count"])
+	stats := feedStats(target)
+	if kind == "question" {
+		stats = questionStats(target)
+	}
 	return feedItem{
-		key:             key,
-		id:              id,
-		kind:            kind,
-		action:          action,
-		title:           title,
-		pinTitle:        pinTitle,
-		author:          authorName,
-		headline:        compactLine(plainText(toString(author["headline"]))),
-		body:            body,
-		stats:           feedStats(target),
-		createdAt:       createdAt,
-		url:             url,
-		imageCount:      imageCount,
-		commentCount:    int(toInt64(commentCount)),
-		hasCommentCount: hasCommentCount,
-		voteCount:       voteCount,
-		hasVoteCount:    hasVoteCount,
-		voted:           feedItemVoted(target),
+		key:              key,
+		id:               id,
+		kind:             kind,
+		action:           action,
+		title:            title,
+		pinTitle:         pinTitle,
+		author:           authorName,
+		headline:         compactLine(plainText(toString(author["headline"]))),
+		body:             body,
+		stats:            stats,
+		createdAt:        createdAt,
+		url:              url,
+		imageCount:       imageCount,
+		commentCount:     int(toInt64(commentCount)),
+		hasCommentCount:  hasCommentCount,
+		voteCount:        voteCount,
+		hasVoteCount:     hasVoteCount,
+		voted:            feedItemVoted(target),
+		followerCount:    followerCount,
+		hasFollowerCount: hasFollowerCount,
+		followed:         feedItemFollowed(target),
 	}, true
 }
 
@@ -600,8 +611,27 @@ func feedStats(target map[string]any) string {
 	return strings.Join(parts, "  ·  ")
 }
 
+func questionStats(target map[string]any) string {
+	parts := make([]string, 0, 3)
+	if value, ok := firstPresent(target["follower_count"]); ok {
+		parts = append(parts, "关注 "+display.FormatCount(value))
+	}
+	if value, ok := firstPresent(target["answer_count"]); ok {
+		parts = append(parts, "回答 "+display.FormatCount(value))
+	}
+	if value, ok := firstPresent(target["comment_count"]); ok {
+		parts = append(parts, "评论 "+display.FormatCount(value))
+	}
+	return strings.Join(parts, "  ·  ")
+}
+
 func feedVoteCount(target map[string]any) (int64, bool) {
 	value, ok := feedVoteValue(target)
+	return toInt64(value), ok
+}
+
+func feedFollowerCount(target map[string]any) (int64, bool) {
+	value, ok := firstPresent(target["follower_count"])
 	return toInt64(value), ok
 }
 
@@ -628,6 +658,11 @@ func feedItemVoted(target map[string]any) bool {
 	}
 	relation := mapValue(mapValue(target["reaction"])["relation"])
 	return truthy(relation["liked"]) || strings.EqualFold(toString(relation["vote"]), "up")
+}
+
+func feedItemFollowed(target map[string]any) bool {
+	relationship := mapValue(target["relationship"])
+	return truthy(firstNonEmptyAny(target["is_following"], relationship["is_following"], false))
 }
 
 func replaceVoteStat(stats string, count int64) string {
@@ -658,6 +693,21 @@ func replaceCommentStat(stats string, count int) string {
 		return comment
 	}
 	return stats + "  ·  " + comment
+}
+
+func replaceFollowerStat(stats string, count int64) string {
+	parts := strings.Split(stats, "  ·  ")
+	followers := "关注 " + display.FormatCount(count)
+	for index := range parts {
+		if strings.HasPrefix(parts[index], "关注 ") {
+			parts[index] = followers
+			return strings.Join(parts, "  ·  ")
+		}
+	}
+	if stats == "" {
+		return followers
+	}
+	return followers + "  ·  " + stats
 }
 
 func withoutCommentStat(stats string) string {

@@ -119,7 +119,13 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	if model.commentMode {
 		meta = withoutCommentStat(meta)
 	}
-	if item.voted {
+	if item.kind == "question" && item.followed {
+		if meta == "" {
+			meta = "✓ 已关注"
+		} else {
+			meta = "✓ 已关注  ·  " + meta
+		}
+	} else if item.voted {
 		if meta == "" {
 			meta = "✓ 已赞同"
 		} else {
@@ -254,22 +260,32 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 }
 
 func footerHints(model *app, width int) string {
-	full := "j/k 滚动  f/b 翻页  d/u 半页  n/p 切换  v 赞同  w 评论  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出"
-	compact := "j/k 滚动  f/b 页  d/u 半页  n/p 切换  c 评论  r 刷新  ? 帮助  q 退出"
+	action := "赞同"
+	if len(model.items) > 0 && !model.commentMode && model.items[model.index].kind == "question" {
+		action = "关注"
+	}
+	full := fmt.Sprintf("j/k 滚动  f/b 翻页  d/u 半页  n/p 切换  v %s  w 评论  c 评论  z 专注  o 打开  r 刷新  ? 帮助  q 退出", action)
+	compact := fmt.Sprintf("j/k 滚动  f/b 页  d/u 半页  n/p 切换  v %s  c 评论  r 刷新  ? 帮助  q 退出", action)
+	minimal := fmt.Sprintf("j/k 滚动  f/b 页  d/u 半页  v %s  c 评论  ? 帮助  q 退出", action)
 	switch {
 	case model.composing:
 		full = "←/→ · C-b/C-f 移动  Home/End · C-a/C-e 首尾  Backspace/Delete · C-d 删除  Enter 发送  Esc 取消"
 		compact = "←/→ 移动  Home/End 首尾  BS/Del 删除  Enter 发送  Esc 取消"
+		minimal = compact
 	case model.commentMode:
 		full = "j/k 选评论  f/b 翻页  d/u 半页  v 赞同  e 展开  w 回复  c 正文  ? 帮助  q 退出"
-		compact = "j/k 选择  f/b 页  d/u 半页  e 展开  c 正文  ? 帮助  q 退出"
+		compact = "j/k 选择  f/b 页  d/u 半页  v 赞同  e 展开  c 正文  ? 帮助  q 退出"
+		minimal = compact
 	case model.zenMode:
-		full = "j/k 滚动  f/b 翻页  d/u 半页  n/p 切换  v 赞同  w 评论  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出"
+		full = fmt.Sprintf("j/k 滚动  f/b 翻页  d/u 半页  n/p 切换  v %s  w 评论  c 评论  z 双栏  o 打开  r 刷新  ? 帮助  q 退出", action)
 	}
 	if stringCellWidth(full) <= width {
 		return full
 	}
-	return compact
+	if stringCellWidth(compact) <= width {
+		return compact
+	}
+	return minimal
 }
 
 func styledLineText(line styledLine) string {
@@ -824,7 +840,7 @@ func renderHelp(width, height int) []styledLine {
 		{"Ctrl-E / Ctrl-Y", "向下 / 向上滚动一行"},
 		{"n/p · h/l · ←/→", "下一条 / 上一条"},
 		{"g / G", "第一条 / 最后一条已加载动态"},
-		{"v", "赞同回答或蓝色焦点评论 / 取消赞同"},
+		{"v", "赞同内容、关注问题或赞同蓝色焦点评论；再次按下取消"},
 		{"w", "写评论 / 回复蓝色焦点所在评论"},
 		{"c", "加载评论 / 返回正文"},
 		{"e / Enter", "展开 / 收起蓝色焦点评论的回复或知乎聚合动态"},

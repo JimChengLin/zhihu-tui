@@ -9,15 +9,23 @@ func (model *app) toggleVote(ctx context.Context) {
 	if len(model.items) == 0 {
 		return
 	}
+	item := model.items[model.index]
 	if model.voting {
-		model.setMessage("赞同请求处理中", 2*time.Second)
+		action := "赞同"
+		if item.kind == "question" {
+			action = "关注"
+		}
+		model.setMessage(action+"请求处理中", 2*time.Second)
 		return
 	}
 	if model.commentMode {
 		model.toggleCommentVote(ctx)
 		return
 	}
-	item := model.items[model.index]
+	if item.kind == "question" {
+		model.toggleQuestionFollow(ctx, item)
+		return
+	}
 	if !supportsContentVote(item.kind) {
 		if len(item.foldedItems) > 0 {
 			model.setMessage("请先展开并选择具体动态", 3*time.Second)
@@ -40,6 +48,31 @@ func (model *app) toggleVote(ctx context.Context) {
 		ok, err := model.source.SetContentVote(ctx, item.kind, item.id, voted)
 		select {
 		case model.voteResults <- voteResult{contentKind: item.kind, contentID: item.id, voted: voted, ok: ok, err: err}:
+		case <-ctx.Done():
+		}
+	}()
+}
+
+func (model *app) toggleQuestionFollow(ctx context.Context, item feedItem) {
+	followed := !item.followed
+	model.voting = true
+	model.spinner = 0
+	if followed {
+		model.message = "正在关注问题"
+	} else {
+		model.message = "正在取消关注问题"
+	}
+	model.messageUntil = time.Time{}
+	go func() {
+		var ok bool
+		var err error
+		if followed {
+			ok, err = model.source.FollowQuestion(ctx, item.id)
+		} else {
+			ok, err = model.source.UnfollowQuestion(ctx, item.id)
+		}
+		select {
+		case model.voteResults <- voteResult{contentKind: item.kind, contentID: item.id, voted: followed, ok: ok, err: err}:
 		case <-ctx.Done():
 		}
 	}()
@@ -96,6 +129,10 @@ func (model *app) applyVote(result voteResult) {
 		model.applyCommentVote(result)
 		return
 	}
+	if result.contentKind == "question" {
+		model.applyQuestionFollow(result)
+		return
+	}
 	action := "赞同"
 	if !result.voted {
 		action = "取消赞同"
@@ -113,6 +150,27 @@ func (model *app) applyVote(result voteResult) {
 		model.setMessage("已赞同", 2*time.Second)
 	} else {
 		model.setMessage("已取消赞同", 2*time.Second)
+	}
+}
+
+func (model *app) applyQuestionFollow(result voteResult) {
+	action := "关注问题"
+	if !result.voted {
+		action = "取消关注问题"
+	}
+	if result.err != nil {
+		model.setMessage(action+"失败："+result.err.Error(), 4*time.Second)
+		return
+	}
+	if !result.ok {
+		model.setMessage(action+"失败：知乎未接受请求", 4*time.Second)
+		return
+	}
+	updateQuestionFollowInItems(model.items, result.contentID, result.voted)
+	if result.voted {
+		model.setMessage("已关注问题", 2*time.Second)
+	} else {
+		model.setMessage("已取消关注问题", 2*time.Second)
 	}
 }
 
@@ -183,5 +241,28 @@ func updateFeedItemVote(item *feedItem, contentKind, contentID string, voted boo
 	}
 	for index := range item.foldedItems {
 		updateFeedItemVote(&item.foldedItems[index], contentKind, contentID, voted)
+	}
+}
+
+func updateQuestionFollowInItems(items []feedItem, questionID string, followed bool) {
+	for index := range items {
+		updateFeedItemQuestionFollow(&items[index], questionID, followed)
+	}
+}
+
+func updateFeedItemQuestionFollow(item *feedItem, questionID string, followed bool) {
+	if item.kind == "question" && item.id == questionID && item.followed != followed {
+		if item.hasFollowerCount {
+			if followed {
+				item.followerCount++
+			} else if item.followerCount > 0 {
+				item.followerCount--
+			}
+			item.stats = replaceFollowerStat(item.stats, item.followerCount)
+		}
+		item.followed = followed
+	}
+	for index := range item.foldedItems {
+		updateFeedItemQuestionFollow(&item.foldedItems[index], questionID, followed)
 	}
 }

@@ -28,6 +28,8 @@ type feedSource interface {
 	CreateComment(context.Context, string, string, string) (map[string]any, error)
 	ReplyCommentToResource(context.Context, string, string, string, string) (map[string]any, error)
 	SetContentVote(context.Context, string, string, bool) (bool, error)
+	FollowQuestion(context.Context, string) (bool, error)
+	UnfollowQuestion(context.Context, string) (bool, error)
 	LikeComment(context.Context, string) (bool, error)
 	UnlikeComment(context.Context, string) (bool, error)
 }

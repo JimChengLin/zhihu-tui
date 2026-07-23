@@ -10,7 +10,8 @@ import (
 
 type voteTestSource struct {
 	commentTestSource
-	votes chan string
+	votes           chan string
+	questionFollows chan string
 }
 
 func (source *voteTestSource) SetContentVote(_ context.Context, contentType, contentID string, voted bool) (bool, error) {
@@ -29,6 +30,16 @@ func (source *voteTestSource) LikeComment(_ context.Context, commentID string) (
 
 func (source *voteTestSource) UnlikeComment(_ context.Context, commentID string) (bool, error) {
 	source.votes <- "comment-neutral:" + commentID
+	return true, nil
+}
+
+func (source *voteTestSource) FollowQuestion(_ context.Context, questionID string) (bool, error) {
+	source.questionFollows <- "follow:" + questionID
+	return true, nil
+}
+
+func (source *voteTestSource) UnfollowQuestion(_ context.Context, questionID string) (bool, error) {
+	source.questionFollows <- "unfollow:" + questionID
 	return true, nil
 }
 
@@ -92,10 +103,41 @@ func TestToggleVoteSupportsArticleAndPin(t *testing.T) {
 }
 
 func TestToggleVoteRejectsUnsupportedContent(t *testing.T) {
-	model := &app{items: []feedItem{{kind: "question"}}}
+	model := &app{items: []feedItem{{kind: "column"}}}
 	model.toggleVote(context.Background())
 	if model.voting || model.message != "当前动态不支持赞同" {
 		t.Fatalf("voting=%v message=%q", model.voting, model.message)
+	}
+}
+
+func TestToggleVoteFollowsQuestionAndUpdatesFollowerCount(t *testing.T) {
+	source := &voteTestSource{questionFollows: make(chan string, 2)}
+	model := &app{
+		source: source,
+		items: []feedItem{{
+			id:               "42",
+			kind:             "question",
+			stats:            "关注 9  ·  回答 3  ·  评论 2",
+			followerCount:    9,
+			hasFollowerCount: true,
+		}},
+		voteResults: make(chan voteResult, 1),
+	}
+
+	model.toggleVote(context.Background())
+	waitForVote(t, source.questionFollows, "follow:42")
+	applyNextVoteResult(t, model)
+	item := model.items[0]
+	if !item.followed || item.followerCount != 10 || item.stats != "关注 10  ·  回答 3  ·  评论 2" || model.message != "已关注问题" {
+		t.Fatalf("followed question=%#v message=%q", item, model.message)
+	}
+
+	model.toggleVote(context.Background())
+	waitForVote(t, source.questionFollows, "unfollow:42")
+	applyNextVoteResult(t, model)
+	item = model.items[0]
+	if item.followed || item.followerCount != 9 || item.stats != "关注 9  ·  回答 3  ·  评论 2" || model.message != "已取消关注问题" {
+		t.Fatalf("unfollowed question=%#v message=%q", item, model.message)
 	}
 }
 
@@ -232,6 +274,31 @@ func TestRenderVoteState(t *testing.T) {
 	}
 	if !strings.Contains(rendered.String(), "✓ 已赞同  ·  赞同 13") {
 		t.Fatalf("rendered vote state:\n%s", rendered.String())
+	}
+}
+
+func TestRenderQuestionFollowStateAndFooterAction(t *testing.T) {
+	model := &app{
+		width:  140,
+		height: 24,
+		items: []feedItem{{
+			kind:     "question",
+			title:    "问题",
+			stats:    "关注 10  ·  回答 3  ·  评论 2",
+			followed: true,
+		}},
+	}
+	lines, _ := renderSingleApp(model)
+	rendered := strings.Builder{}
+	for _, line := range lines {
+		rendered.WriteString(line.text)
+		rendered.WriteByte('\n')
+	}
+	if !strings.Contains(rendered.String(), "✓ 已关注  ·  关注 10  ·  回答 3  ·  评论 2") {
+		t.Fatalf("rendered follow state:\n%s", rendered.String())
+	}
+	if !strings.Contains(rendered.String(), "v 关注") {
+		t.Fatalf("footer does not show question action:\n%s", rendered.String())
 	}
 }
 

@@ -134,6 +134,14 @@ func (source *commentTestSource) SetContentVote(context.Context, string, string,
 	return true, nil
 }
 
+func (source *commentTestSource) FollowQuestion(context.Context, string) (bool, error) {
+	return true, nil
+}
+
+func (source *commentTestSource) UnfollowQuestion(context.Context, string) (bool, error) {
+	return true, nil
+}
+
 func (source *commentTestSource) LikeComment(context.Context, string) (bool, error) {
 	return true, nil
 }
