@@ -166,6 +166,28 @@ func TestJKMovesBlueFocusBetweenComments(t *testing.T) {
 	}
 }
 
+func TestJScrollsLastCommentFullyIntoView(t *testing.T) {
+	model := &app{
+		items:             []feedItem{{key: "answer:42", id: "42", kind: "answer"}},
+		commentMode:       true,
+		scroll:            2,
+		pageAnchorLine:    3,
+		pageAnchorVisible: true,
+		metrics: layoutMetrics{
+			bodyHeight: 4,
+			bodyLines:  10,
+			maxScroll:  6,
+			commentIDs: []string{"100", "100", "", "101", "101", "", "102", "102", "102", "102"},
+		},
+	}
+
+	model.handleKey(context.Background(), "J")
+
+	if model.pageAnchorLine != 6 || model.scroll != 6 {
+		t.Fatalf("last comment focus line=%d scroll=%d, want line=6 scroll=6", model.pageAnchorLine, model.scroll)
+	}
+}
+
 func TestCommentComposerRendersInlineWithCursor(t *testing.T) {
 	lines := []styledLine{{text: "评论", commentID: "100"}}
 	model := &app{

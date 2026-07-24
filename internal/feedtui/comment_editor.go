@@ -166,12 +166,24 @@ func (model *app) moveCommentFocus(ctx context.Context, direction int) {
 
 	model.boundarySwitchKey = ""
 	model.clearMessage()
-	model.setPageAnchor(positions[next].line)
-	if positions[next].line < model.scroll {
-		model.scroll = positions[next].line
-	} else if positions[next].line >= model.scroll+model.metrics.bodyHeight {
-		model.scroll = maxInt(0, positions[next].line-model.metrics.bodyHeight+1)
+	firstLine := positions[next].line
+	lastLine := lastCommentLine(model.metrics.commentIDs, positions[next].id)
+	model.setPageAnchor(firstLine)
+	if firstLine < model.scroll {
+		model.scroll = firstLine
+	} else if lastLine >= model.scroll+model.metrics.bodyHeight {
+		scroll := lastLine - model.metrics.bodyHeight + 1
+		model.scroll = minInt(firstLine, maxInt(0, scroll))
 	}
+}
+
+func lastCommentLine(commentIDs []string, commentID string) int {
+	for line := len(commentIDs) - 1; line >= 0; line-- {
+		if commentIDs[line] == commentID {
+			return line
+		}
+	}
+	return 0
 }
 
 func firstCommentAtOrAfter(positions []commentFocusPosition, line int) int {
