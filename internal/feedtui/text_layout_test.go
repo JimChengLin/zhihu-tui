@@ -111,6 +111,38 @@ func TestBodyLinkKeepsStyleAcrossWrappedLines(t *testing.T) {
 	}
 }
 
+func TestImageLinkBecomesImagePlaceholder(t *testing.T) {
+	body, images := contentText(`<p>评论正文[尴尬]<a data-caption="" href="https://picx.zhimg.com/v2-test_r.jpg?source=comment">查看图片</a></p>`)
+	if images != 1 {
+		t.Fatalf("image count=%d, want 1", images)
+	}
+	if strings.Contains(body, "查看图片") || strings.Contains(body, inlineLinkStartMarker) {
+		t.Fatalf("image link was left as an inline link: %q", body)
+	}
+	if !strings.Contains(body, "▣ 图片 1") {
+		t.Fatalf("image placeholder missing: %q", body)
+	}
+}
+
+func TestImagesAndInlineLinksKeepDocumentOrder(t *testing.T) {
+	body, images := contentText(`<p><a href="https://www.zhihu.com/question/1">普通链接</a></p>
+<img src="https://picx.zhimg.com/first.jpg">
+<a href="https://picx.zhimg.com/second.jpg">查看图片</a>
+<a href="https://example.com/image.webp"><img src="https://example.com/thumb.webp"></a>`)
+	if images != 3 {
+		t.Fatalf("image count=%d, want 3", images)
+	}
+	if !strings.Contains(body, inlineLinkStartMarker+"普通链接"+inlineLinkEndMarker) {
+		t.Fatalf("ordinary link lost link styling markers: %q", body)
+	}
+	first := strings.Index(body, "▣ 图片 1")
+	second := strings.Index(body, "▣ 图片 2")
+	third := strings.Index(body, "▣ 图片 3")
+	if first < 0 || second <= first || third <= second {
+		t.Fatalf("image placeholders are out of document order: %q", body)
+	}
+}
+
 func TestWrapTextKeepsClosingPunctuationOnPreviousLine(t *testing.T) {
 	lines := wrapText("中文中文。下一句", 8)
 	if len(lines) < 2 {

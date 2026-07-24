@@ -20,6 +20,8 @@ var imageTagPattern = regexp.MustCompile(`(?is)<img\b[^>]*>`)
 var codeBlockPattern = regexp.MustCompile(`(?is)<pre\b[^>]*>(.*?)</pre\s*>`)
 var classCodeBlockPattern = regexp.MustCompile(`(?is)<code\b[^>]*\bclass\s*=\s*(?:"[^"]*"|'[^']*')[^>]*>(.*?)</code\s*>`)
 var anchorTagPattern = regexp.MustCompile(`(?is)<a\b[^>]*>(.*?)</a\s*>`)
+var mediaElementPattern = regexp.MustCompile(`(?is)<a\b[^>]*>.*?</a\s*>|<img\b[^>]*>`)
+var hrefAttributePattern = regexp.MustCompile(`(?is)\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
 var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
 var pinTitlePattern = regexp.MustCompile(`(?is)^\s*([^<\r\n]+?)\s*<br\s*/?>\s*<p(?:\s[^>]*)?>`)
 
@@ -265,7 +267,10 @@ func contentTextFrom(value string, previousImages int) (string, int) {
 			return "\n" + codeBlockStartMarker + "\n" + code + "\n" + codeBlockEndMarker + "\n"
 		})
 	}
-	value = imageTagPattern.ReplaceAllStringFunc(value, func(string) string {
+	value = mediaElementPattern.ReplaceAllStringFunc(value, func(element string) string {
+		if !strings.HasPrefix(strings.ToLower(element), "<img") && !isImageAnchor(element) {
+			return element
+		}
 		imageCount++
 		return fmt.Sprintf("\n▣ 图片 %d\n", previousImages+imageCount)
 	})
@@ -273,8 +278,46 @@ func contentTextFrom(value string, previousImages int) (string, int) {
 }
 
 func bodyText(value string) string {
-	value = anchorTagPattern.ReplaceAllString(value, inlineLinkStartMarker+"$1"+inlineLinkEndMarker)
+	value = anchorTagPattern.ReplaceAllStringFunc(value, func(anchor string) string {
+		match := anchorTagPattern.FindStringSubmatch(anchor)
+		if len(match) != 2 {
+			return anchor
+		}
+		if strings.Contains(match[1], "▣ 图片 ") {
+			return match[1]
+		}
+		return inlineLinkStartMarker + match[1] + inlineLinkEndMarker
+	})
 	return plainText(value)
+}
+
+func isImageAnchor(anchor string) bool {
+	if imageTagPattern.MatchString(anchor) {
+		return true
+	}
+	if match := anchorTagPattern.FindStringSubmatch(anchor); len(match) == 2 && compactLine(plainText(match[1])) == "查看图片" {
+		return true
+	}
+	match := hrefAttributePattern.FindStringSubmatch(anchor)
+	if len(match) == 0 {
+		return false
+	}
+	href := firstNonEmpty(match[1], match[2], match[3])
+	parsed, err := url.Parse(html.UnescapeString(href))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "zhimg.com" || strings.HasSuffix(host, ".zhimg.com") {
+		return true
+	}
+	path := strings.ToLower(parsed.Path)
+	for _, extension := range []string{".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"} {
+		if strings.HasSuffix(path, extension) {
+			return true
+		}
+	}
+	return false
 }
 
 func stripInlineLinkMarkers(value string) string {
