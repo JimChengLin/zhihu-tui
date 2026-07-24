@@ -19,12 +19,15 @@ var repeatedBlankLinesPattern = regexp.MustCompile(`\n[\t ]*\n(?:[\t ]*\n)+`)
 var imageTagPattern = regexp.MustCompile(`(?is)<img\b[^>]*>`)
 var codeBlockPattern = regexp.MustCompile(`(?is)<pre\b[^>]*>(.*?)</pre\s*>`)
 var classCodeBlockPattern = regexp.MustCompile(`(?is)<code\b[^>]*\bclass\s*=\s*(?:"[^"]*"|'[^']*')[^>]*>(.*?)</code\s*>`)
+var anchorTagPattern = regexp.MustCompile(`(?is)<a\b[^>]*>(.*?)</a\s*>`)
 var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
 var pinTitlePattern = regexp.MustCompile(`(?is)^\s*([^<\r\n]+?)\s*<br\s*/?>\s*<p(?:\s[^>]*)?>`)
 
 const (
 	codeBlockStartMarker   = "\ue000code-block-start\ue001"
 	codeBlockEndMarker     = "\ue000code-block-end\ue001"
+	inlineLinkStartMarker  = "\ue000inline-link-start\ue001"
+	inlineLinkEndMarker    = "\ue000inline-link-end\ue001"
 	linkCardTitleMarker    = "\ue000link-card-title\ue001"
 	linkCardQuoteMarker    = "\ue000link-card-quote\ue001"
 	linkCardExcerptMarker  = "\ue000link-card-excerpt\ue001"
@@ -141,18 +144,19 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 		body = appendImagePlaceholders(body, imageCount+1, referenced)
 		imageCount = referenced
 	}
-	if pinTitle != "" && firstParagraph(body) == pinTitle {
-		body = strings.TrimSpace(strings.TrimPrefix(body, pinTitle))
+	rawBodyTitle := firstParagraph(body)
+	bodyTitle := stripInlineLinkMarkers(rawBodyTitle)
+	if pinTitle != "" && bodyTitle == pinTitle {
+		body = strings.TrimSpace(strings.TrimPrefix(body, rawBodyTitle))
 		title = pinTitle
 	}
 	if title == "" {
-		bodyTitle := firstParagraph(body)
 		if strings.HasPrefix(bodyTitle, "▣ 图片 ") {
 			bodyTitle = ""
 		}
 		title = firstNonEmpty(bodyTitle, typeLabel(kind), "一条关注动态")
-		if title == firstParagraph(body) && kind != "pin" {
-			body = strings.TrimSpace(strings.TrimPrefix(body, title))
+		if title == bodyTitle && kind != "pin" {
+			body = strings.TrimSpace(strings.TrimPrefix(body, rawBodyTitle))
 		}
 	}
 
@@ -212,13 +216,13 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 
 func feedBodyFallback(kind string, target map[string]any) string {
 	if kind == "question" {
-		return plainText(firstNonEmpty(
+		return bodyText(firstNonEmpty(
 			toString(target["detail"]),
 			toString(target["excerpt_new"]),
 			toString(target["excerpt"]),
 		))
 	}
-	return plainText(firstNonEmpty(
+	return bodyText(firstNonEmpty(
 		toString(target["excerpt_new"]),
 		toString(target["excerpt"]),
 		toString(target["detail"]),
@@ -265,7 +269,17 @@ func contentTextFrom(value string, previousImages int) (string, int) {
 		imageCount++
 		return fmt.Sprintf("\n▣ 图片 %d\n", previousImages+imageCount)
 	})
-	return plainText(value), imageCount
+	return bodyText(value), imageCount
+}
+
+func bodyText(value string) string {
+	value = anchorTagPattern.ReplaceAllString(value, inlineLinkStartMarker+"$1"+inlineLinkEndMarker)
+	return plainText(value)
+}
+
+func stripInlineLinkMarkers(value string) string {
+	value = strings.ReplaceAll(value, inlineLinkStartMarker, "")
+	return strings.ReplaceAll(value, inlineLinkEndMarker, "")
 }
 
 func feedContentText(value any) (string, int) {

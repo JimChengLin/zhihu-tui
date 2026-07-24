@@ -58,6 +58,59 @@ second</code><p>普通 <code>inline()</code> 代码。</p>`)
 	}
 }
 
+func TestBodyLinkUsesSoftVioletWithoutChangingVisibleText(t *testing.T) {
+	body, _ := contentText(`<p><a href="https://www.zhihu.com/question/1">链接标题</a>，普通正文。</p>`)
+	if got := stripInlineLinkMarkers(body); got != "链接标题，普通正文。" {
+		t.Fatalf("contentText()=%q, want visible text unchanged", got)
+	}
+
+	lines := layoutBodyLines(body, 40)
+	if len(lines) != 1 || styledLineText(lines[0]) != "链接标题，普通正文。" {
+		t.Fatalf("body=%q, layoutBodyLines()=%#v", body, lines)
+	}
+	if len(lines[0].segments) != 2 {
+		t.Fatalf("segments=%#v, want linked and normal spans", lines[0].segments)
+	}
+	if lines[0].segments[0] != (styledSegment{text: "链接标题", style: ansiLink}) {
+		t.Fatalf("linked segment=%#v", lines[0].segments[0])
+	}
+	if lines[0].segments[1] != (styledSegment{text: "，普通正文。"}) {
+		t.Fatalf("normal segment=%#v", lines[0].segments[1])
+	}
+
+	rendered, _ := renderStyledLine(lines[0], 40)
+	if !strings.Contains(rendered, styleText("链接标题", ansiLink)) {
+		t.Fatalf("rendered link does not use link color: %q", rendered)
+	}
+	if strings.Contains(rendered, styleText("，普通正文。", ansiLink)) {
+		t.Fatalf("normal body text inherited link color: %q", rendered)
+	}
+}
+
+func TestBodyLinkKeepsStyleAcrossWrappedLines(t *testing.T) {
+	body, _ := contentText(`<p>前文 <a href="https://www.zhihu.com/question/1">一段很长的链接文字跨越换行</a> 后文</p>`)
+	lines := layoutBodyLines(body, 12)
+	visible := make([]string, len(lines))
+	for index := range lines {
+		visible[index] = styledLineText(lines[index])
+	}
+	if got := strings.Join(visible, ""); strings.ReplaceAll(got, " ", "") != "前文一段很长的链接文字跨越换行后文" {
+		t.Fatalf("body=%q, lines=%#v, wrapped visible text changed: %q", body, lines, got)
+	}
+
+	linkText := ""
+	for _, line := range lines {
+		for _, segment := range line.segments {
+			if segment.style == ansiLink {
+				linkText += segment.text
+			}
+		}
+	}
+	if linkText != "一段很长的链接文字跨越换行" {
+		t.Fatalf("wrapped link text=%q", linkText)
+	}
+}
+
 func TestWrapTextKeepsClosingPunctuationOnPreviousLine(t *testing.T) {
 	lines := wrapText("中文中文。下一句", 8)
 	if len(lines) < 2 {

@@ -12,6 +12,7 @@ const (
 	ansiDim           = "\033[2m"
 	ansiCyan          = "\033[36m"
 	ansiBlue          = "\033[38;5;75m"
+	ansiLink          = "\033[38;5;141m"
 	ansiGreen         = "\033[38;5;114m"
 	ansiRed           = "\033[38;5;203m"
 	ansiCode          = "\033[38;5;245m"
@@ -23,6 +24,7 @@ const (
 type styledLine struct {
 	text        string
 	style       string
+	segments    []styledSegment
 	middle      string
 	middleStyle string
 	tail        string
@@ -34,6 +36,11 @@ type styledLine struct {
 	cursorCell  int
 	raw         bool
 	commentID   string
+}
+
+type styledSegment struct {
+	text  string
+	style string
 }
 
 type layoutMetrics struct {
@@ -195,7 +202,7 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		if body.hasCursor {
 			body.cursorCell += left
 		}
-		semanticWidth := stringCellWidth(body.text) + stringCellWidth(body.middle) + stringCellWidth(body.tail)
+		semanticWidth := styledLineCellWidth(body)
 		body.padding = maxInt(0, left+contentWidth+1-semanticWidth)
 		if model.pageAnchorVisible && model.scroll+row == model.pageAnchorLine {
 			anchorText := styledLineText(bodyLine)
@@ -204,6 +211,7 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 			}
 			body.text = strings.Repeat(" ", maxInt(0, left-2)) + "▸ " + padCells(anchorText, contentWidth) + " "
 			body.style = ansiBlue
+			body.segments = nil
 			body.middle = ""
 			body.tail = ""
 			body.padding = 0
@@ -289,7 +297,18 @@ func footerHints(model *app, width int) string {
 }
 
 func styledLineText(line styledLine) string {
-	return line.text + line.middle + line.tail
+	var text strings.Builder
+	text.WriteString(line.text)
+	for _, segment := range line.segments {
+		text.WriteString(segment.text)
+	}
+	text.WriteString(line.middle)
+	text.WriteString(line.tail)
+	return text.String()
+}
+
+func styledLineCellWidth(line styledLine) int {
+	return stringCellWidth(styledLineText(line))
 }
 
 func scrollbarThumb(trackHeight, contentHeight, scroll, maxScroll int) (int, int) {
@@ -331,13 +350,130 @@ func addParagraphSpacing(lines []string) []string {
 	return result
 }
 
+func layoutProseLines(prose string, width int, commentID string) []styledLine {
+	if !strings.Contains(prose, inlineLinkStartMarker) {
+		wrapped := addParagraphSpacing(wrapText(prose, width))
+		result := make([]styledLine, 0, len(wrapped))
+		for _, text := range wrapped {
+			result = append(result, styledLine{text: text, commentID: commentID})
+		}
+		return result
+	}
+
+	paragraphs := strings.Split(strings.ReplaceAll(prose, "\r\n", "\n"), "\n")
+	result := make([]styledLine, 0, len(paragraphs))
+	for paragraphIndex, paragraph := range paragraphs {
+		paragraph = strings.TrimSpace(paragraph)
+		if paragraph == "" {
+			if paragraphIndex > 0 && len(result) > 0 && styledLineText(result[len(result)-1]) != "" {
+				for range paragraphGapLines {
+					result = append(result, styledLine{commentID: commentID})
+				}
+			}
+			continue
+		}
+
+		plain, spans := inlineLinkSpans(paragraph)
+		searchStart := 0
+		for _, text := range wrapText(plain, width) {
+			lineStart := strings.Index(plain[searchStart:], text)
+			if lineStart < 0 {
+				lineStart = searchStart
+			} else {
+				lineStart += searchStart
+			}
+			result = append(result, styledLineFromSpans(text, plain, spans, lineStart, commentID))
+			searchStart = minInt(len(plain), lineStart+len(text))
+		}
+	}
+	return result
+}
+
+type inlineLinkSpan struct {
+	start int
+	end   int
+}
+
+func inlineLinkSpans(value string) (string, []inlineLinkSpan) {
+	var plain strings.Builder
+	var spans []inlineLinkSpan
+	linkStart := -1
+	for value != "" {
+		start := strings.Index(value, inlineLinkStartMarker)
+		end := strings.Index(value, inlineLinkEndMarker)
+		switch {
+		case start >= 0 && (end < 0 || start < end):
+			plain.WriteString(value[:start])
+			if linkStart < 0 {
+				linkStart = plain.Len()
+			}
+			value = value[start+len(inlineLinkStartMarker):]
+		case end >= 0:
+			plain.WriteString(value[:end])
+			if linkStart >= 0 && linkStart < plain.Len() {
+				spans = append(spans, inlineLinkSpan{start: linkStart, end: plain.Len()})
+			}
+			linkStart = -1
+			value = value[end+len(inlineLinkEndMarker):]
+		default:
+			plain.WriteString(value)
+			value = ""
+		}
+	}
+	if linkStart >= 0 && linkStart < plain.Len() {
+		spans = append(spans, inlineLinkSpan{start: linkStart, end: plain.Len()})
+	}
+	return plain.String(), spans
+}
+
+func styledLineFromSpans(text, paragraph string, spans []inlineLinkSpan, lineStart int, commentID string) styledLine {
+	if len(spans) == 0 {
+		return styledLine{text: text, commentID: commentID}
+	}
+	lineEnd := lineStart + len(text)
+	hasLink := false
+	segments := make([]styledSegment, 0, len(spans)*2+1)
+	cursor := lineStart
+	for _, span := range spans {
+		start := maxInt(lineStart, span.start)
+		end := minInt(lineEnd, span.end)
+		if start >= end {
+			continue
+		}
+		if cursor < start {
+			segments = appendStyledSegment(segments, paragraph[cursor:start], "")
+		}
+		segments = appendStyledSegment(segments, paragraph[start:end], ansiLink)
+		hasLink = true
+		cursor = end
+	}
+	if !hasLink {
+		return styledLine{text: text, commentID: commentID}
+	}
+	if cursor < lineEnd {
+		segments = appendStyledSegment(segments, paragraph[cursor:lineEnd], "")
+	}
+	return styledLine{segments: segments, commentID: commentID}
+}
+
+func appendStyledSegment(segments []styledSegment, text, style string) []styledSegment {
+	if text == "" {
+		return segments
+	}
+	if len(segments) > 0 && segments[len(segments)-1].style == style {
+		segments[len(segments)-1].text += text
+		return segments
+	}
+	return append(segments, styledSegment{text: text, style: style})
+}
+
 func layoutBodyLines(body string, width int) []styledLine {
 	var result []styledLine
 	var prose []string
 	currentCommentID := ""
 	appendParagraphGap := func() {
 		blankLines := 0
-		for index := len(result) - 1; index >= 0 && result[index].text == ""; index-- {
+		for index := len(result) - 1; index >= 0 && styledLineText(result[index]) == ""; index-- {
 			blankLines++
 		}
 		for blankLines < paragraphGapLines {
@@ -349,9 +485,7 @@ func layoutBodyLines(body string, width int) []styledLine {
 		if len(prose) == 0 {
 			return
 		}
-		for _, text := range addParagraphSpacing(wrapText(strings.Join(prose, "\n"), width)) {
-			result = append(result, styledLine{text: text, commentID: currentCommentID})
-		}
+		result = append(result, layoutProseLines(strings.Join(prose, "\n"), width, currentCommentID)...)
 		prose = prose[:0]
 	}
 
@@ -426,7 +560,7 @@ func layoutBodyLines(body string, width int) []styledLine {
 		}
 	}
 	flushProse()
-	for len(result) > 0 && result[len(result)-1].text == "" {
+	for len(result) > 0 && styledLineText(result[len(result)-1]) == "" {
 		result = result[:len(result)-1]
 	}
 	if len(result) == 0 {
@@ -620,7 +754,7 @@ func foldedItemExcerpt(item feedItem) (text string, hasMore bool) {
 		sourceLine = strings.TrimPrefix(sourceLine, linkCardQuoteMarker)
 		sourceLine = strings.TrimPrefix(sourceLine, linkCardExcerptMarker)
 		sourceLine = strings.TrimPrefix(sourceLine, linkCardMetadataMarker)
-		text := compactLine(sourceLine)
+		text := compactLine(stripInlineLinkMarkers(sourceLine))
 		if text == "" || text == codeBlockStartMarker || text == codeBlockEndMarker {
 			continue
 		}

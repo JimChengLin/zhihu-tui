@@ -16,12 +16,30 @@ func renderStyledLine(line styledLine, maxWidth int) (string, int) {
 	contentWidth := maxInt(0, maxWidth-suffixWidth-tailWidth)
 	text := truncateCells(line.text, contentWidth)
 	textWidth := stringCellWidth(text)
-	middle := truncateCells(line.middle, maxInt(0, contentWidth-textWidth))
+	segments, segmentsWidth := renderStyledSegments(line.segments, maxInt(0, contentWidth-textWidth))
+	middle := truncateCells(line.middle, maxInt(0, contentWidth-textWidth-segmentsWidth))
 	middleWidth := stringCellWidth(middle)
-	paddingWidth := minInt(line.padding, maxInt(0, maxWidth-suffixWidth-tailWidth-textWidth-middleWidth))
+	paddingWidth := minInt(line.padding, maxInt(0, maxWidth-suffixWidth-tailWidth-textWidth-segmentsWidth-middleWidth))
 	padding := strings.Repeat(" ", paddingWidth)
-	rendered := styleText(text, line.style) + styleText(middle, line.middleStyle) + styleText(tail, line.tailStyle) + padding + styleText(suffix, line.suffixStyle)
-	return rendered, textWidth + middleWidth + tailWidth + paddingWidth + suffixWidth
+	rendered := styleText(text, line.style) + segments + styleText(middle, line.middleStyle) + styleText(tail, line.tailStyle) + padding + styleText(suffix, line.suffixStyle)
+	return rendered, textWidth + segmentsWidth + middleWidth + tailWidth + paddingWidth + suffixWidth
+}
+
+func renderStyledSegments(segments []styledSegment, maxWidth int) (string, int) {
+	var rendered strings.Builder
+	width := 0
+	for _, segment := range segments {
+		if width >= maxWidth {
+			break
+		}
+		text := truncateCells(segment.text, maxWidth-width)
+		rendered.WriteString(styleText(text, segment.style))
+		width += stringCellWidth(text)
+		if text != segment.text {
+			break
+		}
+	}
+	return rendered.String(), width
 }
 
 func styleText(text, style string) string {
