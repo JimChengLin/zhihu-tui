@@ -778,7 +778,7 @@ func TestFoldedGroupRefreshDoesNotDuplicateOrBlockReadBottom(t *testing.T) {
 	}
 }
 
-func TestRefreshMergesTopLevelAndFoldedRepresentationsByLeafKey(t *testing.T) {
+func TestRefreshPrependsNewLeavesAndPreservesExistingLayout(t *testing.T) {
 	groupRaw := func(id string, children ...map[string]any) map[string]any {
 		list := make([]any, len(children))
 		for index := range children {
@@ -803,23 +803,32 @@ func TestRefreshMergesTopLevelAndFoldedRepresentationsByLeafKey(t *testing.T) {
 		return model
 	}
 
-	t.Run("top level to folded", func(t *testing.T) {
-		activity := feedTestRaw("same", "同一条动态")
-		model := refresh([]any{activity}, response(groupRaw("group", activity)))
-		if len(model.items) != 1 || len(model.items[0].foldedItems) != 1 {
-			t.Fatalf("top-level activity was retained beside its folded representation: %#v", model.items)
-		}
-	})
-
-	t.Run("folded to top level", func(t *testing.T) {
-		activity := feedTestRaw("same", "同一条动态")
-		model := refresh([]any{groupRaw("group", activity)}, response(activity))
+	t.Run("top level remains top level", func(t *testing.T) {
+		previous := feedTestRaw("same", "旧标题")
+		latest := feedTestRaw("same", "更新后的标题")
+		model := refresh([]any{previous}, response(groupRaw("group", latest)))
 		if len(model.items) != 1 || len(model.items[0].foldedItems) != 0 || model.items[0].key != "answer:same" {
-			t.Fatalf("folded activity was retained beside its top-level representation: %#v", model.items)
+			t.Fatalf("existing top-level layout changed during refresh: %#v", model.items)
+		}
+		if model.items[0].title != "更新后的标题" {
+			t.Fatalf("existing top-level data was not updated in place: %#v", model.items[0])
 		}
 	})
 
-	t.Run("same group keeps only omitted children", func(t *testing.T) {
+	t.Run("folded item remains folded", func(t *testing.T) {
+		previous := feedTestRaw("same", "旧标题")
+		latest := feedTestRaw("same", "更新后的标题")
+		model := refresh([]any{groupRaw("group", previous)}, response(latest))
+		if len(model.items) != 1 || len(model.items[0].foldedItems) != 1 || model.items[0].key != "group" {
+			t.Fatalf("existing folded layout changed during refresh: %#v", model.items)
+		}
+		child := model.items[0].foldedItems[0]
+		if child.key != "answer:same" || child.foldedParent != "group" || child.title != "更新后的标题" {
+			t.Fatalf("folded item was not updated in place: %#v", child)
+		}
+	})
+
+	t.Run("new child forms a separate prefix", func(t *testing.T) {
 		oldA := feedTestRaw("old-a", "旧动态 A")
 		oldB := feedTestRaw("old-b", "旧动态 B")
 		newC := feedTestRaw("new-c", "新动态 C")
@@ -827,25 +836,105 @@ func TestRefreshMergesTopLevelAndFoldedRepresentationsByLeafKey(t *testing.T) {
 			[]any{groupRaw("group", oldA, oldB)},
 			response(groupRaw("group", oldA, newC)),
 		)
-		if len(model.items) != 1 || len(model.items[0].foldedItems) != 3 {
-			t.Fatalf("same folded group was duplicated or lost omitted children: %#v", model.items)
+		if len(model.items) != 2 {
+			t.Fatalf("items=%#v, want a new prefix followed by the existing group", model.items)
 		}
-		if model.items[0].title != "还有 3 个用户的动态被收起" {
-			t.Fatalf("merged folded group title=%q", model.items[0].title)
+		freshGroup, existingGroup := model.items[0], model.items[1]
+		if len(freshGroup.foldedItems) != 1 || freshGroup.foldedItems[0].key != "answer:new-c" {
+			t.Fatalf("new prefix=%#v, want only the new child", freshGroup)
 		}
-		keys := make(map[string]int)
-		for _, child := range model.items[0].foldedItems {
-			keys[child.key]++
+		if freshGroup.key == existingGroup.key || freshGroup.foldedItems[0].foldedParent != freshGroup.key {
+			t.Fatalf("new prefix did not get an independent group key: %#v", freshGroup)
 		}
-		for _, key := range []string{"answer:old-a", "answer:old-b", "answer:new-c"} {
-			if keys[key] != 1 {
-				t.Fatalf("leaf %q occurs %d times in %#v", key, keys[key], model.items)
-			}
+		if existingGroup.key != "group" || len(existingGroup.foldedItems) != 2 {
+			t.Fatalf("existing folded group changed: %#v", existingGroup)
 		}
 		if _, isNew := model.newItemKeys["answer:new-c"]; !isNew {
 			t.Fatalf("new folded child was not marked new: %#v", model.newItemKeys)
 		}
 	})
+}
+
+func TestRefreshKeepsGreenFeedBeforeReadBoundaryWhenAPIRegroupsOldItems(t *testing.T) {
+	groupRaw := func(children ...map[string]any) map[string]any {
+		list := make([]any, len(children))
+		for index := range children {
+			list[index] = children[index]
+		}
+		return map[string]any{
+			"id":         "stable-group",
+			"group_text": "还有 {LIST_COUNT} 条动态被收起",
+			"list":       list,
+		}
+	}
+
+	oldA := feedTestRaw("old-a", "旧折叠动态 A")
+	oldB := feedTestRaw("old-b", "旧折叠动态 B")
+	oldTail := feedTestRaw("old-tail", "旧动态尾部")
+	model := &app{
+		generation:        1,
+		items:             parseFeedItems([]any{groupRaw(oldA, oldB), oldTail}),
+		firstViewedKey:    "stable-group",
+		furthestViewedKey: "answer:old-tail",
+		height:            20,
+	}
+	model.captureRefreshBoundary()
+
+	newBefore := feedTestRaw("new-before", "API 放在阅读标记之前的新动态")
+	newAfter := feedTestRaw("new-after", "API 放在阅读标记之后的新动态")
+	model.generation++
+	model.applyFetch(fetchResult{
+		reset:      true,
+		generation: model.generation,
+		response: map[string]any{
+			"data": []any{
+				newBefore,
+				groupRaw(oldA),
+				oldB,
+				newAfter,
+				oldTail,
+			},
+			"paging": map[string]any{"is_end": true},
+		},
+	})
+
+	wantKeys := []string{"answer:new-before", "answer:new-after", "stable-group", "answer:old-tail"}
+	gotKeys := make([]string, len(model.items))
+	for index, item := range model.items {
+		gotKeys[index] = item.key
+	}
+	if strings.Join(gotKeys, "\n") != strings.Join(wantKeys, "\n") {
+		t.Fatalf("refreshed keys=%q, want a contiguous new prefix before retained history %q", gotKeys, wantKeys)
+	}
+	if len(model.newItemKeys) != 2 {
+		t.Fatalf("newItemKeys=%v, want exactly the two unseen leaves", model.newItemKeys)
+	}
+	for _, key := range wantKeys[:2] {
+		if _, isNew := model.newItemKeys[key]; !isNew {
+			t.Fatalf("prefix item %q is not green: %v", key, model.newItemKeys)
+		}
+	}
+	for _, item := range model.items[2:] {
+		isNew, _, _ := sidebarItemState(model, item)
+		if isNew {
+			t.Fatalf("item after the read boundary is green: %#v", item)
+		}
+	}
+	group := model.items[2]
+	if len(group.foldedItems) != 2 || group.foldedItems[0].key != "answer:old-a" || group.foldedItems[1].key != "answer:old-b" {
+		t.Fatalf("API regrouping changed the retained folded group: %#v", group)
+	}
+	if model.lastReadTopKey != "stable-group" || model.lastReadBottomKey != "answer:old-tail" {
+		t.Fatalf("last-read range=(%q, %q), want retained history boundaries", model.lastReadTopKey, model.lastReadBottomKey)
+	}
+
+	sidebar := renderSidebar(model, 48)
+	if sidebar[3].style != ansiBold+ansiGreen || sidebar[6].style != ansiGreen {
+		t.Fatalf("new prefix is not continuously green: first=%q second=%q", sidebar[3].style, sidebar[6].style)
+	}
+	if sidebar[9].style != ansiCyan || !strings.HasPrefix(sidebar[10].text, "  上次读到↓ · ") {
+		t.Fatalf("read boundary is not immediately after the green prefix: %#v %#v", sidebar[9], sidebar[10])
+	}
 }
 
 func TestCollapsedGroupInheritsAndExpandedGroupDistributesReadState(t *testing.T) {
@@ -992,6 +1081,62 @@ func TestApplyFetchDeduplicatesOverlappingPages(t *testing.T) {
 	}
 	if model.nextURL == "" || model.end {
 		t.Fatalf("nextURL=%q end=%v", model.nextURL, model.end)
+	}
+}
+
+func TestApplyFetchDeduplicatesFoldedLeavesAcrossPages(t *testing.T) {
+	groupRaw := func(id string, children ...map[string]any) map[string]any {
+		list := make([]any, len(children))
+		for index := range children {
+			list[index] = children[index]
+		}
+		return map[string]any{
+			"id":         id,
+			"group_text": "还有 {LIST_COUNT} 条动态被收起",
+			"list":       list,
+		}
+	}
+
+	first := feedTestRaw("first", "第一页顶层动态")
+	second := feedTestRaw("second", "第一页折叠动态")
+	model := &app{generation: 1}
+	model.applyFetch(fetchResult{
+		reset:      true,
+		generation: 1,
+		response: map[string]any{
+			"data": []any{
+				first,
+				groupRaw("first-group", second),
+			},
+			"paging": map[string]any{
+				"next": "https://www.zhihu.com/api/v3/moments?after_id=next",
+			},
+		},
+	})
+
+	third := feedTestRaw("third", "第二页新折叠动态")
+	model.applyFetch(fetchResult{
+		generation: 1,
+		response: map[string]any{
+			"data": []any{
+				groupRaw("second-group", first, second, third),
+			},
+			"paging": map[string]any{"is_end": true},
+		},
+	})
+
+	leafCounts := make(map[string]int)
+	for _, item := range model.items {
+		keys := make(map[string]struct{})
+		collectFeedItemKeys(item, keys)
+		for key := range keys {
+			leafCounts[key]++
+		}
+	}
+	for _, key := range []string{"answer:first", "answer:second", "answer:third"} {
+		if leafCounts[key] != 1 {
+			t.Fatalf("leaf %q occurs %d times after overlapping pages: %#v", key, leafCounts[key], model.items)
+		}
 	}
 }
 

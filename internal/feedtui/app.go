@@ -337,46 +337,44 @@ func (model *app) applyFetch(result fetchResult) {
 	}
 	added := 0
 	if result.reset {
+		if refreshingExistingFeed {
+			previousItems = updateFeedLeaves(previousItems, collectFeedLeavesByKey(newItems))
+			representedLeaves := previousKeys
+			freshItems := make([]feedItem, 0, len(newItems))
+			for _, item := range newItems {
+				item, leafCount, kept := takeUnrepresentedFeedLeaves(item, representedLeaves)
+				if !kept {
+					continue
+				}
+				item = detachFoldedGroup(item)
+				freshItems = append(freshItems, item)
+				collectFeedItemKeys(item, model.newItemKeys)
+				added += leafCount
+			}
+			model.items = append(freshItems, previousItems...)
+		} else {
+			representedLeaves := make(map[string]struct{})
+			for _, item := range newItems {
+				item, leafCount, kept := takeUnrepresentedFeedLeaves(item, representedLeaves)
+				if !kept {
+					continue
+				}
+				model.items = appendOrMergeFeedGroup(model.items, item)
+				added += leafCount
+			}
+		}
+	} else {
 		representedLeaves := make(map[string]struct{})
+		for _, item := range model.items {
+			collectFeedItemKeys(item, representedLeaves)
+		}
 		for _, item := range newItems {
 			item, leafCount, kept := takeUnrepresentedFeedLeaves(item, representedLeaves)
 			if !kept {
 				continue
 			}
 			model.items = appendOrMergeFeedGroup(model.items, item)
-			if refreshingExistingFeed {
-				markUnseenFeedItemKeys(item, previousKeys, model.newItemKeys)
-				added += countUnseenFeedItemKeys(item, previousKeys)
-			} else {
-				added += leafCount
-			}
-		}
-	} else {
-		seen := make(map[string]struct{}, len(model.items)+len(newItems))
-		for _, item := range model.items {
-			seen[item.key] = struct{}{}
-		}
-		for _, item := range newItems {
-			if _, exists := seen[item.key]; exists {
-				continue
-			}
-			seen[item.key] = struct{}{}
-			model.items = append(model.items, item)
-			added++
-		}
-	}
-	if refreshingExistingFeed {
-		representedLeaves := make(map[string]struct{})
-		for _, item := range model.items {
-			collectFeedItemKeys(item, representedLeaves)
-		}
-		for previousIndex, item := range previousItems {
-			item, _, kept := takeUnrepresentedFeedLeaves(item, representedLeaves)
-			if !kept {
-				continue
-			}
-			insertionIndex := retainedFeedInsertionIndex(model.items, previousItems, previousIndex)
-			model.items = insertOrMergeFeedGroup(model.items, item, insertionIndex)
+			added += leafCount
 		}
 	}
 

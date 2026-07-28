@@ -30,6 +30,51 @@ func collectFeedItemKeys(item feedItem, keys map[string]struct{}) {
 	}
 }
 
+func collectFeedLeavesByKey(items []feedItem) map[string]feedItem {
+	leaves := make(map[string]feedItem)
+	var collect func(feedItem)
+	collect = func(item feedItem) {
+		if len(item.foldedItems) == 0 {
+			leaves[item.key] = item
+			return
+		}
+		for _, child := range item.foldedItems {
+			collect(child)
+		}
+	}
+	for _, item := range items {
+		collect(item)
+	}
+	return leaves
+}
+
+func updateFeedLeaves(items []feedItem, latest map[string]feedItem) []feedItem {
+	result := make([]feedItem, len(items))
+	for index, item := range items {
+		result[index] = updateFeedItemLeaves(item, latest)
+	}
+	return result
+}
+
+func updateFeedItemLeaves(item feedItem, latest map[string]feedItem) feedItem {
+	if len(item.foldedItems) == 0 {
+		updated, found := latest[item.key]
+		if !found {
+			return item
+		}
+		updated.foldedParent = item.foldedParent
+		updated.serverFolded = item.serverFolded
+		return updated
+	}
+
+	children := make([]feedItem, len(item.foldedItems))
+	for index, child := range item.foldedItems {
+		children[index] = updateFeedItemLeaves(child, latest)
+	}
+	item.foldedItems = children
+	return item
+}
+
 func takeUnrepresentedFeedLeaves(item feedItem, represented map[string]struct{}) (feedItem, int, bool) {
 	if len(item.foldedItems) == 0 {
 		if _, exists := represented[item.key]; exists {
@@ -59,6 +104,17 @@ func takeUnrepresentedFeedLeaves(item feedItem, represented map[string]struct{})
 	return item, leaves, true
 }
 
+func detachFoldedGroup(item feedItem) feedItem {
+	if len(item.foldedItems) == 0 {
+		return item
+	}
+	item.key = "folded:new:" + item.foldedItems[0].key
+	for index := range item.foldedItems {
+		item.foldedItems[index].foldedParent = item.key
+	}
+	return item
+}
+
 func appendOrMergeFeedGroup(items []feedItem, item feedItem) []feedItem {
 	return insertOrMergeFeedGroup(items, item, len(items))
 }
@@ -86,73 +142,10 @@ func insertFeedItem(items []feedItem, item feedItem, index int) []feedItem {
 	return items
 }
 
-func retainedFeedInsertionIndex(items, previousItems []feedItem, previousIndex int) int {
-	for index := previousIndex + 1; index < len(previousItems); index++ {
-		if currentIndex := overlappingFeedItemIndex(items, previousItems[index]); currentIndex >= 0 {
-			return currentIndex
-		}
-	}
-	for index := previousIndex - 1; index >= 0; index-- {
-		if currentIndex := overlappingFeedItemIndex(items, previousItems[index]); currentIndex >= 0 {
-			return currentIndex + 1
-		}
-	}
-	return len(items)
-}
-
-func overlappingFeedItemIndex(items []feedItem, target feedItem) int {
-	targetKeys := make(map[string]struct{})
-	collectFeedItemKeys(target, targetKeys)
-	for index, item := range items {
-		if feedItemContainsAnyKey(item, targetKeys) {
-			return index
-		}
-	}
-	return -1
-}
-
-func feedItemContainsAnyKey(item feedItem, keys map[string]struct{}) bool {
-	if len(item.foldedItems) == 0 {
-		_, found := keys[item.key]
-		return found
-	}
-	for _, child := range item.foldedItems {
-		if feedItemContainsAnyKey(child, keys) {
-			return true
-		}
-	}
-	return false
-}
-
 func updateFoldedGroupCount(title string, count int) string {
 	return foldedGroupCountPattern.ReplaceAllStringFunc(title, func(match string) string {
 		return strings.TrimRight(match, "0123456789") + strconv.Itoa(count)
 	})
-}
-
-func countUnseenFeedItemKeys(item feedItem, previous map[string]struct{}) int {
-	if len(item.foldedItems) == 0 {
-		if _, existed := previous[item.key]; existed {
-			return 0
-		}
-		return 1
-	}
-	count := 0
-	for _, child := range item.foldedItems {
-		count += countUnseenFeedItemKeys(child, previous)
-	}
-	return count
-}
-
-func markUnseenFeedItemKeys(item feedItem, previous, unseen map[string]struct{}) {
-	if len(item.foldedItems) == 0 {
-		if _, existed := previous[item.key]; !existed {
-			unseen[item.key] = struct{}{}
-		}
-	}
-	for _, child := range item.foldedItems {
-		markUnseenFeedItemKeys(child, previous, unseen)
-	}
 }
 
 func (model *app) toggleFoldedGroup() bool {
