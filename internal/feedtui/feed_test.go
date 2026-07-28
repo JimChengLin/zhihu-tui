@@ -562,21 +562,23 @@ func TestParseFeedItemsExpandsServerFoldedGroup(t *testing.T) {
 	visible := feedTestRaw("visible", "同一个问题")
 	folded := feedTestRaw("folded", "同一个问题")
 	folded["action_text"] = "另一位用户赞同了回答"
+	otherFolded := feedTestRaw("other-folded", "另一个问题")
+	otherFolded["action_text"] = "第三位用户赞同了回答"
 
 	items := parseFeedItems([]any{
 		visible,
 		map[string]any{
 			"id":         "group-1",
-			"group_text": "还有 1 个动态被收起",
+			"group_text": "还有 {LIST_COUNT} 个动态被收起",
 			"style_type": 0,
-			"list":       []any{folded},
+			"list":       []any{folded, otherFolded},
 		},
 	})
 	if len(items) != 2 {
 		t.Fatalf("items=%#v, want visible activity and collapsed group", items)
 	}
-	if len(items[1].foldedItems) != 1 || items[1].groupOpen {
-		t.Fatalf("group=%#v, want one child collapsed by default", items[1])
+	if len(items[1].foldedItems) != 2 || items[1].groupOpen {
+		t.Fatalf("group=%#v, want two children collapsed by default", items[1])
 	}
 	child := items[1].foldedItems[0]
 	if items[0].key == child.key {
@@ -588,7 +590,7 @@ func TestParseFeedItemsExpandsServerFoldedGroup(t *testing.T) {
 
 	model := &app{items: items, height: 20}
 	sidebar := renderSidebar(model, 48)
-	if !strings.Contains(sidebar[6].text, "▸ 还有 1 个动态被收起") || !strings.Contains(sidebar[7].text, "e/Enter 展开") {
+	if !strings.Contains(sidebar[6].text, "▸ 还有 2 个动态被收起") || !strings.Contains(sidebar[7].text, "e/Enter 展开") {
 		t.Fatalf("collapsed group has no disclosure control: %#v %#v", sidebar[6], sidebar[7])
 	}
 	model.index = 1
@@ -600,7 +602,7 @@ func TestParseFeedItemsExpandsServerFoldedGroup(t *testing.T) {
 	}
 	titleColumn, excerptColumn := -1, -1
 	for _, line := range groupLines {
-		if strings.Contains(line.text, "还有 1 个动态被收起") && line.style != ansiDim {
+		if strings.Contains(line.text, "还有 2 个动态被收起") && line.style != ansiDim {
 			t.Fatalf("folded group title style=%q, want neutral dim text", line.style)
 		}
 		if strings.Contains(line.text, "同一个问题") && line.style != ansiBlue {
@@ -620,11 +622,11 @@ func TestParseFeedItemsExpandsServerFoldedGroup(t *testing.T) {
 	if strings.Contains(groupPreview, "知乎收起\n") || strings.Contains(groupPreview, "展开到左栏") {
 		t.Fatalf("collapsed group still renders redundant labels or instructions: %q", groupPreview)
 	}
-	if !model.toggleFoldedGroup() || len(model.items) != 3 || !model.items[1].groupOpen {
+	if !model.toggleFoldedGroup() || len(model.items) != 4 || !model.items[1].groupOpen {
 		t.Fatalf("group did not expand: %#v", model.items)
 	}
 	sidebar = renderSidebar(model, 48)
-	if !strings.Contains(sidebar[6].text, "▾ 还有 1 个动态被收起") || sidebar[9].text != "      同一个问题" || sidebar[10].text != "      另一位用户 赞同了回答" {
+	if !strings.Contains(sidebar[6].text, "▾ 还有 2 个动态被收起") || sidebar[9].text != "      同一个问题" || sidebar[10].text != "      另一位用户 赞同了回答" {
 		t.Fatalf("expanded group or child is not identified: %#v", sidebar)
 	}
 	model.index = 2
@@ -820,9 +822,10 @@ func TestRefreshPrependsNewLeavesAndPreservesExistingLayout(t *testing.T) {
 
 	t.Run("folded item remains folded", func(t *testing.T) {
 		previous := feedTestRaw("same", "旧标题")
+		other := feedTestRaw("other", "同组其他动态")
 		latest := feedTestRaw("same", "更新后的标题")
-		model := refresh([]any{groupRaw("group", previous)}, response(latest))
-		if len(model.items) != 1 || len(model.items[0].foldedItems) != 1 || model.items[0].key != "group" {
+		model := refresh([]any{groupRaw("group", previous, other)}, response(latest))
+		if len(model.items) != 1 || len(model.items[0].foldedItems) != 2 || model.items[0].key != "group" {
 			t.Fatalf("existing folded layout changed during refresh: %#v", model.items)
 		}
 		child := model.items[0].foldedItems[0]
@@ -842,12 +845,9 @@ func TestRefreshPrependsNewLeavesAndPreservesExistingLayout(t *testing.T) {
 		if len(model.items) != 2 {
 			t.Fatalf("items=%#v, want a new prefix followed by the existing group", model.items)
 		}
-		freshGroup, existingGroup := model.items[0], model.items[1]
-		if len(freshGroup.foldedItems) != 1 || freshGroup.foldedItems[0].key != "answer:new-c" {
-			t.Fatalf("new prefix=%#v, want only the new child", freshGroup)
-		}
-		if freshGroup.key == existingGroup.key || freshGroup.foldedItems[0].foldedParent != freshGroup.key {
-			t.Fatalf("new prefix did not get an independent group key: %#v", freshGroup)
+		freshItem, existingGroup := model.items[0], model.items[1]
+		if freshItem.key != "answer:new-c" || len(freshItem.foldedItems) != 0 || freshItem.foldedParent != "" || freshItem.serverFolded {
+			t.Fatalf("singleton new prefix was not flattened: %#v", freshItem)
 		}
 		if existingGroup.key != "group" || len(existingGroup.foldedItems) != 2 {
 			t.Fatalf("existing folded group changed: %#v", existingGroup)
@@ -1079,7 +1079,7 @@ func TestCollapsedGroupInheritsNewStateUntilExpanded(t *testing.T) {
 	}
 }
 
-func TestRefreshTracksNewChildrenInsideExistingFoldedGroup(t *testing.T) {
+func TestRefreshFlattensSingleNewChildFromExistingFoldedGroup(t *testing.T) {
 	groupRaw := func(children ...map[string]any) map[string]any {
 		list := make([]any, len(children))
 		for index := range children {
@@ -1091,10 +1091,11 @@ func TestRefreshTracksNewChildrenInsideExistingFoldedGroup(t *testing.T) {
 			"list":       list,
 		}
 	}
-	oldChild := feedTestRaw("old-child", "旧子项")
+	oldChildA := feedTestRaw("old-child-a", "旧子项 A")
+	oldChildB := feedTestRaw("old-child-b", "旧子项 B")
 	model := &app{
 		generation:           2,
-		items:                parseFeedItems([]any{groupRaw(oldChild)}),
+		items:                parseFeedItems([]any{groupRaw(oldChildA, oldChildB)}),
 		pendingRefreshTopKey: "stable-group",
 		height:               14,
 	}
@@ -1102,10 +1103,16 @@ func TestRefreshTracksNewChildrenInsideExistingFoldedGroup(t *testing.T) {
 		reset:      true,
 		generation: 2,
 		response: map[string]any{
-			"data":   []any{groupRaw(oldChild, feedTestRaw("new-child", "新子项"))},
+			"data":   []any{groupRaw(oldChildA, oldChildB, feedTestRaw("new-child", "新子项"))},
 			"paging": map[string]any{"is_end": true},
 		},
 	})
+	if len(model.items) != 2 || model.items[0].key != "answer:new-child" || len(model.items[0].foldedItems) != 0 {
+		t.Fatalf("single new folded child was not flattened into the prefix: %#v", model.items)
+	}
+	if model.items[1].key != "stable-group" || len(model.items[1].foldedItems) != 2 {
+		t.Fatalf("existing folded group changed: %#v", model.items[1])
+	}
 	if _, isNew := model.newItemKeys["answer:new-child"]; !isNew {
 		t.Fatalf("new folded child was not tracked: %v", model.newItemKeys)
 	}
@@ -1114,7 +1121,7 @@ func TestRefreshTracksNewChildrenInsideExistingFoldedGroup(t *testing.T) {
 	}
 	sidebar := renderSidebar(model, 48)
 	if sidebar[3].style != ansiBold+ansiGreen {
-		t.Fatalf("collapsed group did not inherit refreshed child state: %#v", sidebar[3])
+		t.Fatalf("flattened new child is not green: %#v", sidebar[3])
 	}
 }
 
@@ -1141,6 +1148,50 @@ func TestViewedRangeUsesFoldedChildrenLogicalOrder(t *testing.T) {
 	if model.firstViewedKey != "group" {
 		t.Fatalf("firstViewedKey=%q, logical group order was ignored", model.firstViewedKey)
 	}
+}
+
+func TestApplyFetchKeepsOnlyMultiItemFoldedGroups(t *testing.T) {
+	groupRaw := func(children ...map[string]any) map[string]any {
+		list := make([]any, len(children))
+		for index := range children {
+			list[index] = children[index]
+		}
+		return map[string]any{
+			"id":         "group",
+			"group_text": "还有 {LIST_COUNT} 条动态被收起",
+			"list":       list,
+		}
+	}
+	load := func(children ...map[string]any) *app {
+		model := &app{generation: 1}
+		model.applyFetch(fetchResult{
+			reset:      true,
+			generation: 1,
+			response: map[string]any{
+				"data":   []any{groupRaw(children...)},
+				"paging": map[string]any{"is_end": true},
+			},
+		})
+		return model
+	}
+
+	t.Run("singleton is flattened", func(t *testing.T) {
+		model := load(feedTestRaw("only", "唯一动态"))
+		if len(model.items) != 1 {
+			t.Fatalf("items=%#v, want one flattened item", model.items)
+		}
+		item := model.items[0]
+		if item.key != "answer:only" || len(item.foldedItems) != 0 || item.foldedParent != "" || item.serverFolded {
+			t.Fatalf("singleton group was not flattened: %#v", item)
+		}
+	})
+
+	t.Run("multiple items stay folded", func(t *testing.T) {
+		model := load(feedTestRaw("first", "动态一"), feedTestRaw("second", "动态二"))
+		if len(model.items) != 1 || model.items[0].key != "group" || len(model.items[0].foldedItems) != 2 {
+			t.Fatalf("multi-item group was flattened: %#v", model.items)
+		}
+	})
 }
 
 func TestApplyFetchDeduplicatesOverlappingPages(t *testing.T) {
@@ -1218,6 +1269,10 @@ func TestApplyFetchDeduplicatesFoldedLeavesAcrossPages(t *testing.T) {
 		if leafCounts[key] != 1 {
 			t.Fatalf("leaf %q occurs %d times after overlapping pages: %#v", key, leafCounts[key], model.items)
 		}
+	}
+	last := model.items[len(model.items)-1]
+	if last.key != "answer:third" || len(last.foldedItems) != 0 || last.foldedParent != "" || last.serverFolded {
+		t.Fatalf("single remaining child on the next page was not flattened: %#v", last)
 	}
 }
 

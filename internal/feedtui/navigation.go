@@ -98,6 +98,12 @@ func takeUnrepresentedFeedLeaves(item feedItem, represented map[string]struct{})
 	if len(children) == 0 {
 		return feedItem{}, 0, false
 	}
+	if len(children) == 1 {
+		child := children[0]
+		child.foldedParent = item.foldedParent
+		child.serverFolded = false
+		return child, leaves, true
+	}
 	item.foldedItems = children
 	item.groupOpen = false
 	item.title = updateFoldedGroupCount(item.title, len(children))
