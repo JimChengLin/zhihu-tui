@@ -24,6 +24,10 @@ var mediaElementPattern = regexp.MustCompile(`(?is)<a\b[^>]*>.*?</a\s*>|<img\b[^
 var hrefAttributePattern = regexp.MustCompile(`(?is)\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
 var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
 var pinTitlePattern = regexp.MustCompile(`(?is)^\s*([^<\r\n]+?)\s*<br\s*/?>\s*<p(?:\s[^>]*)?>`)
+var feedActionLabels = []string{
+	"赞同了回答", "收藏了回答", "回答了问题", "关注了问题", "关注了话题",
+	"发布了文章", "赞同了文章", "收藏了文章", "发布了想法", "赞同了想法",
+}
 
 const (
 	codeBlockStartMarker   = "\ue000code-block-start\ue001"
@@ -174,7 +178,7 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 	createdAt := toInt64(firstNonEmptyAny(raw["created_time"], target["created_time"], target["created"], 0))
 	url := feedItemURL(kind, id, toString(question["id"]), toString(target["url"]))
 	key := kind + ":" + id
-	if actionIdentity := normalizeAction(toString(raw["action_text"])); actionIdentity != "" {
+	if actionIdentity := feedActionLabel(action); actionIdentity != "" {
 		key += ":" + actionIdentity
 	}
 	if key == ":" {
@@ -650,16 +654,22 @@ func compactLine(value string) string {
 
 func normalizeAction(value string) string {
 	value = compactLine(plainText(value))
-	for _, verb := range []string{
-		"赞同了回答", "收藏了回答", "回答了问题", "关注了问题", "关注了话题",
-		"发布了文章", "赞同了文章", "收藏了文章", "发布了想法", "赞同了想法",
-	} {
+	for _, verb := range feedActionLabels {
 		prefix := strings.TrimSpace(strings.TrimSuffix(value, verb))
 		if prefix != value && prefix != "" {
 			return prefix + " " + verb
 		}
 	}
 	return value
+}
+
+func feedActionLabel(action string) string {
+	for _, label := range feedActionLabels {
+		if action == label || strings.HasSuffix(action, " "+label) {
+			return label
+		}
+	}
+	return ""
 }
 
 func feedStats(target map[string]any) string {

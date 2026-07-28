@@ -59,8 +59,8 @@ func TestParseFeedItemFormatsFollowingActivity(t *testing.T) {
 	if item.action != "Alice 赞同了回答" {
 		t.Fatalf("action=%q", item.action)
 	}
-	if item.key != "answer:456:Alice 赞同了回答" {
-		t.Fatalf("key=%q, want stable target and action identity", item.key)
+	if item.key != "answer:456:赞同了回答" {
+		t.Fatalf("key=%q, want stable target and action type", item.key)
 	}
 	if item.title != "测试问题" {
 		t.Fatalf("title=%q", item.title)
@@ -526,11 +526,11 @@ func TestArticleLinkCardLoadsArticleIDFromURL(t *testing.T) {
 	assertLinkCardLine(t, lines, "马甲", ansiDim, true)
 }
 
-func TestFeedItemKeyIgnoresVolatileActivityID(t *testing.T) {
-	activity := func(activityID, actor string) map[string]any {
+func TestFeedItemKeyIgnoresVolatileActivityIDAndActorAggregation(t *testing.T) {
+	activity := func(activityID, action string) map[string]any {
 		return map[string]any{
 			"id":          activityID,
-			"action_text": actor + "赞同了回答",
+			"action_text": action,
 			"target": map[string]any{
 				"id":      "same-answer",
 				"type":    "answer",
@@ -542,22 +542,25 @@ func TestFeedItemKeyIgnoresVolatileActivityID(t *testing.T) {
 			},
 		}
 	}
-	first, _ := parseFeedItem(activity("volatile-a", "Alice"))
-	refreshed, _ := parseFeedItem(activity("volatile-b", "Alice"))
-	otherActor, _ := parseFeedItem(activity("volatile-c", "Bob"))
+	first, _ := parseFeedItem(activity("volatile-a", "Alice赞同了回答"))
+	refreshed, _ := parseFeedItem(activity("volatile-b", "Alice赞同了回答"))
+	otherActor, _ := parseFeedItem(activity("volatile-c", "Bob赞同了回答"))
+	aggregated, _ := parseFeedItem(activity("volatile-d", "Alice、Bob赞同了回答"))
+	otherAction, _ := parseFeedItem(activity("volatile-e", "Alice收藏了回答"))
 	if first.key != refreshed.key {
 		t.Fatalf("same feed changed key across refresh: %q != %q", first.key, refreshed.key)
 	}
-	if first.key == otherActor.key {
-		t.Fatalf("different actors for the same target share key %q", first.key)
+	if first.key != otherActor.key || first.key != aggregated.key {
+		t.Fatalf("actor aggregation changed feed identity: first=%q other=%q aggregated=%q", first.key, otherActor.key, aggregated.key)
+	}
+	if first.key == otherAction.key {
+		t.Fatalf("different action types for the same target share key %q", first.key)
 	}
 }
 
 func TestParseFeedItemsExpandsServerFoldedGroup(t *testing.T) {
 	visible := feedTestRaw("visible", "同一个问题")
-	visible["target"].(map[string]any)["id"] = "same-answer"
 	folded := feedTestRaw("folded", "同一个问题")
-	folded["target"].(map[string]any)["id"] = "same-answer"
 	folded["action_text"] = "另一位用户赞同了回答"
 
 	items := parseFeedItems([]any{
@@ -577,7 +580,7 @@ func TestParseFeedItemsExpandsServerFoldedGroup(t *testing.T) {
 	}
 	child := items[1].foldedItems[0]
 	if items[0].key == child.key {
-		t.Fatalf("different activities for the same target share key %q", items[0].key)
+		t.Fatalf("different targets share key %q", items[0].key)
 	}
 	if !child.serverFolded || child.action != "另一位用户 赞同了回答" {
 		t.Fatalf("folded child=%#v, want complete activity with source marker", child)
@@ -934,6 +937,84 @@ func TestRefreshKeepsGreenFeedBeforeReadBoundaryWhenAPIRegroupsOldItems(t *testi
 	}
 	if sidebar[9].style != ansiCyan || !strings.HasPrefix(sidebar[10].text, "  上次读到↓ · ") {
 		t.Fatalf("read boundary is not immediately after the green prefix: %#v %#v", sidebar[9], sidebar[10])
+	}
+}
+
+func TestRefreshCoalescesActorAggregationForSameTarget(t *testing.T) {
+	activity := func(activityID, action string) map[string]any {
+		return map[string]any{
+			"id":          activityID,
+			"action_text": action,
+			"target": map[string]any{
+				"id":      "same-answer",
+				"type":    "answer",
+				"content": "回答正文",
+				"question": map[string]any{
+					"id":    "same-question",
+					"title": "同一个问题",
+				},
+			},
+		}
+	}
+	group := func(children ...map[string]any) map[string]any {
+		list := make([]any, len(children))
+		for index := range children {
+			list[index] = children[index]
+		}
+		return map[string]any{
+			"id":         "actor-group",
+			"group_text": "还有 {LIST_COUNT} 条动态被收起",
+			"list":       list,
+		}
+	}
+
+	model := &app{generation: 1, height: 14}
+	model.applyFetch(fetchResult{
+		reset:      true,
+		generation: 1,
+		response: map[string]any{
+			"data": []any{
+				activity("single-flaneur", "flaneur赞同了回答"),
+				group(activity("single-duck", "从不毒舌可达鸭赞同了回答")),
+			},
+			"paging": map[string]any{"is_end": true},
+		},
+	})
+	if len(model.items) != 1 || model.items[0].key != "answer:same-answer:赞同了回答" {
+		t.Fatalf("single-actor representations were not coalesced: %#v", model.items)
+	}
+
+	model.firstViewedKey = model.items[0].key
+	model.furthestViewedKey = model.items[0].key
+	model.captureRefreshBoundary()
+	model.generation++
+	model.applyFetch(fetchResult{
+		reset:      true,
+		generation: model.generation,
+		response: map[string]any{
+			"data": []any{
+				activity("aggregated", "flaneur,从不毒舌可达鸭赞同了回答"),
+			},
+			"paging": map[string]any{"is_end": true},
+		},
+	})
+
+	if len(model.items) != 1 {
+		t.Fatalf("aggregated refresh duplicated the same target: %#v", model.items)
+	}
+	item := model.items[0]
+	if item.action != "flaneur,从不毒舌可达鸭 赞同了回答" {
+		t.Fatalf("aggregated action was not updated in place: %q", item.action)
+	}
+	if len(model.newItemKeys) != 0 {
+		t.Fatalf("actor aggregation was incorrectly marked new: %v", model.newItemKeys)
+	}
+	if model.lastReadTopKey != item.key || model.lastReadBottomKey != item.key {
+		t.Fatalf("read boundary changed after actor aggregation: (%q, %q), item=%q", model.lastReadTopKey, model.lastReadBottomKey, item.key)
+	}
+	sidebar := renderSidebar(model, 48)
+	if sidebar[3].style != ansiBold+ansiCyan || !strings.HasPrefix(sidebar[4].text, "  上次读到↓↑ · ") {
+		t.Fatalf("aggregated item lost its read boundary: %#v %#v", sidebar[3], sidebar[4])
 	}
 }
 
