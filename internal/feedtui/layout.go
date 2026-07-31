@@ -22,20 +22,20 @@ const (
 )
 
 type styledLine struct {
-	text        string
-	style       string
-	segments    []styledSegment
-	middle      string
-	middleStyle string
-	tail        string
-	tailStyle   string
-	padding     int
-	suffix      string
-	suffixStyle string
-	hasCursor   bool
-	cursorCell  int
-	raw         bool
-	commentID   string
+	text         string
+	style        string
+	segments     []styledSegment
+	middle       string
+	middleStyle  string
+	tail         string
+	tailStyle    string
+	suffix       string
+	suffixStyle  string
+	suffixColumn int // 1-based column within the current pane.
+	hasCursor    bool
+	cursorCell   int
+	raw          bool
+	commentID    string
 }
 
 type styledSegment struct {
@@ -202,8 +202,6 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		if body.hasCursor {
 			body.cursorCell += left
 		}
-		semanticWidth := styledLineCellWidth(body)
-		body.padding = maxInt(0, left+contentWidth+1-semanticWidth)
 		if model.pageAnchorVisible && model.scroll+row == model.pageAnchorLine {
 			anchorText := styledLineText(bodyLine)
 			if strings.TrimSpace(anchorText) == "" {
@@ -214,10 +212,10 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 			body.segments = nil
 			body.middle = ""
 			body.tail = ""
-			body.padding = 0
 		}
 		body.suffix = bar
 		body.suffixStyle = ansiDim
+		body.suffixColumn = left + contentWidth + 2
 		lines = append(lines, body)
 	}
 	for len(lines) < model.height-fixedBottom {
@@ -305,10 +303,6 @@ func styledLineText(line styledLine) string {
 	text.WriteString(line.middle)
 	text.WriteString(line.tail)
 	return text.String()
-}
-
-func styledLineCellWidth(line styledLine) int {
-	return stringCellWidth(styledLineText(line))
 }
 
 func scrollbarThumb(trackHeight, contentHeight, scroll, maxScroll int) (int, int) {
@@ -911,10 +905,9 @@ func sidebarItemState(model *app, item feedItem) (isNew, isReadTop, isReadBottom
 }
 
 func mergeColumns(left styledLine, leftWidth int, right styledLine, rightWidth int) styledLine {
-	leftText, leftTextWidth := renderStyledLine(left, leftWidth)
-	leftPadding := strings.Repeat(" ", maxInt(0, leftWidth-leftTextWidth))
-	rightText, _ := renderStyledLine(right, maxInt(1, rightWidth-1))
-	text := leftText + leftPadding + styleText(" │ ", ansiDim) + rightText
+	leftText, _ := renderStyledLine(left, leftWidth)
+	rightText, _ := renderStyledLineAt(right, maxInt(1, rightWidth-1), leftWidth+3)
+	text := leftText + moveCursorToColumn(leftWidth+1) + styleText(" │ ", ansiDim) + rightText
 	line := styledLine{text: text, raw: true}
 	if right.hasCursor {
 		line.hasCursor = true

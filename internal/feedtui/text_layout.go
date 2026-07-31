@@ -9,20 +9,34 @@ import (
 )
 
 func renderStyledLine(line styledLine, maxWidth int) (string, int) {
+	return renderStyledLineAt(line, maxWidth, 0)
+}
+
+func renderStyledLineAt(line styledLine, maxWidth, origin int) (string, int) {
 	suffix := truncateCells(line.suffix, maxWidth)
 	suffixWidth := stringCellWidth(suffix)
-	tail := truncateCells(line.tail, maxInt(0, maxWidth-suffixWidth))
+	contentLimit := maxInt(0, maxWidth-suffixWidth)
+	fixedSuffix := suffix != "" && line.suffixColumn > 0
+	if fixedSuffix {
+		line.suffixColumn = minInt(line.suffixColumn, maxWidth-suffixWidth+1)
+		contentLimit = minInt(contentLimit, line.suffixColumn-1)
+	}
+	tail := truncateCells(line.tail, contentLimit)
 	tailWidth := stringCellWidth(tail)
-	contentWidth := maxInt(0, maxWidth-suffixWidth-tailWidth)
+	contentWidth := maxInt(0, contentLimit-tailWidth)
 	text := truncateCells(line.text, contentWidth)
 	textWidth := stringCellWidth(text)
 	segments, segmentsWidth := renderStyledSegments(line.segments, maxInt(0, contentWidth-textWidth))
 	middle := truncateCells(line.middle, maxInt(0, contentWidth-textWidth-segmentsWidth))
 	middleWidth := stringCellWidth(middle)
-	paddingWidth := minInt(line.padding, maxInt(0, maxWidth-suffixWidth-tailWidth-textWidth-segmentsWidth-middleWidth))
-	padding := strings.Repeat(" ", paddingWidth)
-	rendered := styleText(text, line.style) + segments + styleText(middle, line.middleStyle) + styleText(tail, line.tailStyle) + padding + styleText(suffix, line.suffixStyle)
-	return rendered, textWidth + segmentsWidth + middleWidth + tailWidth + paddingWidth + suffixWidth
+	rendered := styleText(text, line.style) + segments + styleText(middle, line.middleStyle) + styleText(tail, line.tailStyle)
+	renderedWidth := textWidth + segmentsWidth + middleWidth + tailWidth
+	if fixedSuffix {
+		rendered += moveCursorToColumn(origin+line.suffixColumn) + styleText(suffix, line.suffixStyle)
+		return rendered, maxInt(renderedWidth, line.suffixColumn-1+suffixWidth)
+	}
+	rendered += styleText(suffix, line.suffixStyle)
+	return rendered, renderedWidth + suffixWidth
 }
 
 func renderStyledSegments(segments []styledSegment, maxWidth int) (string, int) {
@@ -47,6 +61,10 @@ func styleText(text, style string) string {
 		return text
 	}
 	return style + text + ansiReset
+}
+
+func moveCursorToColumn(column int) string {
+	return fmt.Sprintf("\033[%dG", maxInt(1, column))
 }
 
 func writeFrame(out interface{ Write([]byte) (int, error) }, lines []styledLine, width, height int) error {

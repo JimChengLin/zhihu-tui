@@ -34,7 +34,7 @@ func TestRenderAppUsesResponsiveWideLayout(t *testing.T) {
 	if metrics.bodyHeight <= 0 {
 		t.Fatalf("bodyHeight=%d", metrics.bodyHeight)
 	}
-	ansiPattern := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	ansiPattern := regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 	for row, line := range lines {
 		plain := ansiPattern.ReplaceAllString(line.text, "")
 		if width := stringCellWidth(plain); width >= model.width {
@@ -253,9 +253,15 @@ func TestLongBodyScrollbarTracksReadingPosition(t *testing.T) {
 	if bar[0].suffixStyle != ansiDim {
 		t.Fatalf("scrollbar style=%q, want dim", bar[0].suffixStyle)
 	}
+	if bar[0].suffixColumn != model.width-1 {
+		t.Fatalf("scrollbar column=%d, want %d", bar[0].suffixColumn, model.width-1)
+	}
 	var output strings.Builder
 	if err := writeFrame(&output, []styledLine{bar[0]}, model.width, 1); err != nil {
 		t.Fatalf("writeFrame(): %v", err)
+	}
+	if !strings.Contains(output.String(), "\033[99G") {
+		t.Fatalf("rendered scrollbar is not pinned to column 99: %q", output.String())
 	}
 	if !strings.Contains(output.String(), ansiDim+"┃"+ansiReset) {
 		t.Fatalf("rendered scrollbar is not dim: %q", output.String())
@@ -278,6 +284,18 @@ func TestLongBodyScrollbarTracksReadingPosition(t *testing.T) {
 	}
 	if anchors[0].style != ansiBlue {
 		t.Fatalf("page continuation line style=%q, want soft blue", anchors[0].style)
+	}
+}
+
+func TestWideLayoutPinsColumnSeparator(t *testing.T) {
+	line := mergeColumns(
+		styledLine{text: strings.Repeat("中", 20)},
+		10,
+		styledLine{text: "正文"},
+		30,
+	)
+	if !strings.Contains(line.text, "\033[11G"+styleText(" │ ", ansiDim)) {
+		t.Fatalf("column separator is not pinned to column 11: %q", line.text)
 	}
 }
 
