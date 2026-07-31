@@ -7,17 +7,24 @@ import (
 )
 
 type pinCardTestSource struct {
-	detail        map[string]any
-	answerDetail  map[string]any
-	articleDetail map[string]any
-	calls         []string
-	answerCalls   []string
-	articleCalls  []string
+	detail         map[string]any
+	questionDetail map[string]any
+	answerDetail   map[string]any
+	articleDetail  map[string]any
+	calls          []string
+	questionCalls  []string
+	answerCalls    []string
+	articleCalls   []string
 }
 
 func (source *pinCardTestSource) GetPin(_ context.Context, id string) (map[string]any, error) {
 	source.calls = append(source.calls, id)
 	return source.detail, nil
+}
+
+func (source *pinCardTestSource) GetQuestion(_ context.Context, id string) (map[string]any, error) {
+	source.questionCalls = append(source.questionCalls, id)
+	return source.questionDetail, nil
 }
 
 func (source *pinCardTestSource) GetAnswer(_ context.Context, id string) (map[string]any, error) {
@@ -363,7 +370,7 @@ func TestPinLinkCardLoadsAndRendersReferencedPin(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"最终判了五年",
-		"↳ 我提一个思路",
+		"我提一个思路",
 		"「训练出优秀的大模型」，跟「能提供优秀的网络服务」其实是两个有区别的技能",
 		"赞同 2  ·  收藏 0  ·  评论 1  ·  想法",
 	} {
@@ -375,11 +382,12 @@ func TestPinLinkCardLoadsAndRendersReferencedPin(t *testing.T) {
 		t.Fatalf("generic card label hid the official title: %q", items[0].body)
 	}
 	lines := layoutBodyLines(items[0].body, 100)
-	assertLinkCardLine(t, lines, "↳ 我提一个思路", ansiBlue, false)
+	assertLinkCardLine(t, lines, "我提一个思路", ansiBlue, false)
 	assertLinkCardLine(t, lines, "「训练出优秀的大模型」", "", true)
 	assertLinkCardLine(t, lines, "赞同 2", ansiDim, true)
 	for _, line := range lines {
-		if strings.Contains(line.text, "「训练出优秀的大模型」") && (strings.Contains(line.text, "第二段不应塞进卡片") || !strings.HasSuffix(line.text, "…")) {
+		rendered := styledLineText(line)
+		if strings.Contains(rendered, "「训练出优秀的大模型」") && (strings.Contains(rendered, "第二段不应塞进卡片") || !strings.HasSuffix(rendered, "…")) {
 			t.Fatalf("pin card excerpt was not clipped to one visual line: %#v", line)
 		}
 	}
@@ -391,7 +399,7 @@ func TestPinLinkCardExcerptFallsBackToExcerptTitle(t *testing.T) {
 		"like_count":    3,
 	}
 	card := formatLinkCard(map[string]any{"data_content_type": "PIN", "card_detail": detail})
-	for _, want := range []string{"↳ 卡片标题", "卡片摘要。", "赞同 3  ·  想法"} {
+	for _, want := range []string{"卡片标题", "卡片摘要。", "赞同 3  ·  想法"} {
 		if !strings.Contains(card, want) {
 			t.Fatalf("card has no %q: %q", want, card)
 		}
@@ -408,21 +416,21 @@ func TestPinLinkCardWithoutTitleSkipsBlueTitle(t *testing.T) {
 		"data_draft_title":  "引用想法",
 		"card_detail":       detail,
 	})
-	if strings.Contains(card, linkCardTitleMarker) || strings.Contains(card, "↳ 引用想法") {
+	if strings.Contains(card, linkCardTitleMarker) || strings.Contains(card, "引用想法") {
 		t.Fatalf("untitled pin rendered a blue title: %q", card)
 	}
 	lines := layoutBodyLines(card, 80)
-	assertLinkCardLine(t, lines, "↳ 这是一条没有标题的想法正文。", "", false)
+	assertLinkCardLine(t, lines, "这是一条没有标题的想法正文。", "", false)
 	assertLinkCardLine(t, lines, "赞同 3", ansiDim, true)
 }
 
 func assertLinkCardLine(t *testing.T, lines []styledLine, text, style string, indented bool) {
 	t.Helper()
 	for _, line := range lines {
-		if !strings.Contains(line.text, text) {
+		if !strings.Contains(styledLineText(line), text) {
 			continue
 		}
-		if line.style != style || strings.HasPrefix(line.text, "  ") != indented {
+		if line.middleStyle != style || strings.HasPrefix(line.text, "  ") != indented {
 			t.Fatalf("link card line=%#v, want style=%q indented=%v", line, style, indented)
 		}
 		return
@@ -462,7 +470,7 @@ func TestAnswerLinkCardLoadsAnswerFromURL(t *testing.T) {
 		t.Fatalf("items=%#v", items)
 	}
 	for _, want := range []string{
-		"↳ 如何评价 GPT-5.6？",
+		"如何评价 GPT-5.6？",
 		"回答的真实摘要。",
 		"厂长L  ·  赞同 102  ·  收藏 15  ·  评论 9  ·  回答",
 	} {
@@ -474,7 +482,7 @@ func TestAnswerLinkCardLoadsAnswerFromURL(t *testing.T) {
 		t.Fatalf("answer card used pin fallback: %q", items[0].body)
 	}
 	lines := layoutBodyLines(items[0].body, 60)
-	assertLinkCardLine(t, lines, "↳ 如何评价 GPT-5.6？", ansiBlue, false)
+	assertLinkCardLine(t, lines, "如何评价 GPT-5.6？", ansiBlue, false)
 	assertLinkCardLine(t, lines, "回答的真实摘要。", "", true)
 	assertLinkCardLine(t, lines, "厂长L", ansiDim, true)
 }
@@ -512,7 +520,7 @@ func TestArticleLinkCardLoadsArticleIDFromURL(t *testing.T) {
 		t.Fatalf("items=%#v", items)
 	}
 	for _, want := range []string{
-		"↳ Uber 如何把 MySQL 主库故障时间从 2 分钟压到 10 秒",
+		"Uber 如何把 MySQL 主库故障时间从 2 分钟压到 10 秒",
 		"本文是对 Uber MySQL 高可用改造的整理与翻译。",
 		"马甲  ·  赞同 8  ·  收藏 21  ·  评论 1  ·  文章",
 	} {
@@ -521,7 +529,7 @@ func TestArticleLinkCardLoadsArticleIDFromURL(t *testing.T) {
 		}
 	}
 	lines := layoutBodyLines(items[0].body, 70)
-	assertLinkCardLine(t, lines, "↳ Uber 如何把 MySQL", ansiBlue, false)
+	assertLinkCardLine(t, lines, "Uber 如何把 MySQL", ansiBlue, false)
 	assertLinkCardLine(t, lines, "本文是对 Uber", "", true)
 	assertLinkCardLine(t, lines, "马甲", ansiDim, true)
 }

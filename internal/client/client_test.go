@@ -84,9 +84,11 @@ func TestGetUserProfileIncludesRelationshipFields(t *testing.T) {
 	}
 }
 
-func TestGetPinArticleAndComment(t *testing.T) {
+func TestGetQuestionPinArticleAndComment(t *testing.T) {
 	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v4/questions/321":
+			writeJSON(t, w, http.StatusOK, map[string]any{"id": 321, "answer_count": 6})
 		case "/api/v4/pins/123":
 			writeJSON(t, w, http.StatusOK, map[string]any{"id": 123, "reaction_count": 9})
 		case "/zhuanlan/api/articles/456":
@@ -99,6 +101,13 @@ func TestGetPinArticleAndComment(t *testing.T) {
 	})
 	defer server.Close()
 
+	question, err := c.GetQuestion(context.Background(), "321")
+	if err != nil {
+		t.Fatalf("GetQuestion: %v", err)
+	}
+	if question["answer_count"].(json.Number).String() != "6" {
+		t.Fatalf("question=%#v", question)
+	}
 	pin, err := c.GetPin(context.Background(), "123")
 	if err != nil {
 		t.Fatalf("GetPin: %v", err)

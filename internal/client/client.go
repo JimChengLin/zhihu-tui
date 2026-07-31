@@ -160,6 +160,10 @@ func (c *Client) GetQuestionAnswers(ctx context.Context, questionID string, offs
 	return c.getMap(ctx, c.endpoints.APIV4+"/questions/"+url.PathEscape(questionID)+"/answers", params)
 }
 
+func (c *Client) GetQuestion(ctx context.Context, questionID string) (map[string]any, error) {
+	return c.getMap(ctx, c.endpoints.APIV4+"/questions/"+url.PathEscape(questionID), nil)
+}
+
 func (c *Client) GetAnswer(ctx context.Context, answerID string) (map[string]any, error) {
 	params := url.Values{"include": {"content,voteup_count,comment_count,created_time,updated_time,author,question,favlists_count,thanks_count"}}
 	return c.getMap(ctx, c.endpoints.APIV4+"/answers/"+url.PathEscape(answerID), params)

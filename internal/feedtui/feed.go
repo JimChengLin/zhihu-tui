@@ -38,6 +38,8 @@ const (
 	linkCardQuoteMarker    = "\ue000link-card-quote\ue001"
 	linkCardExcerptMarker  = "\ue000link-card-excerpt\ue001"
 	linkCardMetadataMarker = "\ue000link-card-metadata\ue001"
+	linkCardPrefixEnd      = "\ue003"
+	maxLinkCardDepth       = 8
 )
 
 type feedItem struct {
@@ -66,6 +68,16 @@ type feedItem struct {
 	foldedItems      []feedItem
 	foldedParent     string
 	groupOpen        bool
+}
+
+type linkCardRef struct {
+	kind string
+	id   string
+}
+
+type linkCardField struct {
+	marker string
+	text   string
 }
 
 func parseFeedItems(data []any) []feedItem {
@@ -142,7 +154,8 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 	if kind == "pin" {
 		pinTitle = firstNonEmpty(title, pinContentTitle(target["content"]))
 	}
-	body, imageCount := feedContentText(target["content"])
+	rootRef, _ := feedTargetReference(target)
+	body, imageCount := feedContentTextWithRoot(target["content"], rootRef)
 	if body == "" {
 		body = feedBodyFallback(kind, target)
 	}
@@ -330,20 +343,34 @@ func stripInlineLinkMarkers(value string) string {
 }
 
 func feedContentText(value any) (string, int) {
+	return feedContentTextWithRoot(value, linkCardRef{})
+}
+
+func feedContentTextWithRoot(value any, root linkCardRef) (string, int) {
 	if text, ok := value.(string); ok {
 		return contentText(text)
 	}
 	parts := make([]string, 0)
+	pendingCards := make([]map[string]any, 0)
 	imageCount := 0
+	flushCards := func() {
+		if len(pendingCards) == 0 {
+			return
+		}
+		parts = append(parts, formatLinkCardForestWithRoot(pendingCards, root))
+		pendingCards = pendingCards[:0]
+	}
 	for _, rawNode := range asSlice(value) {
 		node := mapValue(rawNode)
 		switch strings.ToLower(toString(node["type"])) {
 		case "image":
+			flushCards()
 			imageCount++
 			parts = append(parts, fmt.Sprintf("▣ 图片 %d", imageCount))
 		case "link_card":
-			parts = append(parts, formatLinkCard(node))
+			pendingCards = append(pendingCards, node)
 		default:
+			flushCards()
 			text, nestedImages := contentTextFrom(toString(node["content"]), imageCount)
 			if text != "" {
 				parts = append(parts, text)
@@ -351,33 +378,20 @@ func feedContentText(value any) (string, int) {
 			imageCount += nestedImages
 		}
 	}
+	flushCards()
 	return strings.TrimSpace(strings.Join(parts, "\n\n")), imageCount
 }
 
 func hydrateFeedLinkCards(ctx context.Context, source linkCardSource, response map[string]any) {
-	type cardRef struct {
-		kind string
-		id   string
-	}
-	nodesByRef := make(map[cardRef][]map[string]any)
+	pending := make([]map[string]any, 0)
+	rootDetails := make(map[linkCardRef]map[string]any)
 	var collectActivity func(map[string]any)
 	collectActivity = func(activity map[string]any) {
 		target := mapValue(activity["target"])
-		for _, rawNode := range asSlice(target["content"]) {
-			node := mapValue(rawNode)
-			if !strings.EqualFold(toString(node["type"]), "link_card") {
-				continue
-			}
-			kind := strings.ToUpper(strings.TrimSpace(toString(node["data_content_type"])))
-			if kind != "PIN" && kind != "ANSWER" && kind != "ARTICLE" {
-				continue
-			}
-			id := linkCardContentID(node, kind)
-			if id != "" {
-				ref := cardRef{kind: kind, id: id}
-				nodesByRef[ref] = append(nodesByRef[ref], node)
-			}
+		if ref, ok := feedTargetReference(target); ok {
+			rootDetails[ref] = target
 		}
+		pending = append(pending, linkCardsInContent(target["content"])...)
 		for _, rawChild := range asSlice(activity["list"]) {
 			collectActivity(mapValue(rawChild))
 		}
@@ -387,35 +401,110 @@ func hydrateFeedLinkCards(ctx context.Context, source linkCardSource, response m
 	}
 
 	type result struct {
-		ref    cardRef
+		ref    linkCardRef
 		detail map[string]any
 		err    error
 	}
-	results := make(chan result, len(nodesByRef))
-	for ref := range nodesByRef {
-		go func() {
-			var detail map[string]any
-			var err error
-			if ref.kind == "ANSWER" {
-				detail, err = source.GetAnswer(ctx, ref.id)
-			} else if ref.kind == "ARTICLE" {
-				detail, err = source.GetArticle(ctx, ref.id)
-			} else {
-				detail, err = source.GetPin(ctx, ref.id)
-			}
-			results <- result{ref: ref, detail: detail, err: err}
-		}()
+	cache := make(map[linkCardRef]result)
+	for ref, detail := range rootDetails {
+		cache[ref] = result{ref: ref, detail: detail}
 	}
-	for range nodesByRef {
-		result := <-results
-		for _, node := range nodesByRef[result.ref] {
-			if result.err != nil {
-				node["card_error"] = result.err.Error()
+	for depth := 1; len(pending) > 0 && depth <= maxLinkCardDepth; depth++ {
+		nodesByRef := make(map[linkCardRef][]map[string]any)
+		for _, node := range pending {
+			ref, ok := linkCardReference(node)
+			if !ok {
 				continue
 			}
-			node["card_detail"] = result.detail
+			if cached, found := cache[ref]; found {
+				applyLinkCardResult(node, cached.detail, cached.err)
+				continue
+			}
+			nodesByRef[ref] = append(nodesByRef[ref], node)
+		}
+		if len(nodesByRef) == 0 {
+			break
+		}
+
+		results := make(chan result, len(nodesByRef))
+		for ref := range nodesByRef {
+			go func() {
+				detail, err := fetchLinkCardDetail(ctx, source, ref)
+				results <- result{ref: ref, detail: detail, err: err}
+			}()
+		}
+
+		next := make([]map[string]any, 0)
+		for range nodesByRef {
+			fetched := <-results
+			cache[fetched.ref] = fetched
+			for _, node := range nodesByRef[fetched.ref] {
+				applyLinkCardResult(node, fetched.detail, fetched.err)
+			}
+			if fetched.err == nil {
+				next = append(next, linkCardsInContent(fetched.detail["content"])...)
+			}
+		}
+		pending = next
+	}
+}
+
+func feedTargetReference(target map[string]any) (linkCardRef, bool) {
+	ref := linkCardRef{
+		kind: strings.ToUpper(strings.TrimSpace(toString(target["type"]))),
+		id:   strings.TrimSpace(toString(target["id"])),
+	}
+	switch ref.kind {
+	case "PIN", "QUESTION", "ANSWER", "ARTICLE":
+		return ref, ref.id != ""
+	default:
+		return linkCardRef{}, false
+	}
+}
+
+func linkCardsInContent(content any) []map[string]any {
+	nodes := make([]map[string]any, 0)
+	for _, rawNode := range asSlice(content) {
+		node := mapValue(rawNode)
+		if strings.EqualFold(toString(node["type"]), "link_card") {
+			nodes = append(nodes, node)
 		}
 	}
+	return nodes
+}
+
+func linkCardReference(node map[string]any) (linkCardRef, bool) {
+	kind := strings.ToUpper(strings.TrimSpace(toString(node["data_content_type"])))
+	switch kind {
+	case "PIN", "QUESTION", "ANSWER", "ARTICLE":
+	default:
+		return linkCardRef{}, false
+	}
+	id := linkCardContentID(node, kind)
+	return linkCardRef{kind: kind, id: id}, id != ""
+}
+
+func fetchLinkCardDetail(ctx context.Context, source linkCardSource, ref linkCardRef) (map[string]any, error) {
+	switch ref.kind {
+	case "PIN":
+		return source.GetPin(ctx, ref.id)
+	case "QUESTION":
+		return source.GetQuestion(ctx, ref.id)
+	case "ANSWER":
+		return source.GetAnswer(ctx, ref.id)
+	case "ARTICLE":
+		return source.GetArticle(ctx, ref.id)
+	default:
+		return nil, fmt.Errorf("unsupported link card type %q", ref.kind)
+	}
+}
+
+func applyLinkCardResult(node, detail map[string]any, err error) {
+	if err != nil {
+		node["card_error"] = err.Error()
+		return
+	}
+	node["card_detail"] = detail
 }
 
 func linkCardContentID(node map[string]any, kind string) string {
@@ -440,48 +529,145 @@ func linkCardContentID(node map[string]any, kind string) string {
 }
 
 func formatLinkCard(node map[string]any) string {
+	return formatLinkCardForest([]map[string]any{node})
+}
+
+func formatLinkCardForest(nodes []map[string]any) string {
+	return formatLinkCardForestWithRoot(nodes, linkCardRef{})
+}
+
+func formatLinkCardForestWithRoot(nodes []map[string]any, root linkCardRef) string {
+	var builder strings.Builder
+	path := make(map[linkCardRef]struct{})
+	if root.kind != "" && root.id != "" {
+		path[root] = struct{}{}
+	}
+	for index, node := range nodes {
+		if index > 0 {
+			builder.WriteString("\n")
+		}
+		formatLinkCardTree(&builder, node, "", index == len(nodes)-1, 1, path)
+	}
+	return builder.String()
+}
+
+func formatLinkCardTree(builder *strings.Builder, node map[string]any, prefix string, last bool, depth int, path map[linkCardRef]struct{}) {
+	fields := linkCardFields(node)
+	ref, hasRef := linkCardReference(node)
+	_, cycle := path[ref]
+	if !hasRef {
+		cycle = false
+	}
+	if len(fields) == 0 {
+		fields = append(fields, linkCardField{marker: linkCardTitleMarker, text: linkCardFallbackLabel(node)})
+	}
+	if cycle {
+		fields[0].text += "（循环引用）"
+	} else if depth > maxLinkCardDepth {
+		fields[0].text += fmt.Sprintf("（引用超过 %d 层，停止展开）", maxLinkCardDepth)
+	}
+
+	branch := "├─ "
+	childPrefix := prefix + "│  "
+	if last {
+		branch = "└─ "
+		childPrefix = prefix + "   "
+	}
+	for index, field := range fields {
+		if index > 0 {
+			builder.WriteString("\n")
+		}
+		linePrefix := childPrefix
+		if index == 0 {
+			linePrefix = prefix + branch
+		}
+		builder.WriteString(field.marker)
+		builder.WriteString(linePrefix)
+		builder.WriteString(linkCardPrefixEnd)
+		builder.WriteString(field.text)
+	}
+
+	if cycle || depth > maxLinkCardDepth {
+		return
+	}
+	if hasRef {
+		path[ref] = struct{}{}
+		defer delete(path, ref)
+	}
+	children := linkCardsInContent(mapValue(node["card_detail"])["content"])
+	for index, child := range children {
+		builder.WriteString("\n")
+		formatLinkCardTree(builder, child, childPrefix, index == len(children)-1, depth+1, path)
+	}
+}
+
+func linkCardFields(node map[string]any) []linkCardField {
 	detail := mapValue(node["card_detail"])
 	kind := strings.ToUpper(strings.TrimSpace(toString(node["data_content_type"])))
-	if kind == "ANSWER" {
-		return formatAnswerLinkCard(node, detail)
+	switch kind {
+	case "PIN":
+		return pinLinkCardFields(node, detail)
+	case "QUESTION":
+		return questionLinkCardFields(node, detail)
+	case "ANSWER":
+		return answerLinkCardFields(node, detail)
+	case "ARTICLE":
+		return articleLinkCardFields(node, detail)
+	default:
+		title := firstNonEmpty(toString(node["data_draft_title"]), "引用内容")
+		return []linkCardField{{marker: linkCardTitleMarker, text: plainText(title)}}
 	}
-	if kind == "ARTICLE" {
-		return formatArticleLinkCard(node, detail)
-	}
+}
+
+func pinLinkCardFields(node, detail map[string]any) []linkCardField {
 	title := firstNonEmpty(pinLinkCardTitle(detail), toString(node["data_draft_title"]))
 	if title == "引用想法" {
 		title = ""
 	}
-	lines := make([]string, 0, 3)
+	fields := make([]linkCardField, 0, 3)
 	if title != "" {
 		if toString(node["card_error"]) != "" {
 			title += "（详情加载失败）"
 		}
-		lines = append(lines, linkCardTitleMarker+"↳ "+title)
+		fields = append(fields, linkCardField{marker: linkCardTitleMarker, text: title})
 	} else if toString(node["card_error"]) != "" {
-		lines = append(lines, linkCardTitleMarker+"↳ 引用想法（详情加载失败）")
+		fields = append(fields, linkCardField{marker: linkCardTitleMarker, text: "引用想法（详情加载失败）"})
 	}
 	if excerpt := pinLinkCardExcerpt(detail); excerpt != "" {
 		if title == "" && toString(node["card_error"]) == "" {
-			lines = append(lines, linkCardQuoteMarker+"↳ "+excerpt)
+			fields = append(fields, linkCardField{marker: linkCardQuoteMarker, text: excerpt})
 		} else {
-			lines = append(lines, linkCardExcerptMarker+excerpt)
+			fields = append(fields, linkCardField{marker: linkCardExcerptMarker, text: excerpt})
 		}
 	}
 	if stats := linkCardStats(detail); stats != "" {
-		lines = append(lines, linkCardMetadataMarker+stats+"  ·  想法")
+		fields = append(fields, linkCardField{marker: linkCardMetadataMarker, text: stats + "  ·  想法"})
 	}
-	return strings.Join(lines, "\n")
+	return fields
 }
 
-func formatAnswerLinkCard(node, detail map[string]any) string {
+func questionLinkCardFields(node, detail map[string]any) []linkCardField {
+	title := firstNonEmpty(toString(detail["title"]), toString(node["data_draft_title"]), "引用问题")
+	if toString(node["card_error"]) != "" {
+		title += "（详情加载失败）"
+	}
+	fields := []linkCardField{{marker: linkCardTitleMarker, text: plainText(title)}}
+	metadata := questionStats(detail)
+	if metadata != "" {
+		metadata += "  ·  "
+	}
+	fields = append(fields, linkCardField{marker: linkCardMetadataMarker, text: metadata + "问题"})
+	return fields
+}
+
+func answerLinkCardFields(node, detail map[string]any) []linkCardField {
 	title := firstNonEmpty(toString(mapValue(detail["question"])["title"]), toString(node["data_draft_title"]), "引用回答")
 	if toString(node["card_error"]) != "" {
 		title += "（详情加载失败）"
 	}
-	lines := []string{linkCardTitleMarker + "↳ " + plainText(title)}
+	fields := []linkCardField{{marker: linkCardTitleMarker, text: plainText(title)}}
 	if excerpt := linkCardExcerpt(detail); excerpt != "" {
-		lines = append(lines, linkCardExcerptMarker+excerpt)
+		fields = append(fields, linkCardField{marker: linkCardExcerptMarker, text: excerpt})
 	}
 	metadata := make([]string, 0, 3)
 	if author := strings.TrimSpace(toString(mapValue(detail["author"])["name"])); author != "" {
@@ -491,18 +677,18 @@ func formatAnswerLinkCard(node, detail map[string]any) string {
 		metadata = append(metadata, stats)
 	}
 	metadata = append(metadata, "回答")
-	lines = append(lines, linkCardMetadataMarker+strings.Join(metadata, "  ·  "))
-	return strings.Join(lines, "\n")
+	fields = append(fields, linkCardField{marker: linkCardMetadataMarker, text: strings.Join(metadata, "  ·  ")})
+	return fields
 }
 
-func formatArticleLinkCard(node, detail map[string]any) string {
+func articleLinkCardFields(node, detail map[string]any) []linkCardField {
 	title := firstNonEmpty(toString(detail["title"]), toString(node["data_draft_title"]), "引用文章")
 	if toString(node["card_error"]) != "" {
 		title += "（详情加载失败）"
 	}
-	lines := []string{linkCardTitleMarker + "↳ " + plainText(title)}
+	fields := []linkCardField{{marker: linkCardTitleMarker, text: plainText(title)}}
 	if excerpt := linkCardExcerpt(detail); excerpt != "" {
-		lines = append(lines, linkCardExcerptMarker+excerpt)
+		fields = append(fields, linkCardField{marker: linkCardExcerptMarker, text: excerpt})
 	}
 	metadata := make([]string, 0, 3)
 	if author := strings.TrimSpace(toString(mapValue(detail["author"])["name"])); author != "" {
@@ -512,8 +698,23 @@ func formatArticleLinkCard(node, detail map[string]any) string {
 		metadata = append(metadata, stats)
 	}
 	metadata = append(metadata, "文章")
-	lines = append(lines, linkCardMetadataMarker+strings.Join(metadata, "  ·  "))
-	return strings.Join(lines, "\n")
+	fields = append(fields, linkCardField{marker: linkCardMetadataMarker, text: strings.Join(metadata, "  ·  ")})
+	return fields
+}
+
+func linkCardFallbackLabel(node map[string]any) string {
+	switch strings.ToUpper(strings.TrimSpace(toString(node["data_content_type"]))) {
+	case "PIN":
+		return "引用想法"
+	case "QUESTION":
+		return "引用问题"
+	case "ANSWER":
+		return "引用回答"
+	case "ARTICLE":
+		return "引用文章"
+	default:
+		return "引用内容"
+	}
 }
 
 func linkCardExcerpt(detail map[string]any) string {

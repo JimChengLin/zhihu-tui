@@ -507,28 +507,9 @@ func layoutBodyLines(body string, width int) []styledLine {
 				continue
 			}
 		}
-		if strings.HasPrefix(sourceLine, linkCardTitleMarker) {
+		if line, ok := layoutLinkCardLine(sourceLine, width, currentCommentID); ok {
 			flushProse()
-			text := truncateCells(strings.TrimPrefix(sourceLine, linkCardTitleMarker), width)
-			result = append(result, styledLine{text: text, style: ansiBlue, commentID: currentCommentID})
-			continue
-		}
-		if strings.HasPrefix(sourceLine, linkCardQuoteMarker) {
-			flushProse()
-			text := truncateCells(strings.TrimPrefix(sourceLine, linkCardQuoteMarker), width)
-			result = append(result, styledLine{text: text, commentID: currentCommentID})
-			continue
-		}
-		if strings.HasPrefix(sourceLine, linkCardExcerptMarker) {
-			flushProse()
-			text := truncateCells(strings.TrimPrefix(sourceLine, linkCardExcerptMarker), maxInt(1, width-2))
-			result = append(result, styledLine{text: "  " + text, commentID: currentCommentID})
-			continue
-		}
-		if strings.HasPrefix(sourceLine, linkCardMetadataMarker) {
-			flushProse()
-			text := truncateCells(strings.TrimPrefix(sourceLine, linkCardMetadataMarker), maxInt(1, width-2))
-			result = append(result, styledLine{text: "  " + text, style: ansiDim, commentID: currentCommentID})
+			result = append(result, line)
 			continue
 		}
 		switch sourceLine {
@@ -561,6 +542,47 @@ func layoutBodyLines(body string, width int) []styledLine {
 		return []styledLine{{}}
 	}
 	return result
+}
+
+func layoutLinkCardLine(sourceLine string, width int, commentID string) (styledLine, bool) {
+	prefix, text, textStyle, ok := splitLinkCardLine(sourceLine)
+	if !ok {
+		return styledLine{}, false
+	}
+	text = truncateCells(text, maxInt(1, width-stringCellWidth(prefix)))
+	return styledLine{
+		text:        prefix,
+		style:       ansiDim,
+		middle:      text,
+		middleStyle: textStyle,
+		commentID:   commentID,
+	}, true
+}
+
+func splitLinkCardLine(sourceLine string) (prefix, text, textStyle string, ok bool) {
+	type markerStyle struct {
+		marker       string
+		style        string
+		legacyIndent string
+	}
+	for _, candidate := range []markerStyle{
+		{marker: linkCardTitleMarker, style: ansiBlue},
+		{marker: linkCardQuoteMarker},
+		{marker: linkCardExcerptMarker, legacyIndent: "  "},
+		{marker: linkCardMetadataMarker, style: ansiDim, legacyIndent: "  "},
+	} {
+		if !strings.HasPrefix(sourceLine, candidate.marker) {
+			continue
+		}
+		marked := strings.TrimPrefix(sourceLine, candidate.marker)
+		prefix, text, found := strings.Cut(marked, linkCardPrefixEnd)
+		if !found {
+			prefix = candidate.legacyIndent
+			text = marked
+		}
+		return prefix, text, candidate.style, true
+	}
+	return "", "", "", false
 }
 
 func insertCommentComposer(bodyLines []styledLine, model *app, width int) []styledLine {
@@ -744,10 +766,9 @@ func foldedItemAuthorLabel(item feedItem) string {
 func foldedItemExcerpt(item feedItem) (text string, hasMore bool) {
 	meaningful := make([]string, 0, 2)
 	for _, sourceLine := range strings.Split(item.body, "\n") {
-		sourceLine = strings.TrimPrefix(sourceLine, linkCardTitleMarker)
-		sourceLine = strings.TrimPrefix(sourceLine, linkCardQuoteMarker)
-		sourceLine = strings.TrimPrefix(sourceLine, linkCardExcerptMarker)
-		sourceLine = strings.TrimPrefix(sourceLine, linkCardMetadataMarker)
+		if _, text, _, ok := splitLinkCardLine(sourceLine); ok {
+			sourceLine = text
+		}
 		text := compactLine(stripInlineLinkMarkers(sourceLine))
 		if text == "" || text == codeBlockStartMarker || text == codeBlockEndMarker {
 			continue

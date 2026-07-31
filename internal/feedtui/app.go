@@ -36,6 +36,7 @@ type feedSource interface {
 
 type linkCardSource interface {
 	GetPin(context.Context, string) (map[string]any, error)
+	GetQuestion(context.Context, string) (map[string]any, error)
 	GetAnswer(context.Context, string) (map[string]any, error)
 	GetArticle(context.Context, string) (map[string]any, error)
 }

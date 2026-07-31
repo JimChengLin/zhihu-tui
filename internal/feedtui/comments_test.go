@@ -91,6 +91,10 @@ func (source *commentTestSource) GetPin(context.Context, string) (map[string]any
 	return nil, nil
 }
 
+func (source *commentTestSource) GetQuestion(context.Context, string) (map[string]any, error) {
+	return nil, nil
+}
+
 func (source *commentTestSource) GetAnswer(context.Context, string) (map[string]any, error) {
 	return nil, nil
 }
