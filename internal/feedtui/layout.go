@@ -420,6 +420,34 @@ func inlineLinkSpans(value string) (string, []inlineLinkSpan) {
 	return plain.String(), spans
 }
 
+func truncateInlineLinkText(value string, width int) string {
+	plain, spans := inlineLinkSpans(value)
+	truncated := truncateCells(plain, width)
+	if truncated == plain {
+		return value
+	}
+	if len(spans) == 0 {
+		return truncated
+	}
+
+	var result strings.Builder
+	cursor := 0
+	for _, span := range spans {
+		start := minInt(len(truncated), maxInt(cursor, span.start))
+		end := minInt(len(truncated), span.end)
+		if start >= end {
+			continue
+		}
+		result.WriteString(truncated[cursor:start])
+		result.WriteString(inlineLinkStartMarker)
+		result.WriteString(truncated[start:end])
+		result.WriteString(inlineLinkEndMarker)
+		cursor = end
+	}
+	result.WriteString(truncated[cursor:])
+	return result.String()
+}
+
 func styledLineFromSpans(text, paragraph string, spans []inlineLinkSpan, lineStart int, commentID string) styledLine {
 	if len(spans) == 0 {
 		return styledLine{text: text, commentID: commentID}
@@ -549,7 +577,16 @@ func layoutLinkCardLine(sourceLine string, width int, commentID string) (styledL
 	if !ok {
 		return styledLine{}, false
 	}
-	text = truncateCells(text, maxInt(1, width-stringCellWidth(prefix)))
+	lineWidth := maxInt(1, width-stringCellWidth(prefix))
+	if strings.Contains(text, inlineLinkStartMarker) {
+		plain, spans := inlineLinkSpans(text)
+		plain = truncateCells(plain, lineWidth)
+		line := styledLineFromSpans(plain, plain, spans, 0, commentID)
+		line.text = prefix
+		line.style = ansiDim
+		return line, true
+	}
+	text = truncateCells(text, lineWidth)
 	return styledLine{
 		text:        prefix,
 		style:       ansiDim,

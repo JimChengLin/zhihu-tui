@@ -160,6 +160,15 @@ func TestLinkCardTreeHydratesPinPinAnswerRecursively(t *testing.T) {
 	requireLinkCardTreeLine(t, lines, "   └─ ", "二级想法", ansiBlue)
 	requireLinkCardTreeLine(t, lines, "      └─ ", "内层问题", ansiBlue)
 	requireLinkCardTreeLine(t, lines, "         ", "答主  ·  赞同 12  ·  评论 3  ·  回答", ansiDim)
+	rendered := visibleLinkCardTree(lines)
+	for _, want := range []string{
+		"   一级摘要。\n   │  \n   └─ 二级想法",
+		"      二级摘要。\n      │  \n      └─ 内层问题",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("link card tree has no comment-style parent-child gap %q: %q", want, rendered)
+		}
+	}
 }
 
 func TestLinkCardTreeConnectsSiblingReferences(t *testing.T) {
@@ -185,6 +194,10 @@ func TestLinkCardTreeConnectsSiblingReferences(t *testing.T) {
 	requireLinkCardTreeLine(t, lines, "   ├─ ", "第一个问题", ansiBlue)
 	requireLinkCardTreeLine(t, lines, "   │  ", "第一段回答。", "")
 	requireLinkCardTreeLine(t, lines, "   └─ ", "第二个问题", ansiBlue)
+	rendered := visibleLinkCardTree(lines)
+	if !strings.Contains(rendered, "   │  回答\n   │  \n   └─ 第二个问题") {
+		t.Fatalf("link card siblings have no connector gap: %q", rendered)
+	}
 }
 
 func TestLinkCardTreeHydratesDuplicateReferenceOnce(t *testing.T) {
@@ -206,6 +219,9 @@ func TestLinkCardTreeHydratesDuplicateReferenceOnce(t *testing.T) {
 	rendered := visibleLinkCardTree(layoutLinkCardTreeResponse(t, response))
 	if count := strings.Count(rendered, "同一个问题"); count != 2 {
 		t.Fatalf("hydrated duplicate card count=%d, want 2: %q", count, rendered)
+	}
+	if !strings.Contains(rendered, "│  \n└─ 同一个问题") {
+		t.Fatalf("top-level link card siblings have no connector gap: %q", rendered)
 	}
 }
 

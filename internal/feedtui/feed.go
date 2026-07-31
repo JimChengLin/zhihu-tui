@@ -547,6 +547,10 @@ func formatLinkCardForestWithRoot(nodes []map[string]any, root linkCardRef) stri
 			builder.WriteString("\n")
 		}
 		formatLinkCardTree(&builder, node, "", index == len(nodes)-1, 1, path)
+		if index < len(nodes)-1 {
+			builder.WriteString("\n")
+			writeLinkCardTreeGap(&builder, "│  ")
+		}
 	}
 	return builder.String()
 }
@@ -595,10 +599,24 @@ func formatLinkCardTree(builder *strings.Builder, node map[string]any, prefix st
 		defer delete(path, ref)
 	}
 	children := linkCardsInContent(mapValue(node["card_detail"])["content"])
+	if len(children) > 0 {
+		builder.WriteString("\n")
+		writeLinkCardTreeGap(builder, childPrefix+"│  ")
+	}
 	for index, child := range children {
 		builder.WriteString("\n")
 		formatLinkCardTree(builder, child, childPrefix, index == len(children)-1, depth+1, path)
+		if index < len(children)-1 {
+			builder.WriteString("\n")
+			writeLinkCardTreeGap(builder, childPrefix+"│  ")
+		}
 	}
+}
+
+func writeLinkCardTreeGap(builder *strings.Builder, prefix string) {
+	builder.WriteString(linkCardQuoteMarker)
+	builder.WriteString(prefix)
+	builder.WriteString(linkCardPrefixEnd)
 }
 
 func linkCardFields(node map[string]any) []linkCardField {
@@ -719,7 +737,7 @@ func linkCardFallbackLabel(node map[string]any) string {
 
 func linkCardExcerpt(detail map[string]any) string {
 	value := firstNonEmpty(toString(detail["excerpt_new"]), toString(detail["excerpt"]), toString(detail["content"]))
-	return truncateCells(compactLine(plainText(value)), 512)
+	return truncateInlineLinkText(compactLine(bodyText(value)), 512)
 }
 
 func pinLinkCardTitle(detail map[string]any) string {

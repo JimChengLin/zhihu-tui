@@ -487,6 +487,47 @@ func TestAnswerLinkCardLoadsAnswerFromURL(t *testing.T) {
 	assertLinkCardLine(t, lines, "厂长L", ansiDim, true)
 }
 
+func TestAnswerLinkCardPreservesInlineLinkStyle(t *testing.T) {
+	card := formatLinkCard(map[string]any{
+		"data_content_type": "ANSWER",
+		"data_content_id":   "2",
+		"card_detail": map[string]any{
+			"question": map[string]any{"title": "你是因为什么才成为一个建制派的？"},
+			"content":  `<p>我和<a href="https://www.zhihu.com/people/example">@普通河南人</a>在此问题上的观点完全一致。</p>`,
+		},
+	})
+	lines := layoutBodyLines(card, 100)
+
+	for _, line := range lines {
+		if !strings.Contains(styledLineText(line), "@普通河南人") {
+			continue
+		}
+		for _, segment := range line.segments {
+			if segment.text == "@普通河南人" && segment.style == ansiLink {
+				return
+			}
+		}
+		t.Fatalf("answer card mention has no link style: %#v", line)
+	}
+	t.Fatalf("answer card mention is missing: %#v", lines)
+}
+
+func TestLinkCardExcerptKeepsVisibleLimitAndLinkMarkers(t *testing.T) {
+	excerpt := linkCardExcerpt(map[string]any{
+		"content": `<p>` + strings.Repeat("前", 240) + `<a href="https://www.zhihu.com/people/example">@普通河南人</a>` + strings.Repeat("后", 100) + `</p>`,
+	})
+	visible := stripInlineLinkMarkers(excerpt)
+	if width := stringCellWidth(visible); width > 512 {
+		t.Fatalf("link card excerpt width=%d, want at most 512: %q", width, visible)
+	}
+	if !strings.HasSuffix(visible, "…") {
+		t.Fatalf("truncated link card excerpt has no ellipsis: %q", visible)
+	}
+	if !strings.Contains(excerpt, inlineLinkStartMarker+"@普通河南人"+inlineLinkEndMarker) {
+		t.Fatalf("link card excerpt lost inline link markers: %q", excerpt)
+	}
+}
+
 func TestArticleLinkCardLoadsArticleIDFromURL(t *testing.T) {
 	linkCard := map[string]any{
 		"type":              "link_card",
