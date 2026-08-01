@@ -523,15 +523,7 @@ func layoutBodyLines(body string, width int) []styledLine {
 			marked := strings.TrimPrefix(sourceLine, commentTreeMarker)
 			prefix, text, found := strings.Cut(marked, commentMarkerEnd)
 			if found {
-				lineWidth := maxInt(1, width-stringCellWidth(prefix))
-				for _, wrapped := range wrapText(text, lineWidth) {
-					result = append(result, styledLine{
-						text:      prefix,
-						style:     ansiDim,
-						middle:    wrapped,
-						commentID: currentCommentID,
-					})
-				}
+				result = append(result, layoutCommentTreeLines(prefix, text, width, currentCommentID)...)
 				continue
 			}
 		}
@@ -570,6 +562,21 @@ func layoutBodyLines(body string, width int) []styledLine {
 		return []styledLine{{}}
 	}
 	return result
+}
+
+func layoutCommentTreeLines(prefix, text string, width int, commentID string) []styledLine {
+	lines := layoutProseLines(text, maxInt(1, width-stringCellWidth(prefix)), commentID)
+	if len(lines) == 0 {
+		return []styledLine{{text: prefix, style: ansiDim, commentID: commentID}}
+	}
+	for index := range lines {
+		if len(lines[index].segments) == 0 {
+			lines[index].middle = lines[index].text
+		}
+		lines[index].text = prefix
+		lines[index].style = ansiDim
+	}
+	return lines
 }
 
 func layoutLinkCardLine(sourceLine string, width int, commentID string) (styledLine, bool) {

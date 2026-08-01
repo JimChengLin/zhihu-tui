@@ -140,7 +140,7 @@ func formatCommentView(item feedItem, state *commentState, spinner int) (string,
 	if state.loading {
 		label += " · " + spinnerFrames[spinner%len(spinnerFrames)] + " 正在加载更多"
 	} else if state.moreErr != nil {
-		label += " · 加载更多失败，按 space 重试"
+		label += " · 加载更多失败，滚至评论底部后按 space 重试"
 	} else if state.end {
 		pendingReplies := countPendingReplies(state.items)
 		switch {

@@ -687,6 +687,44 @@ func TestCommentRepliesFormFileTreeFromParentIDs(t *testing.T) {
 	}
 }
 
+func TestNestedCommentLinkUsesVisibleTextAndLinkStyle(t *testing.T) {
+	child := parseComment(map[string]any{
+		"id":      "101",
+		"author":  map[string]any{"name": "子评论作者"},
+		"content": `<p>训练视频：<a href="https://b23.tv/BW5gpyr">b23.tv/BW5gpyr</a>，三楼 36 秒</p>`,
+	})
+	state := &commentState{
+		items: []feedComment{{
+			id:            "100",
+			author:        "根作者",
+			content:       "根评论",
+			childComments: 1,
+			children:      []feedComment{child},
+		}},
+		expandedChildren: map[string]bool{"100": true},
+		loaded:           true,
+	}
+	view, _ := formatCommentView(feedItem{}, state, 0)
+	lines := layoutBodyLines(view, 100)
+	foundLink := false
+	for _, line := range lines {
+		if line.commentID != "101" {
+			continue
+		}
+		if strings.Contains(styledLineText(line), "inline-link-") {
+			t.Fatalf("nested comment exposed inline link marker: %#v", line)
+		}
+		for _, segment := range line.segments {
+			if segment.text == "b23.tv/BW5gpyr" && segment.style == ansiLink {
+				foundLink = true
+			}
+		}
+	}
+	if !foundLink {
+		t.Fatalf("nested comment link was not styled: %#v", lines)
+	}
+}
+
 func TestOrphanReplyKeepsReplyTargetLabel(t *testing.T) {
 	tree := nestCommentReplies([]feedComment{{
 		id:       "101",
@@ -777,6 +815,19 @@ func TestCommentLabelDistinguishesRootEndFromPendingReplies(t *testing.T) {
 	_, label := formatCommentView(feedItem{commentCount: 3}, state, 0)
 	if !strings.Contains(label, "已加载 1 条 · 2 条回复按需加载") || strings.Contains(label, "已到底") {
 		t.Fatalf("comment label=%q", label)
+	}
+}
+
+func TestCommentLabelExplainsWhereToRetryFailedPage(t *testing.T) {
+	state := &commentState{
+		items:   []feedComment{{id: "100", author: "A", content: "已加载评论"}},
+		loaded:  true,
+		moreErr: errors.New("请求失败"),
+	}
+	_, label := formatCommentView(feedItem{commentCount: 2}, state, 0)
+	want := "评论区 · 共 2 条 · 已加载 1 条 · 加载更多失败，滚至评论底部后按 space 重试"
+	if label != want {
+		t.Fatalf("comment label=%q, want %q", label, want)
 	}
 }
 
