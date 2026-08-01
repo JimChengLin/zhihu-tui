@@ -288,21 +288,22 @@ func TestGetCommentsPagePreservesOpaqueCursor(t *testing.T) {
 	}
 }
 
-func TestGetChildComments(t *testing.T) {
+func TestGetChildCommentsPagePreservesOpaqueCursor(t *testing.T) {
+	const cursor = "1785514982_11543764744_0"
 	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v4/comment_v5/comment/789/child_comment" {
 			t.Fatalf("path=%s", r.URL.Path)
 		}
-		if r.URL.Query().Get("limit") != "20" || r.URL.Query().Get("offset") != "10" {
+		if r.URL.Query().Get("limit") != "20" || r.URL.Query().Get("offset") != cursor {
 			t.Fatalf("query=%s", r.URL.RawQuery)
 		}
 		writeJSON(t, w, http.StatusOK, map[string]any{"data": []any{map[string]any{"id": 456}}})
 	})
 	defer server.Close()
 
-	result, err := c.GetChildComments(context.Background(), "789", 10, 20)
+	result, err := c.GetChildCommentsPage(context.Background(), "789", cursor, 20)
 	if err != nil {
-		t.Fatalf("GetChildComments: %v", err)
+		t.Fatalf("GetChildCommentsPage: %v", err)
 	}
 	if len(result["data"].([]any)) != 1 {
 		t.Fatalf("result=%#v", result)

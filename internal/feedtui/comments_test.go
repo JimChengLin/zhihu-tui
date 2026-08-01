@@ -37,6 +37,10 @@ type blockingCommentPageSource struct {
 	started chan struct{}
 }
 
+type commentChildPagingSource struct {
+	cursors chan string
+}
+
 func (source *blockingCommentPageSource) GetCommentsPage(ctx context.Context, _, _, _ string, _ int, _ string) (map[string]any, error) {
 	source.started <- struct{}{}
 	<-ctx.Done()
@@ -49,7 +53,7 @@ func (source *blockingRelationSource) GetUserProfile(_ context.Context, urlToken
 	return map[string]any{"url_token": urlToken, "is_followed": true}, nil
 }
 
-func (source *blockingChildSource) GetChildComments(context.Context, string, int, int) (map[string]any, error) {
+func (source *blockingChildSource) GetChildCommentsPage(context.Context, string, string, int) (map[string]any, error) {
 	source.started <- struct{}{}
 	<-source.release
 	return map[string]any{"data": []any{map[string]any{
@@ -57,6 +61,29 @@ func (source *blockingChildSource) GetChildComments(context.Context, string, int
 		"author":  map[string]any{"name": "Bob", "url_token": "bob"},
 		"content": "子评论",
 	}}}, nil
+}
+
+func (source *commentChildPagingSource) GetChildCommentsPage(_ context.Context, rootID, cursor string, _ int) (map[string]any, error) {
+	source.cursors <- cursor
+	id := "101"
+	end := false
+	if cursor == testCommentCursor {
+		id = "102"
+		end = true
+	}
+	response := map[string]any{
+		"data": []any{map[string]any{
+			"id":                  id,
+			"reply_to_comment_id": rootID,
+			"author":              map[string]any{"name": "用户"},
+			"content":             "回复 " + id,
+		}},
+		"paging": map[string]any{"is_end": end},
+	}
+	if !end {
+		response["paging"].(map[string]any)["next"] = "https://www.zhihu.com/api/v4/comments?offset=" + testCommentCursor
+	}
+	return response, nil
 }
 
 func (source *commentPagingTestSource) GetCommentsPage(_ context.Context, _, _, cursor string, _ int, _ string) (map[string]any, error) {
@@ -118,7 +145,7 @@ func (source *commentTestSource) GetCommentsPage(_ context.Context, resourceType
 	}, nil
 }
 
-func (source *commentTestSource) GetChildComments(context.Context, string, int, int) (map[string]any, error) {
+func (source *commentTestSource) GetChildCommentsPage(context.Context, string, string, int) (map[string]any, error) {
 	return map[string]any{"data": []any{map[string]any{
 		"id":      "101",
 		"author":  map[string]any{"name": "Bob", "url_token": "bob", "is_following": true, "is_followed": true},
@@ -231,7 +258,7 @@ func TestToggleCommentsLoadsAndReturnsToBody(t *testing.T) {
 		laidOut.WriteString(line.middle)
 		laidOut.WriteByte('\n')
 	}
-	for _, want := range []string{"   ▾ 2 条回复", "   ├─ Bob（互相关注）", "   │  子评论", "   └─ 还有 1 条回复未加载"} {
+	for _, want := range []string{"   ▾ 2 条回复", "   ├─ Bob（互相关注）", "   │  子评论", "   └─ 还有 1 条子回复未返回"} {
 		if !strings.Contains(laidOut.String(), want) {
 			t.Fatalf("laid out comment tree does not contain %q:\n%s", want, laidOut.String())
 		}
@@ -493,7 +520,7 @@ func TestFailedCommentPageWaitsForExplicitRetry(t *testing.T) {
 	}
 }
 
-func TestDuplicateCommentPageStopsWithoutAdvancingCursor(t *testing.T) {
+func TestDuplicateCommentPageWithStalledCursorEndsVisibleComments(t *testing.T) {
 	state := &commentState{
 		items:      []feedComment{{id: "1", author: "用户", content: "已有评论"}},
 		loaded:     true,
@@ -513,11 +540,37 @@ func TestDuplicateCommentPageStopsWithoutAdvancingCursor(t *testing.T) {
 			},
 		},
 	})
-	if state.loading || state.moreErr == nil {
-		t.Fatalf("duplicate page did not stop loading: %#v", state)
+	if state.loading || state.moreErr != nil || !state.end {
+		t.Fatalf("stalled page did not end visible comments: %#v", state)
 	}
-	if state.nextCursor != testCommentCursor || len(state.items) != 1 {
+	if state.nextCursor != "" || len(state.items) != 1 {
 		t.Fatalf("duplicate page advanced state: %#v", state)
+	}
+}
+
+func TestDuplicateCommentPageAdvancesWhenCursorChanges(t *testing.T) {
+	const nextCursor = "601800175_11417294456_0"
+	state := &commentState{
+		items:      []feedComment{{id: "1", author: "用户", content: "已有评论"}},
+		loaded:     true,
+		loading:    true,
+		nextCursor: testCommentCursor,
+	}
+	model := &app{comments: map[string]*commentState{"answer:42": state}}
+	model.applyCommentFetch(commentFetchResult{
+		key:    "answer:42",
+		append: true,
+		cursor: testCommentCursor,
+		response: map[string]any{
+			"data": []any{map[string]any{"id": "1", "author": map[string]any{"name": "用户"}, "content": "重复评论"}},
+			"paging": map[string]any{
+				"is_end": false,
+				"next":   "https://www.zhihu.com/api/v4/comments?offset=" + nextCursor,
+			},
+		},
+	})
+	if state.loading || state.moreErr != nil || state.end || state.nextCursor != nextCursor || len(state.items) != 1 {
+		t.Fatalf("advancing duplicate page state=%#v", state)
 	}
 }
 
@@ -641,6 +694,16 @@ func TestCommentChildrenLoadOutsidePaginationPath(t *testing.T) {
 	}
 	if len(state.items[0].children) != 1 || state.items[0].children[0].content != "子评论" {
 		t.Fatalf("child comments were not applied: %#v", state.items[0])
+	}
+}
+
+func TestCommentChildrenFollowOpaqueCursor(t *testing.T) {
+	source := &commentChildPagingSource{cursors: make(chan string, 2)}
+	children := fetchCommentChildren(context.Background(), source, []string{"100"})["100"]
+	waitForCommentCursor(t, source.cursors, "")
+	waitForCommentCursor(t, source.cursors, testCommentCursor)
+	if len(children) != 2 || children[0].id != "101" || children[1].id != "102" {
+		t.Fatalf("child comments=%#v", children)
 	}
 }
 
@@ -813,7 +876,7 @@ func TestCommentLabelDistinguishesRootEndFromPendingReplies(t *testing.T) {
 		end:    true,
 	}
 	_, label := formatCommentView(feedItem{commentCount: 3}, state, 0)
-	if !strings.Contains(label, "已加载 1 条 · 2 条回复按需加载") || strings.Contains(label, "已到底") {
+	if !strings.Contains(label, "已加载 1 条 · 2 条子回复未返回") || strings.Contains(label, "已到底") {
 		t.Fatalf("comment label=%q", label)
 	}
 }
@@ -825,7 +888,7 @@ func TestCommentLabelExplainsWhereToRetryFailedPage(t *testing.T) {
 		moreErr: errors.New("请求失败"),
 	}
 	_, label := formatCommentView(feedItem{commentCount: 2}, state, 0)
-	want := "评论区 · 共 2 条 · 已加载 1 条 · 加载更多失败，滚至评论底部后按 space 重试"
+	want := "评论区 · 共 2 条 · 已加载 1 条 · 加载更多失败，滚至评论区底部后按 space 重试"
 	if label != want {
 		t.Fatalf("comment label=%q, want %q", label, want)
 	}

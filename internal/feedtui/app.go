@@ -23,7 +23,7 @@ type feedSource interface {
 	linkCardSource
 	GetFollowingFeed(context.Context, string, int) (map[string]any, error)
 	GetCommentsPage(context.Context, string, string, string, int, string) (map[string]any, error)
-	GetChildComments(context.Context, string, int, int) (map[string]any, error)
+	GetChildCommentsPage(context.Context, string, string, int) (map[string]any, error)
 	GetUserProfile(context.Context, string) (map[string]any, error)
 	CreateComment(context.Context, string, string, string) (map[string]any, error)
 	ReplyCommentToResource(context.Context, string, string, string, string) (map[string]any, error)

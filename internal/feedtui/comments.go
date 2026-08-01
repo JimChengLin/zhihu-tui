@@ -140,12 +140,12 @@ func formatCommentView(item feedItem, state *commentState, spinner int) (string,
 	if state.loading {
 		label += " · " + spinnerFrames[spinner%len(spinnerFrames)] + " 正在加载更多"
 	} else if state.moreErr != nil {
-		label += " · 加载更多失败，滚至评论底部后按 space 重试"
+		label += " · 加载更多失败，滚至评论区底部后按 space 重试"
 	} else if state.end {
 		pendingReplies := countPendingReplies(state.items)
 		switch {
 		case pendingReplies > 0:
-			label += fmt.Sprintf(" · %d 条回复按需加载", pendingReplies)
+			label += fmt.Sprintf(" · %d 条子回复未返回", pendingReplies)
 		case item.commentCount > loadedComments:
 			label += " · 可见评论已全部加载"
 		}
@@ -178,7 +178,7 @@ func formatCommentView(item feedItem, state *commentState, spinner int) (string,
 		if remaining > 0 {
 			builder.WriteString("\n")
 			writeCommentMarker(&builder, comment.id)
-			writeCommentTreeLine(&builder, "   └─ ", fmt.Sprintf("还有 %d 条回复未加载", remaining))
+			writeCommentTreeLine(&builder, "   └─ ", fmt.Sprintf("还有 %d 条子回复未返回", remaining))
 		}
 	}
 	return builder.String(), label
@@ -244,6 +244,11 @@ func commentPaging(response map[string]any) (string, bool) {
 		nextCursor = parsed.Query().Get("offset")
 	}
 	return nextCursor, end
+}
+
+func commentPagingExhausted(currentCursor, nextCursor string, end bool) bool {
+	// 知乎可能在最后一页保持 is_end=false，同时重复返回当前游标。
+	return end || currentCursor != "" && nextCursor == currentCursor
 }
 
 func countLoadedComments(comments []feedComment) int {
@@ -376,7 +381,7 @@ type commentAuthorRelationshipSource interface {
 }
 
 type commentChildSource interface {
-	GetChildComments(context.Context, string, int, int) (map[string]any, error)
+	GetChildCommentsPage(context.Context, string, string, int) (map[string]any, error)
 }
 
 type commentRelation struct {
@@ -478,15 +483,11 @@ func fetchCommentChildren(ctx context.Context, source commentChildSource, rootID
 	for range workers {
 		go func() {
 			for rootID := range jobs {
-				response, err := source.GetChildComments(ctx, rootID, 0, commentPageSize)
-				comments := parseComments(asSlice(response["data"]))
-				if err == nil {
-					comments = nestCommentReplies(comments, rootID)
-				}
+				comments, ok := fetchAllCommentChildren(ctx, source, rootID)
 				results <- result{
 					rootID:   rootID,
 					children: comments,
-					ok:       err == nil,
+					ok:       ok,
 				}
 			}
 		}()
@@ -499,6 +500,26 @@ func fetchCommentChildren(ctx context.Context, source commentChildSource, rootID
 		}
 	}
 	return children
+}
+
+func fetchAllCommentChildren(ctx context.Context, source commentChildSource, rootID string) ([]feedComment, bool) {
+	cursor := ""
+	comments := make([]feedComment, 0)
+	for {
+		response, err := source.GetChildCommentsPage(ctx, rootID, cursor, commentPageSize)
+		if err != nil {
+			return nil, false
+		}
+		comments = appendUniqueComments(comments, parseComments(asSlice(response["data"])))
+		nextCursor, end := commentPaging(response)
+		if commentPagingExhausted(cursor, nextCursor, end) {
+			return nestCommentReplies(comments, rootID), true
+		}
+		if nextCursor == "" {
+			return nil, false
+		}
+		cursor = nextCursor
+	}
 }
 
 func nestCommentReplies(comments []feedComment, rootID string) []feedComment {

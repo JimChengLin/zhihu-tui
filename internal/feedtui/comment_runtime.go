@@ -100,13 +100,13 @@ func (model *app) applyCommentFetch(result commentFetchResult) {
 		pageErr = errors.New("知乎评论分页没有返回有效游标")
 	}
 	if result.append {
-		previousCount := len(state.items)
 		state.items = appendUniqueComments(state.items, page)
-		if !end && (len(state.items) == previousCount || nextCursor == result.cursor) {
-			pageErr = errors.New("知乎评论分页没有返回新内容")
-		}
 	} else {
 		state.items = page
+	}
+	if commentPagingExhausted(result.cursor, nextCursor, end) {
+		nextCursor = ""
+		end = true
 	}
 	state.loaded = true
 	state.err = nil

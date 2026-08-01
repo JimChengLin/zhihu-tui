@@ -59,17 +59,14 @@ func (c *Client) GetCommentsPage(ctx context.Context, resourceType, resourceID, 
 	return c.getMap(ctx, c.endpoints.APIV4+"/comment_v5/"+resourceType+"s/"+url.PathEscape(resourceID)+"/root_comment", params)
 }
 
-func (c *Client) GetChildComments(ctx context.Context, commentID string, offset, limit int) (map[string]any, error) {
+func (c *Client) GetChildCommentsPage(ctx context.Context, commentID, cursor string, limit int) (map[string]any, error) {
 	commentID = strings.TrimSpace(commentID)
 	if commentID == "" {
 		return nil, DataFetchError{Message: "root comment ID cannot be empty"}
 	}
 	params := url.Values{
-		"offset": {""},
+		"offset": {cursor},
 		"limit":  {strconv.Itoa(limit)},
-	}
-	if offset > 0 {
-		params.Set("offset", strconv.Itoa(offset))
 	}
 	return c.getMap(ctx, c.endpoints.APIV4+"/comment_v5/comment/"+url.PathEscape(commentID)+"/child_comment", params)
 }
