@@ -98,6 +98,8 @@ type app struct {
 	commentPosts           chan commentPostResult
 	voting                 bool
 	voteResults            chan voteResult
+	linkCardRetries        map[string]int
+	linkCardFetches        chan linkCardRetryResult
 }
 
 type fetchResult struct {
@@ -129,6 +131,12 @@ type commentPostResult struct {
 type commentFocusPosition struct {
 	id   string
 	line int
+}
+
+type linkCardRetryResult struct {
+	itemKey    string
+	raw        map[string]any
+	generation int
 }
 
 // following feed and restores the terminal before returning.
@@ -166,6 +174,8 @@ func Run(ctx context.Context, source feedSource, in, out *os.File) error {
 		commentChildFetches:    make(chan commentChildFetchResult, 4),
 		commentPosts:           make(chan commentPostResult, 1),
 		voteResults:            make(chan voteResult, 1),
+		linkCardRetries:        map[string]int{},
+		linkCardFetches:        make(chan linkCardRetryResult, 2),
 	}
 	keys := make(chan keyEvent)
 	readErrors := make(chan error, 1)
@@ -246,6 +256,11 @@ func Run(ctx context.Context, source feedSource, in, out *os.File) error {
 			if err := model.render(out); err != nil {
 				return err
 			}
+		case result := <-model.linkCardFetches:
+			model.applyLinkCardRetry(result)
+			if err := model.render(out); err != nil {
+				return err
+			}
 		case result := <-model.commentPosts:
 			model.applyCommentPost(ctx, result)
 			if err := model.render(out); err != nil {
@@ -281,6 +296,7 @@ func (model *app) startFetch(ctx context.Context, reset bool) {
 	model.spinner = 0
 	if reset {
 		model.generation++
+		model.linkCardRetries = map[string]int{}
 	}
 	generation := model.generation
 	nextURL := model.nextURL
@@ -464,7 +480,7 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 	case "n", "l", keyRight:
 		model.moveNext(ctx)
 	case "p", "h", keyLeft:
-		model.movePrevious(false)
+		model.movePrevious(ctx, false)
 	case "j", keyDown:
 		if model.commentMode {
 			model.moveCommentFocus(ctx, 1)
@@ -484,9 +500,9 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 	case keyCtrlF:
 		model.pageDownWithBoundary(ctx, maxInt(1, model.metrics.bodyHeight*7/8), keyCtrlF, "Ctrl-F")
 	case "b":
-		model.pageUpWithConfirmation(maxInt(1, model.metrics.bodyHeight*7/8))
+		model.pageUpWithConfirmation(ctx, maxInt(1, model.metrics.bodyHeight*7/8))
 	case keyCtrlB:
-		model.pageUpWithBoundary(maxInt(1, model.metrics.bodyHeight*7/8), keyCtrlB, "Ctrl-B")
+		model.pageUpWithBoundary(ctx, maxInt(1, model.metrics.bodyHeight*7/8), keyCtrlB, "Ctrl-B")
 	case keyCtrlE:
 		model.scrollViewportDown()
 	case keyCtrlY:

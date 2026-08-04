@@ -613,6 +613,7 @@ func splitLinkCardLine(sourceLine string) (prefix, text, textStyle string, ok bo
 		{marker: linkCardTitleMarker, style: ansiBlue},
 		{marker: linkCardQuoteMarker},
 		{marker: linkCardExcerptMarker, legacyIndent: "  "},
+		{marker: linkCardErrorMarker, style: ansiRed, legacyIndent: "  "},
 		{marker: linkCardMetadataMarker, style: ansiDim, legacyIndent: "  "},
 	} {
 		if !strings.HasPrefix(sourceLine, candidate.marker) {

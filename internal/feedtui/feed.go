@@ -37,6 +37,7 @@ const (
 	linkCardTitleMarker    = "\ue000link-card-title\ue001"
 	linkCardQuoteMarker    = "\ue000link-card-quote\ue001"
 	linkCardExcerptMarker  = "\ue000link-card-excerpt\ue001"
+	linkCardErrorMarker    = "\ue000link-card-error\ue001"
 	linkCardMetadataMarker = "\ue000link-card-metadata\ue001"
 	linkCardPrefixEnd      = "\ue003"
 	maxLinkCardDepth       = 8
@@ -64,6 +65,7 @@ type feedItem struct {
 	followerCount    int64
 	hasFollowerCount bool
 	followed         bool
+	raw              map[string]any
 	serverFolded     bool
 	foldedItems      []feedItem
 	foldedParent     string
@@ -230,6 +232,7 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 		followerCount:    followerCount,
 		hasFollowerCount: hasFollowerCount,
 		followed:         feedItemFollowed(target),
+		raw:              raw,
 	}, true
 }
 
@@ -400,14 +403,22 @@ func hydrateFeedLinkCards(ctx context.Context, source linkCardSource, response m
 		collectActivity(mapValue(rawActivity))
 	}
 
-	type result struct {
-		ref    linkCardRef
-		detail map[string]any
-		err    error
-	}
-	cache := make(map[linkCardRef]result)
+	cache := make(map[linkCardRef]linkCardFetch)
 	for ref, detail := range rootDetails {
-		cache[ref] = result{ref: ref, detail: detail}
+		cache[ref] = linkCardFetch{ref: ref, detail: detail}
+	}
+	hydrateLinkCards(ctx, source, pending, cache)
+}
+
+type linkCardFetch struct {
+	ref    linkCardRef
+	detail map[string]any
+	err    error
+}
+
+func hydrateLinkCards(ctx context.Context, source linkCardSource, pending []map[string]any, cache map[linkCardRef]linkCardFetch) {
+	if cache == nil {
+		cache = make(map[linkCardRef]linkCardFetch)
 	}
 	for depth := 1; len(pending) > 0 && depth <= maxLinkCardDepth; depth++ {
 		nodesByRef := make(map[linkCardRef][]map[string]any)
@@ -426,11 +437,11 @@ func hydrateFeedLinkCards(ctx context.Context, source linkCardSource, response m
 			break
 		}
 
-		results := make(chan result, len(nodesByRef))
+		results := make(chan linkCardFetch, len(nodesByRef))
 		for ref := range nodesByRef {
 			go func() {
 				detail, err := fetchLinkCardDetail(ctx, source, ref)
-				results <- result{ref: ref, detail: detail, err: err}
+				results <- linkCardFetch{ref: ref, detail: detail, err: err}
 			}()
 		}
 
@@ -447,6 +458,23 @@ func hydrateFeedLinkCards(ctx context.Context, source linkCardSource, response m
 		}
 		pending = next
 	}
+}
+
+func retryFailedFeedLinkCards(ctx context.Context, source linkCardSource, activity map[string]any) {
+	pending := failedLinkCardsInContent(mapValue(activity["target"])["content"])
+	hydrateLinkCards(ctx, source, pending, nil)
+}
+
+func failedLinkCardsInContent(content any) []map[string]any {
+	failed := make([]map[string]any, 0)
+	for _, node := range linkCardsInContent(content) {
+		if toString(node["card_error"]) != "" {
+			failed = append(failed, node)
+			continue
+		}
+		failed = append(failed, failedLinkCardsInContent(mapValue(node["card_detail"])["content"])...)
+	}
+	return failed
 }
 
 func feedTargetReference(target map[string]any) (linkCardRef, bool) {
@@ -501,9 +529,11 @@ func fetchLinkCardDetail(ctx context.Context, source linkCardSource, ref linkCar
 
 func applyLinkCardResult(node, detail map[string]any, err error) {
 	if err != nil {
+		delete(node, "card_detail")
 		node["card_error"] = err.Error()
 		return
 	}
+	delete(node, "card_error")
 	node["card_detail"] = detail
 }
 
@@ -642,17 +672,18 @@ func pinLinkCardFields(node, detail map[string]any) []linkCardField {
 	if title == "引用想法" {
 		title = ""
 	}
-	fields := make([]linkCardField, 0, 3)
+	cardFailed := toString(node["card_error"]) != ""
+	fields := make([]linkCardField, 0, 4)
 	if title != "" {
-		if toString(node["card_error"]) != "" {
-			title += "（详情加载失败）"
-		}
 		fields = append(fields, linkCardField{marker: linkCardTitleMarker, text: title})
-	} else if toString(node["card_error"]) != "" {
-		fields = append(fields, linkCardField{marker: linkCardTitleMarker, text: "引用想法（详情加载失败）"})
+	} else if cardFailed {
+		fields = append(fields, linkCardField{marker: linkCardTitleMarker, text: "引用想法"})
+	}
+	if cardFailed {
+		fields = append(fields, linkCardField{marker: linkCardErrorMarker, text: "详情加载失败"})
 	}
 	if excerpt := pinLinkCardExcerpt(detail); excerpt != "" {
-		if title == "" && toString(node["card_error"]) == "" {
+		if title == "" && !cardFailed {
 			fields = append(fields, linkCardField{marker: linkCardQuoteMarker, text: excerpt})
 		} else {
 			fields = append(fields, linkCardField{marker: linkCardExcerptMarker, text: excerpt})
@@ -666,10 +697,10 @@ func pinLinkCardFields(node, detail map[string]any) []linkCardField {
 
 func questionLinkCardFields(node, detail map[string]any) []linkCardField {
 	title := firstNonEmpty(toString(detail["title"]), toString(node["data_draft_title"]), "引用问题")
-	if toString(node["card_error"]) != "" {
-		title += "（详情加载失败）"
-	}
 	fields := []linkCardField{{marker: linkCardTitleMarker, text: plainText(title)}}
+	if toString(node["card_error"]) != "" {
+		fields = append(fields, linkCardField{marker: linkCardErrorMarker, text: "详情加载失败"})
+	}
 	metadata := questionStats(detail)
 	if metadata != "" {
 		metadata += "  ·  "
@@ -680,10 +711,10 @@ func questionLinkCardFields(node, detail map[string]any) []linkCardField {
 
 func answerLinkCardFields(node, detail map[string]any) []linkCardField {
 	title := firstNonEmpty(toString(mapValue(detail["question"])["title"]), toString(node["data_draft_title"]), "引用回答")
-	if toString(node["card_error"]) != "" {
-		title += "（详情加载失败）"
-	}
 	fields := []linkCardField{{marker: linkCardTitleMarker, text: plainText(title)}}
+	if toString(node["card_error"]) != "" {
+		fields = append(fields, linkCardField{marker: linkCardErrorMarker, text: "详情加载失败"})
+	}
 	if excerpt := linkCardExcerpt(detail); excerpt != "" {
 		fields = append(fields, linkCardField{marker: linkCardExcerptMarker, text: excerpt})
 	}
@@ -701,10 +732,10 @@ func answerLinkCardFields(node, detail map[string]any) []linkCardField {
 
 func articleLinkCardFields(node, detail map[string]any) []linkCardField {
 	title := firstNonEmpty(toString(detail["title"]), toString(node["data_draft_title"]), "引用文章")
-	if toString(node["card_error"]) != "" {
-		title += "（详情加载失败）"
-	}
 	fields := []linkCardField{{marker: linkCardTitleMarker, text: plainText(title)}}
+	if toString(node["card_error"]) != "" {
+		fields = append(fields, linkCardField{marker: linkCardErrorMarker, text: "详情加载失败"})
+	}
 	if excerpt := linkCardExcerpt(detail); excerpt != "" {
 		fields = append(fields, linkCardField{marker: linkCardExcerptMarker, text: excerpt})
 	}

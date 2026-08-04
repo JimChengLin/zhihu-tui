@@ -274,11 +274,11 @@ func (model *app) pageDownWithBoundary(ctx context.Context, amount int, key keyE
 	model.armBoundarySwitch(key, "已到"+model.readingAreaLabel()+"底部，再按一次 "+keyLabel+" 切换下一条")
 }
 
-func (model *app) pageUpWithConfirmation(amount int) {
-	model.pageUpWithBoundary(amount, "b", "b")
+func (model *app) pageUpWithConfirmation(ctx context.Context, amount int) {
+	model.pageUpWithBoundary(ctx, amount, "b", "b")
 }
 
-func (model *app) pageUpWithBoundary(amount int, key keyEvent, keyLabel string) {
+func (model *app) pageUpWithBoundary(ctx context.Context, amount int, key keyEvent, keyLabel string) {
 	if model.scroll > 0 {
 		previousFirstLine := model.scroll
 		model.clearBoundarySwitch()
@@ -294,7 +294,7 @@ func (model *app) pageUpWithBoundary(amount int, key keyEvent, keyLabel string) 
 		return
 	}
 	if model.consumeBoundarySwitch(key) {
-		model.movePrevious(true)
+		model.movePrevious(ctx, true)
 		return
 	}
 	model.setPageAnchor(0)
@@ -401,6 +401,7 @@ func (model *app) moveNext(ctx context.Context) {
 		model.index++
 		model.scroll = 0
 		model.message = ""
+		model.startCurrentLinkCardRetry(ctx)
 		return
 	}
 	if !model.end {
@@ -411,7 +412,7 @@ func (model *app) moveNext(ctx context.Context) {
 	model.setMessage("已经是最后一条动态", 2*time.Second)
 }
 
-func (model *app) movePrevious(atEnd bool) {
+func (model *app) movePrevious(ctx context.Context, atEnd bool) {
 	model.clearPageAnchor()
 	if model.index == 0 || len(model.items) == 0 {
 		model.setMessage("已经是第一条动态", 2*time.Second)
@@ -425,4 +426,77 @@ func (model *app) movePrevious(atEnd bool) {
 		model.scroll = int(^uint(0) >> 1)
 	}
 	model.message = ""
+	model.startCurrentLinkCardRetry(ctx)
+}
+
+func (model *app) startCurrentLinkCardRetry(ctx context.Context) {
+	if len(model.items) == 0 {
+		return
+	}
+	item := model.items[model.index]
+	if item.raw == nil || len(failedLinkCardsInContent(mapValue(item.raw["target"])["content"])) == 0 {
+		return
+	}
+	if _, pending := model.linkCardRetries[item.key]; pending {
+		return
+	}
+	model.linkCardRetries[item.key] = model.generation
+	raw := cloneFeedMap(item.raw)
+	generation := model.generation
+	go func() {
+		retryFailedFeedLinkCards(ctx, model.source, raw)
+		select {
+		case model.linkCardFetches <- linkCardRetryResult{itemKey: item.key, raw: raw, generation: generation}:
+		case <-ctx.Done():
+		}
+	}()
+}
+
+func (model *app) applyLinkCardRetry(result linkCardRetryResult) {
+	if model.linkCardRetries[result.itemKey] == result.generation {
+		delete(model.linkCardRetries, result.itemKey)
+	}
+	if result.generation != model.generation {
+		return
+	}
+	updated, ok := parseFeedItem(result.raw)
+	if !ok {
+		return
+	}
+	for index := range model.items {
+		updateFeedItemLinkCards(&model.items[index], result.itemKey, result.raw, updated.body)
+	}
+}
+
+func updateFeedItemLinkCards(item *feedItem, key string, raw map[string]any, body string) {
+	if item.key == key {
+		item.raw = raw
+		item.body = body
+	}
+	for index := range item.foldedItems {
+		updateFeedItemLinkCards(&item.foldedItems[index], key, raw, body)
+	}
+}
+
+func cloneFeedMap(source map[string]any) map[string]any {
+	cloned := make(map[string]any, len(source))
+	for key, value := range source {
+		cloned[key] = cloneFeedValue(value)
+	}
+	return cloned
+}
+
+func cloneFeedValue(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		return cloneFeedMap(value)
+	case []any:
+		cloned := make([]any, len(value))
+		for index := range value {
+			cloned[index] = cloneFeedValue(value[index])
+		}
+		return cloned
+	default:
+		return value
+	}
 }

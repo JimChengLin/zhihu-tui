@@ -406,6 +406,23 @@ func TestPinLinkCardExcerptFallsBackToExcerptTitle(t *testing.T) {
 	}
 }
 
+func TestLinkCardFailureRendersBelowTitleInRed(t *testing.T) {
+	card := formatLinkCard(map[string]any{
+		"data_content_type": "QUESTION",
+		"data_content_id":   "question-1",
+		"data_draft_title":  "怎么看待科研人员在 OnlyFans 筹款、效果微弱？",
+		"card_error":        "request failed",
+	})
+	if strings.Contains(card, "（详情加载失败）") {
+		t.Fatalf("failure was appended to the title: %q", card)
+	}
+
+	lines := layoutBodyLines(card, 100)
+	assertLinkCardLine(t, lines, "怎么看待科研人员", ansiBlue, false)
+	assertLinkCardLine(t, lines, "详情加载失败", ansiRed, true)
+	assertLinkCardLine(t, lines, "问题", ansiDim, true)
+}
+
 func TestPinLinkCardWithoutTitleSkipsBlueTitle(t *testing.T) {
 	detail := map[string]any{
 		"content":    []any{map[string]any{"type": "text", "content": "<p>这是一条没有标题的想法正文。</p>"}},

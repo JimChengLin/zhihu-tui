@@ -2,9 +2,28 @@ package feedtui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 )
+
+type retryLinkCardSource struct {
+	*commentTestSource
+	attempts int
+}
+
+func (source *retryLinkCardSource) GetQuestion(context.Context, string) (map[string]any, error) {
+	source.attempts++
+	if source.attempts == 1 {
+		return nil, errors.New("temporary failure")
+	}
+	return map[string]any{
+		"title":          "重试成功的问题",
+		"follower_count": 10,
+		"answer_count":   2,
+	}, nil
+}
 
 func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 	ctx := context.Background()
@@ -76,6 +95,60 @@ func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 	model.handleKey(ctx, "b")
 	if model.index != 0 || model.scroll == 0 {
 		t.Fatalf("confirmed b did not switch to the previous item bottom: index=%d scroll=%d", model.index, model.scroll)
+	}
+}
+
+func TestNPRevisitRetriesFailedLinkCardDetail(t *testing.T) {
+	linkCard := map[string]any{
+		"type":              "link_card",
+		"data_content_type": "QUESTION",
+		"data_content_id":   "question-1",
+		"data_draft_title":  "原始问题标题",
+	}
+	applyLinkCardResult(linkCard, nil, errors.New("initial failure"))
+	raw := map[string]any{
+		"target": map[string]any{
+			"id":      "pin-1",
+			"type":    "pin",
+			"content": []any{linkCard},
+		},
+	}
+	failedItem, ok := parseFeedItem(raw)
+	if !ok {
+		t.Fatal("failed item was not parsed")
+	}
+	source := &retryLinkCardSource{commentTestSource: &commentTestSource{}}
+	model := &app{
+		source:          source,
+		items:           []feedItem{{key: "previous"}, failedItem},
+		linkCardRetries: map[string]int{},
+		linkCardFetches: make(chan linkCardRetryResult, 1),
+	}
+
+	model.handleKey(context.Background(), "n")
+	applyNextLinkCardRetry(t, model)
+	if source.attempts != 1 || !strings.Contains(model.items[1].body, "详情加载失败") {
+		t.Fatalf("first retry attempts=%d body=%q", source.attempts, model.items[1].body)
+	}
+
+	model.handleKey(context.Background(), "p")
+	model.handleKey(context.Background(), "n")
+	applyNextLinkCardRetry(t, model)
+	if source.attempts != 2 {
+		t.Fatalf("retry attempts=%d, want 2", source.attempts)
+	}
+	if strings.Contains(model.items[1].body, "详情加载失败") || !strings.Contains(model.items[1].body, "重试成功的问题") {
+		t.Fatalf("successful retry did not replace the failure: %q", model.items[1].body)
+	}
+}
+
+func applyNextLinkCardRetry(t *testing.T, model *app) {
+	t.Helper()
+	select {
+	case result := <-model.linkCardFetches:
+		model.applyLinkCardRetry(result)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for link card retry")
 	}
 }
 

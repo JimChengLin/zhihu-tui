@@ -621,8 +621,8 @@ func TestCommentPagingCannotSwitchFeedItemsAtBoundaries(t *testing.T) {
 		t.Fatalf("finished bottom index=%d boundary=%q message=%q", model.index, model.boundarySwitchKey, model.message)
 	}
 
-	model.pageUpWithConfirmation(8)
-	model.pageUpWithConfirmation(8)
+	model.pageUpWithConfirmation(context.Background(), 8)
+	model.pageUpWithConfirmation(context.Background(), 8)
 	if model.index != 0 || model.boundarySwitchKey != "" || model.message != "已到评论顶部" {
 		t.Fatalf("top index=%d boundary=%q message=%q", model.index, model.boundarySwitchKey, model.message)
 	}
