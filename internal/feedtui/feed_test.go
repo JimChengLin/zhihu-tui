@@ -711,13 +711,17 @@ func TestFoldedPreviewMarksOnlyTruncatedExcerpts(t *testing.T) {
 	lines := layoutFoldedGroupPreview([]feedItem{
 		{kind: "answer", title: "短回答", author: "甲", action: "某人赞同了回答", body: "令人感叹"},
 		{kind: "answer", title: "多段回答", author: "乙", action: "某人赞同了回答", body: "第一段\n\n第二段"},
+		{kind: "answer", title: "长回答", author: "丙", action: "某人赞同了回答", body: strings.Repeat("长", 50)},
 	}, 40)
 	rendered := strings.Join(styledLineTexts(lines), "\n")
 	if !strings.Contains(rendered, "令人感叹") || strings.Contains(rendered, "令人感叹…") {
 		t.Fatalf("complete short answer has an unnecessary marker: %q", rendered)
 	}
-	if !strings.Contains(rendered, "第一段…") {
-		t.Fatalf("multi-paragraph answer was not marked truncated: %q", rendered)
+	if !strings.Contains(rendered, "第一段 第二段") || strings.Contains(rendered, "第一段…") {
+		t.Fatalf("newlines in a fitting excerpt were not rendered as spaces: %q", rendered)
+	}
+	if !strings.Contains(rendered, strings.Repeat("长", 19)+"…") {
+		t.Fatalf("long answer was not marked truncated: %q", rendered)
 	}
 	if strings.Contains(rendered, "（全文）") {
 		t.Fatalf("folded preview still renders the redundant full-text marker: %q", rendered)

@@ -748,7 +748,7 @@ func layoutFoldedGroupPreview(children []feedItem, width int) []styledLine {
 		meta := foldedItemEventLabel(child)
 		lines = append(lines, styledLine{text: truncateCells(meta, width), style: ansiDim})
 
-		excerpt, hasMore := foldedItemExcerpt(child)
+		excerpt := foldedItemExcerpt(child)
 		if excerpt == "" {
 			continue
 		}
@@ -758,7 +758,7 @@ func layoutFoldedGroupPreview(children []feedItem, width int) []styledLine {
 		if len(excerptLines) > 2 {
 			excerptLines = excerptLines[:2]
 		}
-		if truncated || hasMore {
+		if truncated {
 			last := len(excerptLines) - 1
 			excerptLines[last] = truncateCells(strings.TrimSuffix(excerptLines[last], "…")+"…", excerptWidth)
 		}
@@ -808,7 +808,7 @@ func foldedItemAuthorLabel(item feedItem) string {
 	}
 }
 
-func foldedItemExcerpt(item feedItem) (text string, hasMore bool) {
+func foldedItemExcerpt(item feedItem) string {
 	meaningful := make([]string, 0, 2)
 	for _, sourceLine := range strings.Split(item.body, "\n") {
 		if _, text, _, ok := splitLinkCardLine(sourceLine); ok {
@@ -824,9 +824,9 @@ func foldedItemExcerpt(item feedItem) (text string, hasMore bool) {
 		meaningful = meaningful[1:]
 	}
 	if len(meaningful) == 0 {
-		return "", false
+		return ""
 	}
-	return meaningful[0], len(meaningful) > 1
+	return strings.Join(meaningful, " ")
 }
 
 func wrapCellsPreserve(text string, width int) []string {
