@@ -161,7 +161,40 @@ func (c *Client) GetQuestionAnswers(ctx context.Context, questionID string, offs
 }
 
 func (c *Client) GetQuestion(ctx context.Context, questionID string) (map[string]any, error) {
-	return c.getMap(ctx, c.endpoints.APIV4+"/questions/"+url.PathEscape(questionID), nil)
+	params := url.Values{
+		"include": {"data[*].question.follower_count,comment_count,detail,excerpt,answer_count"},
+		"offset":  {"0"},
+		"limit":   {"1"},
+		"sort_by": {"default"},
+	}
+	result, err := c.getMap(ctx, c.endpoints.APIV4+"/questions/"+url.PathEscape(questionID)+"/answers", params)
+	if err != nil {
+		return nil, err
+	}
+	data, ok := result["data"].([]any)
+	if !ok {
+		return nil, DataFetchError{Message: "question answers API returned invalid data"}
+	}
+	paging, _ := result["paging"].(map[string]any)
+	answerCount, hasAnswerCount := paging["totals"]
+	if len(data) == 0 {
+		if !hasAnswerCount {
+			return nil, DataFetchError{Message: "question answers API returned no question or total count"}
+		}
+		return map[string]any{"id": questionID, "answer_count": answerCount}, nil
+	}
+	answer, ok := data[0].(map[string]any)
+	if !ok {
+		return nil, DataFetchError{Message: "question answers API returned an invalid answer"}
+	}
+	question, ok := answer["question"].(map[string]any)
+	if !ok {
+		return nil, DataFetchError{Message: "question answers API returned no question details"}
+	}
+	if _, found := question["answer_count"]; !found && hasAnswerCount {
+		question["answer_count"] = answerCount
+	}
+	return question, nil
 }
 
 func (c *Client) GetAnswer(ctx context.Context, answerID string) (map[string]any, error) {

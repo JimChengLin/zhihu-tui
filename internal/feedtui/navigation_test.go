@@ -125,14 +125,21 @@ func TestNPRevisitRetriesFailedLinkCardDetail(t *testing.T) {
 		linkCardFetches: make(chan linkCardRetryResult, 1),
 	}
 
+	initialFailure := model.items[1].body
 	model.handleKey(context.Background(), "n")
+	if model.items[1].body != initialFailure || strings.Contains(model.items[1].body, "正在重试") {
+		t.Fatalf("retry changed the failure text before completion: %q", model.items[1].body)
+	}
 	applyNextLinkCardRetry(t, model)
-	if source.attempts != 1 || !strings.Contains(model.items[1].body, "详情加载失败") {
+	if source.attempts != 1 || !strings.Contains(model.items[1].body, "详情加载失败（已重试 1 次）") {
 		t.Fatalf("first retry attempts=%d body=%q", source.attempts, model.items[1].body)
 	}
 
 	model.handleKey(context.Background(), "p")
 	model.handleKey(context.Background(), "n")
+	if !strings.Contains(model.items[1].body, "详情加载失败（已重试 1 次）") || strings.Contains(model.items[1].body, "正在重试") {
+		t.Fatalf("second retry changed the failure text before completion: %q", model.items[1].body)
+	}
 	applyNextLinkCardRetry(t, model)
 	if source.attempts != 2 {
 		t.Fatalf("retry attempts=%d, want 2", source.attempts)

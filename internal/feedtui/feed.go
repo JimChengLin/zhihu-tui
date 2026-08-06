@@ -534,6 +534,7 @@ func applyLinkCardResult(node, detail map[string]any, err error) {
 		return
 	}
 	delete(node, "card_error")
+	delete(node, "card_retry_count")
 	node["card_detail"] = detail
 }
 
@@ -679,8 +680,8 @@ func pinLinkCardFields(node, detail map[string]any) []linkCardField {
 	} else if cardFailed {
 		fields = append(fields, linkCardField{marker: linkCardTitleMarker, text: "引用想法"})
 	}
-	if cardFailed {
-		fields = append(fields, linkCardField{marker: linkCardErrorMarker, text: "详情加载失败"})
+	if status, found := linkCardStatusField(node); found {
+		fields = append(fields, status)
 	}
 	if excerpt := pinLinkCardExcerpt(detail); excerpt != "" {
 		if title == "" && !cardFailed {
@@ -698,8 +699,8 @@ func pinLinkCardFields(node, detail map[string]any) []linkCardField {
 func questionLinkCardFields(node, detail map[string]any) []linkCardField {
 	title := firstNonEmpty(toString(detail["title"]), toString(node["data_draft_title"]), "引用问题")
 	fields := []linkCardField{{marker: linkCardTitleMarker, text: plainText(title)}}
-	if toString(node["card_error"]) != "" {
-		fields = append(fields, linkCardField{marker: linkCardErrorMarker, text: "详情加载失败"})
+	if status, found := linkCardStatusField(node); found {
+		fields = append(fields, status)
 	}
 	metadata := questionStats(detail)
 	if metadata != "" {
@@ -712,8 +713,8 @@ func questionLinkCardFields(node, detail map[string]any) []linkCardField {
 func answerLinkCardFields(node, detail map[string]any) []linkCardField {
 	title := firstNonEmpty(toString(mapValue(detail["question"])["title"]), toString(node["data_draft_title"]), "引用回答")
 	fields := []linkCardField{{marker: linkCardTitleMarker, text: plainText(title)}}
-	if toString(node["card_error"]) != "" {
-		fields = append(fields, linkCardField{marker: linkCardErrorMarker, text: "详情加载失败"})
+	if status, found := linkCardStatusField(node); found {
+		fields = append(fields, status)
 	}
 	if excerpt := linkCardExcerpt(detail); excerpt != "" {
 		fields = append(fields, linkCardField{marker: linkCardExcerptMarker, text: excerpt})
@@ -733,8 +734,8 @@ func answerLinkCardFields(node, detail map[string]any) []linkCardField {
 func articleLinkCardFields(node, detail map[string]any) []linkCardField {
 	title := firstNonEmpty(toString(detail["title"]), toString(node["data_draft_title"]), "引用文章")
 	fields := []linkCardField{{marker: linkCardTitleMarker, text: plainText(title)}}
-	if toString(node["card_error"]) != "" {
-		fields = append(fields, linkCardField{marker: linkCardErrorMarker, text: "详情加载失败"})
+	if status, found := linkCardStatusField(node); found {
+		fields = append(fields, status)
 	}
 	if excerpt := linkCardExcerpt(detail); excerpt != "" {
 		fields = append(fields, linkCardField{marker: linkCardExcerptMarker, text: excerpt})
@@ -749,6 +750,18 @@ func articleLinkCardFields(node, detail map[string]any) []linkCardField {
 	metadata = append(metadata, "文章")
 	fields = append(fields, linkCardField{marker: linkCardMetadataMarker, text: strings.Join(metadata, "  ·  ")})
 	return fields
+}
+
+func linkCardStatusField(node map[string]any) (linkCardField, bool) {
+	retryCount := toInt64(node["card_retry_count"])
+	if toString(node["card_error"]) == "" {
+		return linkCardField{}, false
+	}
+	text := "详情加载失败"
+	if retryCount > 0 {
+		text += fmt.Sprintf("（已重试 %d 次）", retryCount)
+	}
+	return linkCardField{marker: linkCardErrorMarker, text: text}, true
 }
 
 func linkCardFallbackLabel(node map[string]any) string {

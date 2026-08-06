@@ -87,8 +87,14 @@ func TestGetUserProfileIncludesRelationshipFields(t *testing.T) {
 func TestGetQuestionPinArticleAndComment(t *testing.T) {
 	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v4/questions/321":
-			writeJSON(t, w, http.StatusOK, map[string]any{"id": 321, "answer_count": 6})
+		case "/api/v4/questions/321/answers":
+			if r.URL.Query().Get("include") != "data[*].question.follower_count,comment_count,detail,excerpt,answer_count" || r.URL.Query().Get("offset") != "0" || r.URL.Query().Get("limit") != "1" || r.URL.Query().Get("sort_by") != "default" {
+				t.Fatalf("unexpected question query: %s", r.URL.RawQuery)
+			}
+			writeJSON(t, w, http.StatusOK, map[string]any{
+				"data":   []any{map[string]any{"question": map[string]any{"id": 321, "title": "Question"}}},
+				"paging": map[string]any{"totals": 6},
+			})
 		case "/api/v4/pins/123":
 			writeJSON(t, w, http.StatusOK, map[string]any{"id": 123, "reaction_count": 9})
 		case "/zhuanlan/api/articles/456":
@@ -128,6 +134,27 @@ func TestGetQuestionPinArticleAndComment(t *testing.T) {
 	}
 	if comment["vote_count"].(json.Number).String() != "7" {
 		t.Fatalf("comment=%#v", comment)
+	}
+}
+
+func TestGetQuestionWithoutAnswersUsesPagingTotal(t *testing.T) {
+	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v4/questions/321/answers" {
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"data":   []any{},
+			"paging": map[string]any{"totals": 0},
+		})
+	})
+	defer server.Close()
+
+	question, err := c.GetQuestion(context.Background(), "321")
+	if err != nil {
+		t.Fatalf("GetQuestion: %v", err)
+	}
+	if question["id"] != "321" || question["answer_count"].(json.Number).String() != "0" {
+		t.Fatalf("question=%#v", question)
 	}
 }
 

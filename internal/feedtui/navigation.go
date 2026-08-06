@@ -434,14 +434,17 @@ func (model *app) startCurrentLinkCardRetry(ctx context.Context) {
 		return
 	}
 	item := model.items[model.index]
-	if item.raw == nil || len(failedLinkCardsInContent(mapValue(item.raw["target"])["content"])) == 0 {
+	if item.raw == nil {
 		return
 	}
 	if _, pending := model.linkCardRetries[item.key]; pending {
 		return
 	}
-	model.linkCardRetries[item.key] = model.generation
 	raw := cloneFeedMap(item.raw)
+	if !incrementFailedLinkCardRetryCounts(mapValue(raw["target"])["content"]) {
+		return
+	}
+	model.linkCardRetries[item.key] = model.generation
 	generation := model.generation
 	go func() {
 		retryFailedFeedLinkCards(ctx, model.source, raw)
@@ -450,6 +453,21 @@ func (model *app) startCurrentLinkCardRetry(ctx context.Context) {
 		case <-ctx.Done():
 		}
 	}()
+}
+
+func incrementFailedLinkCardRetryCounts(content any) bool {
+	incremented := false
+	for _, node := range linkCardsInContent(content) {
+		if toString(node["card_error"]) != "" {
+			node["card_retry_count"] = toInt64(node["card_retry_count"]) + 1
+			incremented = true
+			continue
+		}
+		if incrementFailedLinkCardRetryCounts(mapValue(node["card_detail"])["content"]) {
+			incremented = true
+		}
+	}
+	return incremented
 }
 
 func (model *app) applyLinkCardRetry(result linkCardRetryResult) {
