@@ -13,6 +13,22 @@ type retryLinkCardSource struct {
 	attempts int
 }
 
+func TestPageScrollAmountKeepsThreeContextLines(t *testing.T) {
+	for _, test := range []struct {
+		bodyHeight int
+		want       int
+	}{
+		{bodyHeight: 48, want: 45},
+		{bodyHeight: 8, want: 5},
+		{bodyHeight: 3, want: 1},
+		{bodyHeight: 1, want: 1},
+	} {
+		if got := pageScrollAmount(test.bodyHeight); got != test.want {
+			t.Fatalf("pageScrollAmount(%d)=%d, want %d", test.bodyHeight, got, test.want)
+		}
+	}
+}
+
 func (source *retryLinkCardSource) GetQuestion(context.Context, string) (map[string]any, error) {
 	source.attempts++
 	if source.attempts == 1 {
@@ -45,7 +61,7 @@ func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 
 	model.index, model.scroll = 0, 0
 	model.handleKey(ctx, " ")
-	if model.scroll != 7 || model.index != 0 || !model.pageAnchorVisible || model.pageAnchorLine != 8 {
+	if model.scroll != 5 || model.index != 0 || !model.pageAnchorVisible || model.pageAnchorLine != 8 {
 		t.Fatalf("first space state: index=%d scroll=%d anchor=(%d, %v)", model.index, model.scroll, model.pageAnchorLine, model.pageAnchorVisible)
 	}
 	model.handleKey(ctx, " ")
@@ -55,8 +71,8 @@ func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 	if model.message != "" {
 		t.Fatalf("bottom landing unexpectedly showed confirmation: %q", model.message)
 	}
-	if !model.pageAnchorVisible || model.pageAnchorLine != 15 {
-		t.Fatalf("space continuation anchor=(%d, %v), want first unread line 15", model.pageAnchorLine, model.pageAnchorVisible)
+	if !model.pageAnchorVisible || model.pageAnchorLine != 13 {
+		t.Fatalf("space continuation anchor=(%d, %v), want first unread line 13", model.pageAnchorLine, model.pageAnchorVisible)
 	}
 	model.handleKey(ctx, " ")
 	if model.scroll != 8 || model.index != 0 || model.boundarySwitchKey != " " {
@@ -72,7 +88,7 @@ func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 
 	model.scroll = 8
 	model.handleKey(ctx, "b")
-	if model.scroll != 1 || model.index != 1 || !model.pageAnchorVisible || model.pageAnchorLine != 7 {
+	if model.scroll != 3 || model.index != 1 || !model.pageAnchorVisible || model.pageAnchorLine != 7 {
 		t.Fatalf("first b state: index=%d scroll=%d anchor=(%d, %v)", model.index, model.scroll, model.pageAnchorLine, model.pageAnchorVisible)
 	}
 	model.handleKey(ctx, "b")
@@ -82,8 +98,8 @@ func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 	if model.message != "" {
 		t.Fatalf("top landing unexpectedly showed confirmation: %q", model.message)
 	}
-	if !model.pageAnchorVisible || model.pageAnchorLine != 0 {
-		t.Fatalf("b continuation anchor=(%d, %v), want first unread line 0", model.pageAnchorLine, model.pageAnchorVisible)
+	if !model.pageAnchorVisible || model.pageAnchorLine != 2 {
+		t.Fatalf("b continuation anchor=(%d, %v), want first unread line 2", model.pageAnchorLine, model.pageAnchorVisible)
 	}
 	model.handleKey(ctx, "b")
 	if model.scroll != 0 || model.index != 1 || model.boundarySwitchKey != "b" {
@@ -224,11 +240,11 @@ func TestFKeyPagesDownAndConfirmsNextItem(t *testing.T) {
 		metrics: layoutMetrics{bodyHeight: 8, bodyLines: 16, maxScroll: 8},
 	}
 	model.handleKey(context.Background(), "f")
-	if model.scroll != 7 || model.index != 0 || model.pageAnchorLine != 8 {
+	if model.scroll != 5 || model.index != 0 || model.pageAnchorLine != 8 {
 		t.Fatalf("first f scroll=%d index=%d anchor=%d", model.scroll, model.index, model.pageAnchorLine)
 	}
 	model.handleKey(context.Background(), "f")
-	if model.scroll != 8 || model.index != 0 || model.pageAnchorLine != 15 {
+	if model.scroll != 8 || model.index != 0 || model.pageAnchorLine != 13 {
 		t.Fatalf("second f scroll=%d index=%d anchor=%d", model.scroll, model.index, model.pageAnchorLine)
 	}
 	model.handleKey(context.Background(), "f")

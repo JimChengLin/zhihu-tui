@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+const pageContextLines = 3
+
 func collapsedFeedItems(items []feedItem) []feedItem {
 	result := make([]feedItem, 0, len(items))
 	for _, item := range items {
@@ -241,6 +243,10 @@ func (model *app) lineUp() {
 
 func (model *app) pageDownWithConfirmation(ctx context.Context, amount int) {
 	model.pageDownWithBoundary(ctx, amount, " ", "space")
+}
+
+func pageScrollAmount(bodyHeight int) int {
+	return maxInt(1, bodyHeight-pageContextLines)
 }
 
 func (model *app) pageDownWithBoundary(ctx context.Context, amount int, key keyEvent, keyLabel string) {

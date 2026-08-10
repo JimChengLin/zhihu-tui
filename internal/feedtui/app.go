@@ -494,15 +494,15 @@ func (model *app) handleKey(ctx context.Context, key keyEvent) bool {
 			model.lineUp()
 		}
 	case " ":
-		model.pageDownWithConfirmation(ctx, maxInt(1, model.metrics.bodyHeight*7/8))
+		model.pageDownWithConfirmation(ctx, pageScrollAmount(model.metrics.bodyHeight))
 	case "f":
-		model.pageDownWithBoundary(ctx, maxInt(1, model.metrics.bodyHeight*7/8), "f", "f")
+		model.pageDownWithBoundary(ctx, pageScrollAmount(model.metrics.bodyHeight), "f", "f")
 	case keyCtrlF:
-		model.pageDownWithBoundary(ctx, maxInt(1, model.metrics.bodyHeight*7/8), keyCtrlF, "Ctrl-F")
+		model.pageDownWithBoundary(ctx, pageScrollAmount(model.metrics.bodyHeight), keyCtrlF, "Ctrl-F")
 	case "b":
-		model.pageUpWithConfirmation(ctx, maxInt(1, model.metrics.bodyHeight*7/8))
+		model.pageUpWithConfirmation(ctx, pageScrollAmount(model.metrics.bodyHeight))
 	case keyCtrlB:
-		model.pageUpWithBoundary(ctx, maxInt(1, model.metrics.bodyHeight*7/8), keyCtrlB, "Ctrl-B")
+		model.pageUpWithBoundary(ctx, pageScrollAmount(model.metrics.bodyHeight), keyCtrlB, "Ctrl-B")
 	case keyCtrlE:
 		model.scrollViewportDown()
 	case keyCtrlY:

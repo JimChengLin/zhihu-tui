@@ -315,7 +315,7 @@ func TestLongBodyScrollbarTracksReadingPosition(t *testing.T) {
 
 	model.scroll = 0
 	model.metrics = metrics
-	model.pageDownWithConfirmation(context.Background(), maxInt(1, metrics.bodyHeight*7/8))
+	model.pageDownWithConfirmation(context.Background(), pageScrollAmount(metrics.bodyHeight))
 	lines, _ = renderSingleApp(model)
 	anchors := pageAnchorLines(lines)
 	if len(anchors) != 1 || !strings.Contains(anchors[0].text, "▸ ") {
