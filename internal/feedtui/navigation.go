@@ -248,7 +248,7 @@ func (model *app) pageDownWithBoundary(ctx context.Context, amount int, key keyE
 		previousLastLine := minInt(model.metrics.bodyLines-1, model.scroll+model.metrics.bodyHeight-1)
 		model.clearBoundarySwitch()
 		model.scroll = minInt(model.metrics.maxScroll, model.scroll+amount)
-		model.setPageAnchor(previousLastLine)
+		model.setPageAnchor(previousLastLine + 1)
 		model.clearMessage()
 		return
 	}
@@ -283,7 +283,7 @@ func (model *app) pageUpWithBoundary(ctx context.Context, amount int, key keyEve
 		previousFirstLine := model.scroll
 		model.clearBoundarySwitch()
 		model.scroll = maxInt(0, model.scroll-amount)
-		model.setPageAnchor(previousFirstLine)
+		model.setPageAnchor(previousFirstLine - 1)
 		model.clearMessage()
 		return
 	}
@@ -306,7 +306,7 @@ func (model *app) scrollDown(amount int) {
 	if model.scroll < model.metrics.maxScroll {
 		previousLastLine := minInt(model.metrics.bodyLines-1, model.scroll+model.metrics.bodyHeight-1)
 		model.scroll = minInt(model.metrics.maxScroll, model.scroll+amount)
-		model.setPageAnchor(previousLastLine)
+		model.setPageAnchor(previousLastLine + 1)
 		model.clearMessage()
 		return
 	}
@@ -319,7 +319,7 @@ func (model *app) scrollUp(amount int) {
 	if model.scroll > 0 {
 		previousFirstLine := model.scroll
 		model.scroll = maxInt(0, model.scroll-amount)
-		model.setPageAnchor(previousFirstLine)
+		model.setPageAnchor(previousFirstLine - 1)
 		model.clearMessage()
 		return
 	}

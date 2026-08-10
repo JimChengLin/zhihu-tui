@@ -55,6 +55,7 @@ type feedItem struct {
 	body             string
 	stats            string
 	createdAt        int64
+	publishedAt      int64
 	url              string
 	imageCount       int
 	commentCount     int
@@ -191,6 +192,7 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 	}
 
 	createdAt := toInt64(firstNonEmptyAny(raw["created_time"], target["created_time"], target["created"], 0))
+	publishedAt := toInt64(firstNonEmptyAny(target["created_time"], target["created"], 0))
 	url := feedItemURL(kind, id, toString(question["id"]), toString(target["url"]))
 	key := kind + ":" + id
 	if actionIdentity := feedActionLabel(action); actionIdentity != "" {
@@ -222,6 +224,7 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 		body:             body,
 		stats:            stats,
 		createdAt:        createdAt,
+		publishedAt:      publishedAt,
 		url:              url,
 		imageCount:       imageCount,
 		commentCount:     int(toInt64(commentCount)),
@@ -1155,6 +1158,13 @@ func formatRelativeTime(timestamp int64, now time.Time) string {
 	default:
 		return when.Format("2006-01-02")
 	}
+}
+
+func formatPublishedTime(timestamp int64) string {
+	if timestamp <= 0 {
+		return ""
+	}
+	return time.Unix(timestamp, 0).Format("2006-01-02 15:04")
 }
 
 func mapValue(value any) map[string]any {

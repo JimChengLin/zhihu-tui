@@ -154,6 +154,16 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	if len(item.foldedItems) > 0 && !model.commentMode {
 		bodyLines = layoutFoldedGroupPreview(item.foldedItems, contentWidth)
 	}
+	if !model.commentMode {
+		if published := formatPublishedTime(item.publishedAt); published != "" {
+			if len(bodyLines) == 1 && styledLineText(bodyLines[0]) == "" {
+				bodyLines = bodyLines[:0]
+			} else {
+				bodyLines = append(bodyLines, styledLine{})
+			}
+			bodyLines = append(bodyLines, styledLine{text: "发布于 " + published, style: ansiDim})
+		}
+	}
 	if model.composing {
 		bodyLines = insertCommentComposer(bodyLines, model, contentWidth)
 	}

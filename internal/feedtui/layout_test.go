@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRenderAppUsesResponsiveWideLayout(t *testing.T) {
@@ -227,6 +228,44 @@ func TestEmptyFeedBodyStaysBlank(t *testing.T) {
 	rendered := strings.Join(styledLineTexts(lines), "\n")
 	if strings.Contains(rendered, "没有正文摘要") || strings.Contains(rendered, "查看完整内容") {
 		t.Fatalf("empty feed body rendered a placeholder: %q", rendered)
+	}
+}
+
+func TestBodyShowsPublishedTimeAfterContent(t *testing.T) {
+	publishedAt := time.Date(2026, time.August, 7, 10, 21, 0, 0, time.Local).Unix()
+	model := &app{
+		items: []feedItem{{
+			kind:        "answer",
+			title:       "测试问题",
+			author:      "答主",
+			body:        "正文内容",
+			publishedAt: publishedAt,
+		}},
+		width:  100,
+		height: 18,
+	}
+	lines, _ := renderSingleApp(model)
+	contentRow := -1
+	publishedRow := -1
+	for row, line := range lines {
+		if strings.Contains(styledLineText(line), "正文内容") {
+			contentRow = row
+		}
+		if strings.Contains(styledLineText(line), "发布于 2026-08-07 10:21") {
+			if line.style != ansiDim {
+				t.Fatalf("published time style=%q, want dim", line.style)
+			}
+			publishedRow = row
+		}
+	}
+	if contentRow < 0 || publishedRow <= contentRow {
+		t.Fatalf("content row=%d published row=%d: %q", contentRow, publishedRow, strings.Join(styledLineTexts(lines), "\n"))
+	}
+
+	model.commentMode = true
+	lines, _ = renderSingleApp(model)
+	if rendered := strings.Join(styledLineTexts(lines), "\n"); strings.Contains(rendered, "发布于 2026-08-07 10:21") {
+		t.Fatalf("comment view repeats body published time: %q", rendered)
 	}
 }
 

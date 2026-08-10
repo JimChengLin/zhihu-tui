@@ -45,6 +45,7 @@ func TestParseFeedItemFormatsFollowingActivity(t *testing.T) {
 		"target": map[string]any{
 			"id":            "456",
 			"type":          "answer",
+			"created_time":  1_690_000_000,
 			"content":       `<p>第一段。</p><p>第二段。<img src="x.jpg"></p>`,
 			"voteup_count":  12000,
 			"comment_count": 7,
@@ -89,6 +90,9 @@ func TestParseFeedItemFormatsFollowingActivity(t *testing.T) {
 	}
 	if item.imageCount != 1 {
 		t.Fatalf("imageCount=%d", item.imageCount)
+	}
+	if item.createdAt != 1_700_000_000 || item.publishedAt != 1_690_000_000 {
+		t.Fatalf("activity createdAt=%d publishedAt=%d", item.createdAt, item.publishedAt)
 	}
 }
 
