@@ -420,13 +420,15 @@ func TestSetContentVoteUsesContentRoutes(t *testing.T) {
 	tests := []struct {
 		contentType string
 		path        string
+		payloadKey  string
+		payloads    []any
 	}{
-		{contentType: "answer", path: "/api/v4/answers/123/voters"},
-		{contentType: "article", path: "/api/v4/articles/123/voters"},
+		{contentType: "answer", path: "/api/v4/answers/123/voters", payloadKey: "type", payloads: []any{"up", "neutral"}},
+		{contentType: "article", path: "/api/v4/articles/123/voters", payloadKey: "voting", payloads: []any{float64(1), float64(0)}},
 	}
 	for _, test := range tests {
 		t.Run(test.contentType, func(t *testing.T) {
-			var voteTypes []string
+			requestCount := 0
 			c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodPost || r.URL.Path != test.path {
 					t.Fatalf("request=%s %s", r.Method, r.URL.Path)
@@ -435,8 +437,12 @@ func TestSetContentVoteUsesContentRoutes(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 					t.Fatal(err)
 				}
-				voteTypes = append(voteTypes, payload["type"].(string))
-				w.WriteHeader(http.StatusOK)
+				if len(payload) != 1 || payload[test.payloadKey] != test.payloads[requestCount] {
+					t.Fatalf("payload=%v, want %s=%v", payload, test.payloadKey, test.payloads[requestCount])
+				}
+				voting := 1 - requestCount
+				requestCount++
+				writeJSON(t, w, http.StatusOK, map[string]any{"voting": voting})
 			})
 			defer server.Close()
 
@@ -446,10 +452,18 @@ func TestSetContentVoteUsesContentRoutes(t *testing.T) {
 			if ok, err := c.SetContentVote(context.Background(), test.contentType, "123", false); err != nil || !ok {
 				t.Fatalf("vote neutral ok=%v err=%v", ok, err)
 			}
-			if strings.Join(voteTypes, ",") != "up,neutral" {
-				t.Fatalf("vote types=%v", voteTypes)
-			}
 		})
+	}
+}
+
+func TestSetContentVoteRejectsUnchangedServerState(t *testing.T) {
+	c, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string]any{"voting": 0})
+	})
+	defer server.Close()
+
+	if ok, err := c.SetContentVote(context.Background(), "article", "123", true); err != nil || ok {
+		t.Fatalf("SetContentVote ok=%v err=%v, want unchanged state", ok, err)
 	}
 }
 

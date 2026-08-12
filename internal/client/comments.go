@@ -137,15 +137,15 @@ func (c *Client) SetContentVote(ctx context.Context, contentType, contentID stri
 	if contentID == "" {
 		return false, DataFetchError{Message: "content ID cannot be empty"}
 	}
-	voteType := "neutral"
-	if voted {
-		voteType = "up"
-	}
 	switch contentType {
 	case "answer":
-		return c.voteResource(ctx, "answers", contentID, voteType)
+		voteType := "neutral"
+		if voted {
+			voteType = "up"
+		}
+		return c.vote(ctx, contentID, voteType)
 	case "article":
-		return c.voteResource(ctx, "articles", contentID, voteType)
+		return c.voteArticle(ctx, contentID, voted)
 	case "pin":
 		return c.setPinLiked(ctx, contentID, voted)
 	default:

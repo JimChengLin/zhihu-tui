@@ -510,16 +510,39 @@ func isNotificationReadTab(tab string) bool {
 }
 
 func (c *Client) vote(ctx context.Context, answerID, voteType string) (bool, error) {
-	return c.voteResource(ctx, "answers", answerID, voteType)
+	voting := 0
+	if voteType == "up" {
+		voting = 1
+	}
+	return c.submitVote(ctx, "answers", answerID, map[string]any{"type": voteType}, voting)
 }
 
-func (c *Client) voteResource(ctx context.Context, resourceType, resourceID, voteType string) (bool, error) {
-	resp, err := c.doJSONRequest(ctx, http.MethodPost, c.endpoints.APIV4+"/"+resourceType+"/"+url.PathEscape(resourceID)+"/voters", map[string]any{"type": voteType}, nil)
+func (c *Client) voteArticle(ctx context.Context, articleID string, voted bool) (bool, error) {
+	voting := 0
+	if voted {
+		voting = 1
+	}
+	return c.submitVote(ctx, "articles", articleID, map[string]any{"voting": voting}, voting)
+}
+
+func (c *Client) submitVote(ctx context.Context, resourceType, resourceID string, payload map[string]any, voting int) (bool, error) {
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, c.endpoints.APIV4+"/"+resourceType+"/"+url.PathEscape(resourceID)+"/voters", payload, nil)
 	if err != nil {
 		return false, err
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK, nil
+	if err := checkStatus(resp, "vote"); err != nil {
+		return false, err
+	}
+	result, err := decodeMap(resp.Body)
+	if err != nil {
+		return false, err
+	}
+	actual, ok := result["voting"]
+	if !ok {
+		return false, DataFetchError{Message: "vote response is missing voting state"}
+	}
+	return toInt(actual) == voting, nil
 }
 
 func (c *Client) getMap(ctx context.Context, target string, params url.Values) (map[string]any, error) {
