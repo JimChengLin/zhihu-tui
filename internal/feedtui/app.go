@@ -359,6 +359,7 @@ func (model *app) applyFetch(result fetchResult) {
 			representedLeaves := previousKeys
 			freshItems := make([]feedItem, 0, len(newItems))
 			for _, item := range newItems {
+				mergeFeedVoteActors(freshItems, item)
 				item, leafCount, kept := takeUnrepresentedFeedLeaves(item, representedLeaves)
 				if !kept {
 					continue
@@ -372,6 +373,7 @@ func (model *app) applyFetch(result fetchResult) {
 		} else {
 			representedLeaves := make(map[string]struct{})
 			for _, item := range newItems {
+				mergeFeedVoteActors(model.items, item)
 				item, leafCount, kept := takeUnrepresentedFeedLeaves(item, representedLeaves)
 				if !kept {
 					continue
@@ -386,6 +388,7 @@ func (model *app) applyFetch(result fetchResult) {
 			collectFeedItemKeys(item, representedLeaves)
 		}
 		for _, item := range newItems {
+			mergeFeedVoteActors(model.items, item)
 			item, leafCount, kept := takeUnrepresentedFeedLeaves(item, representedLeaves)
 			if !kept {
 				continue

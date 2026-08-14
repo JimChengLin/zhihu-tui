@@ -48,6 +48,8 @@ type feedItem struct {
 	id               string
 	kind             string
 	action           string
+	voteActors       []string
+	voteAction       string
 	title            string
 	pinTitle         string
 	author           string
@@ -190,6 +192,10 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 	if action == "" {
 		action = typeLabel(kind)
 	}
+	voteActors, voteAction := feedVoteAction(raw, action, kind)
+	if len(voteActors) > 0 {
+		action = voteActors[len(voteActors)-1] + " " + voteAction
+	}
 
 	createdAt := toInt64(firstNonEmptyAny(raw["created_time"], target["created_time"], target["created"], 0))
 	publishedAt := toInt64(firstNonEmptyAny(target["created_time"], target["created"], 0))
@@ -217,6 +223,8 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 		id:               id,
 		kind:             kind,
 		action:           action,
+		voteActors:       voteActors,
+		voteAction:       voteAction,
 		title:            title,
 		pinTitle:         pinTitle,
 		author:           authorName,
@@ -938,6 +946,28 @@ func feedActionLabel(action string) string {
 	return ""
 }
 
+func feedVoteAction(raw map[string]any, action, kind string) ([]string, string) {
+	label := feedActionLabel(action)
+	switch {
+	case kind == "answer" && label == "赞同了回答":
+	case kind == "pin" && label == "赞同了想法":
+	case kind == "article" && label == "赞同了文章":
+	default:
+		return nil, ""
+	}
+
+	actors := make([]string, 0, len(asSlice(raw["actors"])))
+	for _, value := range asSlice(raw["actors"]) {
+		if name := strings.TrimSpace(toString(mapValue(value)["name"])); name != "" {
+			actors = append(actors, name)
+		}
+	}
+	if len(actors) == 0 {
+		return nil, ""
+	}
+	return actors, label
+}
+
 func feedStats(target map[string]any) string {
 	parts := make([]string, 0, 3)
 	if value, ok := feedVoteValue(target); ok {
@@ -1128,6 +1158,8 @@ func formatVerb(verb, actor string) string {
 		label = "关注了话题"
 	case "MEMBER_CREATE_PIN":
 		label = "发布了想法"
+	case "MEMBER_LIKE_PIN", "MEMBER_VOTEUP_PIN":
+		label = "赞同了想法"
 	}
 	if label == "" {
 		return ""

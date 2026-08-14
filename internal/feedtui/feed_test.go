@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 type pinCardTestSource struct {
@@ -96,6 +97,61 @@ func TestParseFeedItemFormatsFollowingActivity(t *testing.T) {
 	}
 }
 
+func TestParseFeedItemSeparatesLatestAndPreviousVoteActors(t *testing.T) {
+	item, ok := parseFeedItem(map[string]any{
+		"action_text": "甲,乙,triplex赞同了回答",
+		"actors": []any{
+			map[string]any{"name": "甲"},
+			map[string]any{"name": "乙"},
+			map[string]any{"name": "triplex"},
+		},
+		"target": map[string]any{
+			"id":      "456",
+			"type":    "answer",
+			"content": "正文",
+			"question": map[string]any{
+				"id":    "123",
+				"title": "测试问题",
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("parseFeedItem returned false")
+	}
+	if item.action != "triplex 赞同了回答" || item.voteAction != "赞同了回答" {
+		t.Fatalf("action=%q voteAction=%q", item.action, item.voteAction)
+	}
+	if got := strings.Join(item.voteActors, "、"); got != "甲、乙、triplex" {
+		t.Fatalf("voteActors=%q", got)
+	}
+}
+
+func TestParseArticleSeparatesLatestAndPreviousVoteActors(t *testing.T) {
+	item, ok := parseFeedItem(map[string]any{
+		"action_text": "甲,乙,triplex赞同了文章",
+		"actors": []any{
+			map[string]any{"name": "甲"},
+			map[string]any{"name": "乙"},
+			map[string]any{"name": "triplex"},
+		},
+		"target": map[string]any{
+			"id":      "789",
+			"type":    "article",
+			"title":   "测试文章",
+			"content": "正文",
+		},
+	})
+	if !ok {
+		t.Fatal("parseFeedItem returned false")
+	}
+	if item.action != "triplex 赞同了文章" || item.voteAction != "赞同了文章" {
+		t.Fatalf("action=%q voteAction=%q", item.action, item.voteAction)
+	}
+	if got := strings.Join(item.voteActors, "、"); got != "甲、乙、triplex" {
+		t.Fatalf("voteActors=%q", got)
+	}
+}
+
 func TestParseFollowedQuestionShowsQuestionAndCommentStats(t *testing.T) {
 	item, ok := parseFeedItem(map[string]any{
 		"verb":  "QUESTION_FOLLOW",
@@ -175,7 +231,12 @@ func TestParseFeedItemFormatsStructuredPinContent(t *testing.T) {
 
 func TestParsePinUsesAggregateVoteCount(t *testing.T) {
 	raw := map[string]any{
-		"action_text": "张帅赞同了想法",
+		"action_text": "甲,乙,张帅赞同了想法",
+		"actors": []any{
+			map[string]any{"name": "甲"},
+			map[string]any{"name": "乙"},
+			map[string]any{"name": "张帅"},
+		},
 		"target": map[string]any{
 			"id":             "2061022964812982162",
 			"type":           "pin",
@@ -197,6 +258,9 @@ func TestParsePinUsesAggregateVoteCount(t *testing.T) {
 	}
 	if item.stats != "赞同 91  ·  评论 72  ·  收藏 22  ·  喜欢 1" || !item.hasVoteCount || item.voteCount != 91 {
 		t.Fatalf("stats=%q voteCount=%d known=%v", item.stats, item.voteCount, item.hasVoteCount)
+	}
+	if item.action != "张帅 赞同了想法" || strings.Join(item.voteActors, "、") != "甲、乙、张帅" {
+		t.Fatalf("pin vote action=%q actors=%v", item.action, item.voteActors)
 	}
 }
 
@@ -1020,10 +1084,15 @@ func TestRefreshKeepsGreenFeedBeforeReadBoundaryWhenAPIRegroupsOldItems(t *testi
 }
 
 func TestRefreshCoalescesActorAggregationForSameTarget(t *testing.T) {
-	activity := func(activityID, action string) map[string]any {
+	activity := func(activityID string, actorNames ...string) map[string]any {
+		actors := make([]any, len(actorNames))
+		for index, name := range actorNames {
+			actors[index] = map[string]any{"name": name}
+		}
 		return map[string]any{
 			"id":          activityID,
-			"action_text": action,
+			"action_text": strings.Join(actorNames, ",") + "赞同了回答",
+			"actors":      actors,
 			"target": map[string]any{
 				"id":      "same-answer",
 				"type":    "answer",
@@ -1053,14 +1122,17 @@ func TestRefreshCoalescesActorAggregationForSameTarget(t *testing.T) {
 		generation: 1,
 		response: map[string]any{
 			"data": []any{
-				activity("single-flaneur", "flaneur赞同了回答"),
-				group(activity("single-duck", "从不毒舌可达鸭赞同了回答")),
+				activity("single-flaneur", "flaneur"),
+				group(activity("single-duck", "从不毒舌可达鸭")),
 			},
 			"paging": map[string]any{"is_end": true},
 		},
 	})
 	if len(model.items) != 1 || model.items[0].key != "answer:same-answer:赞同了回答" {
 		t.Fatalf("single-actor representations were not coalesced: %#v", model.items)
+	}
+	if got := feedActionLine(model.items[0], time.Time{}); got != "flaneur 赞同了回答  ·  之前还有 从不毒舌可达鸭 赞同了回答" {
+		t.Fatalf("coalesced action=%q", got)
 	}
 
 	model.firstViewedKey = model.items[0].key
@@ -1072,7 +1144,7 @@ func TestRefreshCoalescesActorAggregationForSameTarget(t *testing.T) {
 		generation: model.generation,
 		response: map[string]any{
 			"data": []any{
-				activity("aggregated", "flaneur,从不毒舌可达鸭赞同了回答"),
+				activity("aggregated", "从不毒舌可达鸭", "flaneur", "triplex"),
 			},
 			"paging": map[string]any{"is_end": true},
 		},
@@ -1082,8 +1154,11 @@ func TestRefreshCoalescesActorAggregationForSameTarget(t *testing.T) {
 		t.Fatalf("aggregated refresh duplicated the same target: %#v", model.items)
 	}
 	item := model.items[0]
-	if item.action != "flaneur,从不毒舌可达鸭 赞同了回答" {
+	if item.action != "triplex 赞同了回答" {
 		t.Fatalf("aggregated action was not updated in place: %q", item.action)
+	}
+	if got := feedActionLine(item, time.Time{}); got != "triplex 赞同了回答  ·  之前还有 从不毒舌可达鸭、flaneur 赞同了回答" {
+		t.Fatalf("refreshed action=%q", got)
 	}
 	if len(model.newItemKeys) != 0 {
 		t.Fatalf("actor aggregation was incorrectly marked new: %v", model.newItemKeys)

@@ -126,6 +126,44 @@ func TestCompactFooterKeepsHelpAndQuitVisible(t *testing.T) {
 	}
 }
 
+func TestFeedActionLineShowsPreviousContentVoters(t *testing.T) {
+	now := time.Date(2026, time.August, 14, 12, 0, 0, 0, time.Local)
+	tests := []struct {
+		name       string
+		voteAction string
+		want       string
+	}{
+		{
+			name:       "answer",
+			voteAction: "赞同了回答",
+			want:       "triplex 赞同了回答  ·  2 小时前  ·  之前还有 a、b 赞同了回答",
+		},
+		{
+			name:       "pin",
+			voteAction: "赞同了想法",
+			want:       "triplex 赞同了想法  ·  2 小时前  ·  之前还有 a、b 赞同了想法",
+		},
+		{
+			name:       "article",
+			voteAction: "赞同了文章",
+			want:       "triplex 赞同了文章  ·  2 小时前  ·  之前还有 a、b 赞同了文章",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			item := feedItem{
+				action:     "triplex " + test.voteAction,
+				voteActors: []string{"a", "b", "triplex"},
+				voteAction: test.voteAction,
+				createdAt:  now.Add(-2 * time.Hour).Unix(),
+			}
+			if got := feedActionLine(item, now); got != test.want {
+				t.Fatalf("feedActionLine()=%q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestSidebarSelectionStaysPutWhenNextPageArrives(t *testing.T) {
 	items := make([]feedItem, 10)
 	for index := range items {

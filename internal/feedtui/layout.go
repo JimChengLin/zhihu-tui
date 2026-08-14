@@ -78,10 +78,7 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		lines = []styledLine{line(headerText(model), ansiBold+ansiCyan), {}}
 	}
 
-	action := item.action
-	if relative := formatRelativeTime(item.createdAt, time.Now()); relative != "" {
-		action += "  ·  " + relative
-	}
+	action := feedActionLine(item, time.Now())
 	if action != "" {
 		lines = append(lines, line(truncateCells(action, contentWidth), ansiDim))
 	}
@@ -273,6 +270,17 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		maxScroll:  maxScroll,
 		commentIDs: commentLineIDs(bodyLines),
 	}
+}
+
+func feedActionLine(item feedItem, now time.Time) string {
+	action := item.action
+	if relative := formatRelativeTime(item.createdAt, now); relative != "" {
+		action += "  ·  " + relative
+	}
+	if len(item.voteActors) > 1 {
+		action += "  ·  之前还有 " + strings.Join(item.voteActors[:len(item.voteActors)-1], "、") + " " + item.voteAction
+	}
+	return action
 }
 
 func footerHints(model *app, width int) string {

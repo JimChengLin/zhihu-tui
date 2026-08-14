@@ -37,7 +37,12 @@ func collectFeedLeavesByKey(items []feedItem) map[string]feedItem {
 	var collect func(feedItem)
 	collect = func(item feedItem) {
 		if len(item.foldedItems) == 0 {
-			leaves[item.key] = item
+			if latest, found := leaves[item.key]; found {
+				mergeOlderVoteActors(&latest, item)
+				leaves[item.key] = latest
+			} else {
+				leaves[item.key] = item
+			}
 			return
 		}
 		for _, child := range item.foldedItems {
@@ -64,6 +69,7 @@ func updateFeedItemLeaves(item feedItem, latest map[string]feedItem) feedItem {
 		if !found {
 			return item
 		}
+		mergeOlderVoteActors(&updated, item)
 		updated.foldedParent = item.foldedParent
 		updated.serverFolded = item.serverFolded
 		return updated
@@ -75,6 +81,55 @@ func updateFeedItemLeaves(item feedItem, latest map[string]feedItem) feedItem {
 	}
 	item.foldedItems = children
 	return item
+}
+
+func mergeFeedVoteActors(items []feedItem, incoming feedItem) {
+	if len(incoming.foldedItems) > 0 {
+		for _, child := range incoming.foldedItems {
+			mergeFeedVoteActors(items, child)
+		}
+		return
+	}
+	if existing := findFeedLeaf(items, incoming.key); existing != nil {
+		mergeOlderVoteActors(existing, incoming)
+	}
+}
+
+func findFeedLeaf(items []feedItem, key string) *feedItem {
+	for index := range items {
+		if len(items[index].foldedItems) == 0 {
+			if items[index].key == key {
+				return &items[index]
+			}
+			continue
+		}
+		if found := findFeedLeaf(items[index].foldedItems, key); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+func mergeOlderVoteActors(newer *feedItem, older feedItem) {
+	if newer.voteAction == "" || newer.voteAction != older.voteAction || len(older.voteActors) == 0 {
+		return
+	}
+	combined := append(append([]string(nil), older.voteActors...), newer.voteActors...)
+	seen := make(map[string]struct{}, len(combined))
+	actors := make([]string, 0, len(combined))
+	for index := len(combined) - 1; index >= 0; index-- {
+		name := combined[index]
+		if _, duplicate := seen[name]; duplicate {
+			continue
+		}
+		seen[name] = struct{}{}
+		actors = append(actors, name)
+	}
+	for left, right := 0, len(actors)-1; left < right; left, right = left+1, right-1 {
+		actors[left], actors[right] = actors[right], actors[left]
+	}
+	newer.voteActors = actors
+	newer.action = actors[len(actors)-1] + " " + newer.voteAction
 }
 
 func takeUnrepresentedFeedLeaves(item feedItem, represented map[string]struct{}) (feedItem, int, bool) {
