@@ -21,6 +21,7 @@ var foldedGroupCountPattern = regexp.MustCompile(`^(还有\s*)\d+`)
 
 type feedSource interface {
 	linkCardSource
+	GetSelfInfo(context.Context) (map[string]any, error)
 	GetFollowingFeed(context.Context, string, int) (map[string]any, error)
 	GetCommentsPage(context.Context, string, string, string, int, string) (map[string]any, error)
 	GetChildCommentsPage(context.Context, string, string, int) (map[string]any, error)
@@ -43,6 +44,7 @@ type linkCardSource interface {
 
 type app struct {
 	source                 feedSource
+	currentUserID          string
 	items                  []feedItem
 	index                  int
 	scroll                 int
@@ -144,6 +146,14 @@ func Run(ctx context.Context, source feedSource, in, out *os.File) error {
 	if !isTerminal(in) || !isTerminal(out) {
 		return fmt.Errorf("zhihu feed --tui requires an interactive terminal")
 	}
+	self, err := source.GetSelfInfo(ctx)
+	if err != nil {
+		return fmt.Errorf("load current user: %w", err)
+	}
+	currentUserID := strings.TrimSpace(toString(self["id"]))
+	if currentUserID == "" {
+		return fmt.Errorf("current user response is missing id")
+	}
 	state, err := makeRaw(in)
 	if err != nil {
 		return fmt.Errorf("enable terminal raw mode: %w", err)
@@ -161,6 +171,7 @@ func Run(ctx context.Context, source feedSource, in, out *os.File) error {
 	}
 	model := &app{
 		source:                 source,
+		currentUserID:          currentUserID,
 		width:                  width,
 		height:                 height,
 		fetches:                make(chan fetchResult, 1),

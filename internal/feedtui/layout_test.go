@@ -136,31 +136,58 @@ func TestFeedActionLineShowsPreviousContentVoters(t *testing.T) {
 		{
 			name:       "answer",
 			voteAction: "赞同了回答",
-			want:       "triplex 赞同了回答  ·  2 小时前  ·  之前还有 a、b 赞同了回答",
+			want:       "triplex 赞同了回答  ·  2 小时前  ·  还有 a、b 赞同",
 		},
 		{
 			name:       "pin",
 			voteAction: "赞同了想法",
-			want:       "triplex 赞同了想法  ·  2 小时前  ·  之前还有 a、b 赞同了想法",
+			want:       "triplex 赞同了想法  ·  2 小时前  ·  还有 a、b 赞同",
 		},
 		{
 			name:       "article",
 			voteAction: "赞同了文章",
-			want:       "triplex 赞同了文章  ·  2 小时前  ·  之前还有 a、b 赞同了文章",
+			want:       "triplex 赞同了文章  ·  2 小时前  ·  还有 a、b 赞同",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			item := feedItem{
 				action:     "triplex " + test.voteAction,
-				voteActors: []string{"a", "b", "triplex"},
+				voteActors: []voteActor{{id: "a", name: "a"}, {id: "b", name: "b"}, {id: "triplex", name: "triplex"}},
 				voteAction: test.voteAction,
 				createdAt:  now.Add(-2 * time.Hour).Unix(),
 			}
-			if got := feedActionLine(item, now); got != test.want {
+			if got := feedActionLine(item, now, ""); got != test.want {
 				t.Fatalf("feedActionLine()=%q, want %q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestFeedActionLineOmitsCurrentUserOnlyFromPreviousVoters(t *testing.T) {
+	item := feedItem{
+		action: "triplex 赞同了回答",
+		voteActors: []voteActor{
+			{id: "a", name: "a"},
+			{id: "self", name: "我自己"},
+			{id: "b", name: "b"},
+			{id: "triplex", name: "triplex"},
+		},
+		voteAction: "赞同了回答",
+	}
+	if got := feedActionLine(item, time.Time{}, "self"); got != "triplex 赞同了回答  ·  还有 a、b 赞同" {
+		t.Fatalf("feedActionLine()=%q", got)
+	}
+
+	item.voteActors = []voteActor{{id: "self", name: "我自己"}, {id: "triplex", name: "triplex"}}
+	if got := feedActionLine(item, time.Time{}, "self"); got != "triplex 赞同了回答" {
+		t.Fatalf("empty previous-voter list was not hidden: %q", got)
+	}
+
+	item.action = "我自己 赞同了回答"
+	item.voteActors = []voteActor{{id: "a", name: "a"}, {id: "self", name: "我自己"}}
+	if got := feedActionLine(item, time.Time{}, "self"); got != "我自己 赞同了回答  ·  还有 a 赞同" {
+		t.Fatalf("current actor was incorrectly removed: %q", got)
 	}
 }
 

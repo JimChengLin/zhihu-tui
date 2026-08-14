@@ -41,6 +41,10 @@ type commentChildPagingSource struct {
 	cursors chan string
 }
 
+func (source *commentTestSource) GetSelfInfo(context.Context) (map[string]any, error) {
+	return map[string]any{"id": "self"}, nil
+}
+
 func (source *blockingCommentPageSource) GetCommentsPage(ctx context.Context, _, _, _ string, _ int, _ string) (map[string]any, error) {
 	source.started <- struct{}{}
 	<-ctx.Done()

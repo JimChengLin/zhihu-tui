@@ -114,22 +114,26 @@ func mergeOlderVoteActors(newer *feedItem, older feedItem) {
 	if newer.voteAction == "" || newer.voteAction != older.voteAction || len(older.voteActors) == 0 {
 		return
 	}
-	combined := append(append([]string(nil), older.voteActors...), newer.voteActors...)
+	combined := append(append([]voteActor(nil), older.voteActors...), newer.voteActors...)
 	seen := make(map[string]struct{}, len(combined))
-	actors := make([]string, 0, len(combined))
+	actors := make([]voteActor, 0, len(combined))
 	for index := len(combined) - 1; index >= 0; index-- {
-		name := combined[index]
-		if _, duplicate := seen[name]; duplicate {
+		actor := combined[index]
+		key := "name:" + actor.name
+		if actor.id != "" {
+			key = "id:" + actor.id
+		}
+		if _, duplicate := seen[key]; duplicate {
 			continue
 		}
-		seen[name] = struct{}{}
-		actors = append(actors, name)
+		seen[key] = struct{}{}
+		actors = append(actors, actor)
 	}
 	for left, right := 0, len(actors)-1; left < right; left, right = left+1, right-1 {
 		actors[left], actors[right] = actors[right], actors[left]
 	}
 	newer.voteActors = actors
-	newer.action = actors[len(actors)-1] + " " + newer.voteAction
+	newer.action = actors[len(actors)-1].name + " " + newer.voteAction
 }
 
 func takeUnrepresentedFeedLeaves(item feedItem, represented map[string]struct{}) (feedItem, int, bool) {

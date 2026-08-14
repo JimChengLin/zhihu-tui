@@ -78,7 +78,7 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		lines = []styledLine{line(headerText(model), ansiBold+ansiCyan), {}}
 	}
 
-	action := feedActionLine(item, time.Now())
+	action := feedActionLine(item, time.Now(), model.currentUserID)
 	if action != "" {
 		lines = append(lines, line(truncateCells(action, contentWidth), ansiDim))
 	}
@@ -272,15 +272,28 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	}
 }
 
-func feedActionLine(item feedItem, now time.Time) string {
+func feedActionLine(item feedItem, now time.Time, currentUserID string) string {
 	action := item.action
 	if relative := formatRelativeTime(item.createdAt, now); relative != "" {
 		action += "  ·  " + relative
 	}
 	if len(item.voteActors) > 1 {
-		action += "  ·  之前还有 " + strings.Join(item.voteActors[:len(item.voteActors)-1], "、") + " " + item.voteAction
+		names := voteActorNames(item.voteActors[:len(item.voteActors)-1], currentUserID)
+		if len(names) > 0 {
+			action += "  ·  还有 " + strings.Join(names, "、") + " 赞同"
+		}
 	}
 	return action
+}
+
+func voteActorNames(actors []voteActor, excludedID string) []string {
+	names := make([]string, 0, len(actors))
+	for _, actor := range actors {
+		if excludedID == "" || actor.id != excludedID {
+			names = append(names, actor.name)
+		}
+	}
+	return names
 }
 
 func footerHints(model *app, width int) string {

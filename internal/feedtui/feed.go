@@ -48,7 +48,7 @@ type feedItem struct {
 	id               string
 	kind             string
 	action           string
-	voteActors       []string
+	voteActors       []voteActor
 	voteAction       string
 	title            string
 	pinTitle         string
@@ -73,6 +73,11 @@ type feedItem struct {
 	foldedItems      []feedItem
 	foldedParent     string
 	groupOpen        bool
+}
+
+type voteActor struct {
+	id   string
+	name string
 }
 
 type linkCardRef struct {
@@ -194,7 +199,7 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 	}
 	voteActors, voteAction := feedVoteAction(raw, action, kind)
 	if len(voteActors) > 0 {
-		action = voteActors[len(voteActors)-1] + " " + voteAction
+		action = voteActors[len(voteActors)-1].name + " " + voteAction
 	}
 
 	createdAt := toInt64(firstNonEmptyAny(raw["created_time"], target["created_time"], target["created"], 0))
@@ -946,7 +951,7 @@ func feedActionLabel(action string) string {
 	return ""
 }
 
-func feedVoteAction(raw map[string]any, action, kind string) ([]string, string) {
+func feedVoteAction(raw map[string]any, action, kind string) ([]voteActor, string) {
 	label := feedActionLabel(action)
 	switch {
 	case kind == "answer" && label == "赞同了回答":
@@ -956,10 +961,14 @@ func feedVoteAction(raw map[string]any, action, kind string) ([]string, string) 
 		return nil, ""
 	}
 
-	actors := make([]string, 0, len(asSlice(raw["actors"])))
+	actors := make([]voteActor, 0, len(asSlice(raw["actors"])))
 	for _, value := range asSlice(raw["actors"]) {
-		if name := strings.TrimSpace(toString(mapValue(value)["name"])); name != "" {
-			actors = append(actors, name)
+		actor := mapValue(value)
+		if name := strings.TrimSpace(toString(actor["name"])); name != "" {
+			actors = append(actors, voteActor{
+				id:   strings.TrimSpace(toString(actor["id"])),
+				name: name,
+			})
 		}
 	}
 	if len(actors) == 0 {

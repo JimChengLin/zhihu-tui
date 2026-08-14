@@ -101,9 +101,9 @@ func TestParseFeedItemSeparatesLatestAndPreviousVoteActors(t *testing.T) {
 	item, ok := parseFeedItem(map[string]any{
 		"action_text": "甲,乙,triplex赞同了回答",
 		"actors": []any{
-			map[string]any{"name": "甲"},
-			map[string]any{"name": "乙"},
-			map[string]any{"name": "triplex"},
+			map[string]any{"id": "a", "name": "甲"},
+			map[string]any{"id": "b", "name": "乙"},
+			map[string]any{"id": "triplex", "name": "triplex"},
 		},
 		"target": map[string]any{
 			"id":      "456",
@@ -121,8 +121,11 @@ func TestParseFeedItemSeparatesLatestAndPreviousVoteActors(t *testing.T) {
 	if item.action != "triplex 赞同了回答" || item.voteAction != "赞同了回答" {
 		t.Fatalf("action=%q voteAction=%q", item.action, item.voteAction)
 	}
-	if got := strings.Join(item.voteActors, "、"); got != "甲、乙、triplex" {
+	if got := strings.Join(voteActorNames(item.voteActors, ""), "、"); got != "甲、乙、triplex" {
 		t.Fatalf("voteActors=%q", got)
+	}
+	if item.voteActors[0].id != "a" || item.voteActors[1].id != "b" || item.voteActors[2].id != "triplex" {
+		t.Fatalf("vote actor ids=%v", item.voteActors)
 	}
 }
 
@@ -130,9 +133,9 @@ func TestParseArticleSeparatesLatestAndPreviousVoteActors(t *testing.T) {
 	item, ok := parseFeedItem(map[string]any{
 		"action_text": "甲,乙,triplex赞同了文章",
 		"actors": []any{
-			map[string]any{"name": "甲"},
-			map[string]any{"name": "乙"},
-			map[string]any{"name": "triplex"},
+			map[string]any{"id": "a", "name": "甲"},
+			map[string]any{"id": "b", "name": "乙"},
+			map[string]any{"id": "triplex", "name": "triplex"},
 		},
 		"target": map[string]any{
 			"id":      "789",
@@ -147,7 +150,7 @@ func TestParseArticleSeparatesLatestAndPreviousVoteActors(t *testing.T) {
 	if item.action != "triplex 赞同了文章" || item.voteAction != "赞同了文章" {
 		t.Fatalf("action=%q voteAction=%q", item.action, item.voteAction)
 	}
-	if got := strings.Join(item.voteActors, "、"); got != "甲、乙、triplex" {
+	if got := strings.Join(voteActorNames(item.voteActors, ""), "、"); got != "甲、乙、triplex" {
 		t.Fatalf("voteActors=%q", got)
 	}
 }
@@ -233,9 +236,9 @@ func TestParsePinUsesAggregateVoteCount(t *testing.T) {
 	raw := map[string]any{
 		"action_text": "甲,乙,张帅赞同了想法",
 		"actors": []any{
-			map[string]any{"name": "甲"},
-			map[string]any{"name": "乙"},
-			map[string]any{"name": "张帅"},
+			map[string]any{"id": "a", "name": "甲"},
+			map[string]any{"id": "b", "name": "乙"},
+			map[string]any{"id": "zhang", "name": "张帅"},
 		},
 		"target": map[string]any{
 			"id":             "2061022964812982162",
@@ -259,7 +262,7 @@ func TestParsePinUsesAggregateVoteCount(t *testing.T) {
 	if item.stats != "赞同 91  ·  评论 72  ·  收藏 22  ·  喜欢 1" || !item.hasVoteCount || item.voteCount != 91 {
 		t.Fatalf("stats=%q voteCount=%d known=%v", item.stats, item.voteCount, item.hasVoteCount)
 	}
-	if item.action != "张帅 赞同了想法" || strings.Join(item.voteActors, "、") != "甲、乙、张帅" {
+	if item.action != "张帅 赞同了想法" || strings.Join(voteActorNames(item.voteActors, ""), "、") != "甲、乙、张帅" {
 		t.Fatalf("pin vote action=%q actors=%v", item.action, item.voteActors)
 	}
 }
@@ -1087,7 +1090,7 @@ func TestRefreshCoalescesActorAggregationForSameTarget(t *testing.T) {
 	activity := func(activityID string, actorNames ...string) map[string]any {
 		actors := make([]any, len(actorNames))
 		for index, name := range actorNames {
-			actors[index] = map[string]any{"name": name}
+			actors[index] = map[string]any{"id": name, "name": name}
 		}
 		return map[string]any{
 			"id":          activityID,
@@ -1131,7 +1134,7 @@ func TestRefreshCoalescesActorAggregationForSameTarget(t *testing.T) {
 	if len(model.items) != 1 || model.items[0].key != "answer:same-answer:赞同了回答" {
 		t.Fatalf("single-actor representations were not coalesced: %#v", model.items)
 	}
-	if got := feedActionLine(model.items[0], time.Time{}); got != "flaneur 赞同了回答  ·  之前还有 从不毒舌可达鸭 赞同了回答" {
+	if got := feedActionLine(model.items[0], time.Time{}, ""); got != "flaneur 赞同了回答  ·  还有 从不毒舌可达鸭 赞同" {
 		t.Fatalf("coalesced action=%q", got)
 	}
 
@@ -1157,7 +1160,7 @@ func TestRefreshCoalescesActorAggregationForSameTarget(t *testing.T) {
 	if item.action != "triplex 赞同了回答" {
 		t.Fatalf("aggregated action was not updated in place: %q", item.action)
 	}
-	if got := feedActionLine(item, time.Time{}); got != "triplex 赞同了回答  ·  之前还有 从不毒舌可达鸭、flaneur 赞同了回答" {
+	if got := feedActionLine(item, time.Time{}, ""); got != "triplex 赞同了回答  ·  还有 从不毒舌可达鸭、flaneur 赞同" {
 		t.Fatalf("refreshed action=%q", got)
 	}
 	if len(model.newItemKeys) != 0 {
