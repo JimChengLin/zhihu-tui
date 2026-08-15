@@ -334,6 +334,34 @@ func TestBodyShowsPublishedTimeAfterContent(t *testing.T) {
 	}
 }
 
+func TestPublishedTimeCannotReceivePageAnchor(t *testing.T) {
+	publishedAt := time.Date(2026, time.August, 14, 12, 23, 0, 0, time.Local).Unix()
+	model := &app{
+		items: []feedItem{{
+			kind:        "answer",
+			title:       "测试问题",
+			body:        "正文最后一行",
+			publishedAt: publishedAt,
+		}},
+		width:  100,
+		height: 18,
+	}
+	_, metrics := renderSingleApp(model)
+	model.pageAnchorLine = metrics.bodyLines - 1
+	model.pageAnchorVisible = true
+
+	lines, _ := renderSingleApp(model)
+	anchors := pageAnchorLines(lines)
+	if len(anchors) != 1 || !strings.Contains(anchors[0].text, "正文最后一行") {
+		t.Fatalf("page anchor did not fall back to the final body line: %#v", anchors)
+	}
+	for _, line := range lines {
+		if strings.Contains(styledLineText(line), "发布于 2026-08-14 12:23") && line.style != ansiDim {
+			t.Fatalf("published time received page anchor style: %#v", line)
+		}
+	}
+}
+
 func TestLongBodyScrollbarTracksReadingPosition(t *testing.T) {
 	model := &app{
 		items: []feedItem{{

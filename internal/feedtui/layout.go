@@ -36,6 +36,7 @@ type styledLine struct {
 	cursorCell   int
 	raw          bool
 	commentID    string
+	noPageAnchor bool
 }
 
 type styledSegment struct {
@@ -156,13 +157,17 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 			if len(bodyLines) == 1 && styledLineText(bodyLines[0]) == "" {
 				bodyLines = bodyLines[:0]
 			} else {
-				bodyLines = append(bodyLines, styledLine{})
+				bodyLines = append(bodyLines, styledLine{noPageAnchor: true})
 			}
-			bodyLines = append(bodyLines, styledLine{text: "发布于 " + published, style: ansiDim})
+			bodyLines = append(bodyLines, styledLine{text: "发布于 " + published, style: ansiDim, noPageAnchor: true})
 		}
 	}
 	if model.composing {
 		bodyLines = insertCommentComposer(bodyLines, model, contentWidth)
+	}
+	if model.pageAnchorVisible {
+		model.pageAnchorLine = resolvePageAnchor(bodyLines, model.pageAnchorLine)
+		model.pageAnchorVisible = model.pageAnchorLine >= 0
 	}
 	fixedBottom := 4
 	availableBodyHeight := model.height - len(lines) - fixedBottom
@@ -334,6 +339,14 @@ func styledLineText(line styledLine) string {
 	text.WriteString(line.middle)
 	text.WriteString(line.tail)
 	return text.String()
+}
+
+func resolvePageAnchor(lines []styledLine, line int) int {
+	line = minInt(line, len(lines)-1)
+	for line >= 0 && lines[line].noPageAnchor {
+		line--
+	}
+	return line
 }
 
 func scrollbarThumb(trackHeight, contentHeight, scroll, maxScroll int) (int, int) {
