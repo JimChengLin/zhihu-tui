@@ -297,7 +297,7 @@ func TestFormatTargetStats(t *testing.T) {
 			name: "answer",
 			kind: "answer",
 			data: map[string]any{"voteup_count": 19, "favlists_count": 2, "thanks_count": 1},
-			want: "赞同 19 · 收藏 2 · 感谢 1",
+			want: "赞同 19 · 收藏 2 · 喜欢 1",
 		},
 		{
 			name: "article zero like",
