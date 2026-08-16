@@ -297,7 +297,7 @@ func parsePostedComment(response map[string]any, content, targetID string) feedC
 	}
 	comment := parseComment(raw)
 	if strings.TrimSpace(toString(raw["content"])) == "" {
-		comment.content = content
+		comment.content = normalizeCommentContent(content)
 	}
 	if len(mapValue(raw["author"])) == 0 && len(mapValue(raw["user"])) == 0 {
 		comment.author = "我"

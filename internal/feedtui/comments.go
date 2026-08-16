@@ -101,7 +101,7 @@ func parseComment(raw map[string]any) feedComment {
 			toString(raw["reply_comment_id"]),
 			toString(replyToComment["id"]),
 		),
-		content:       content,
+		content:       normalizeCommentContent(content),
 		isFollowing:   truthy(relationship["is_following"]),
 		isFollowed:    truthy(relationship["is_followed"]),
 		voteCount:     int(toInt64(firstNonEmptyAny(raw["vote_count"], raw["like_count"], 0))),
@@ -119,6 +119,11 @@ func parseComment(raw map[string]any) feedComment {
 		comment.children = nestCommentReplies(comment.children, comment.id)
 	}
 	return comment
+}
+
+func normalizeCommentContent(content string) string {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	return repeatedBlankLinesPattern.ReplaceAllString(content, "\n\n")
 }
 
 func formatCommentView(item feedItem, state *commentState, spinner int) (string, string) {

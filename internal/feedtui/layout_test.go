@@ -223,7 +223,7 @@ func selectedSidebarRow(lines []styledLine) int {
 func TestAddParagraphSpacingPreservesAuthorLayout(t *testing.T) {
 	lines := []string{"第一段第一行", "第一段第二行", "", "第二段"}
 	want := []string{"第一段第一行", "第一段第二行", "", "", "第二段"}
-	got := addParagraphSpacing(lines)
+	got := addParagraphSpacing(lines, paragraphGapLines)
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("addParagraphSpacing()=%q, want %q", got, want)
 	}

@@ -851,25 +851,93 @@ func TestSiblingCommentsHaveConnectedBreathingRoom(t *testing.T) {
 }
 
 func TestRootCommentsHaveTwoBlankRowsBetweenThem(t *testing.T) {
-	state := &commentState{
-		items: []feedComment{
-			{id: "100", author: "A", content: "第一条"},
-			{id: "200", author: "B", content: "第二条"},
-		},
-		loaded: true,
+	codeComment := parseComment(map[string]any{
+		"id":      "100",
+		"author":  map[string]any{"name": "A"},
+		"content": `<pre><code>code</code></pre>`,
+	})
+	for _, test := range []struct {
+		name  string
+		first feedComment
+	}{
+		{name: "prose", first: feedComment{id: "100", author: "A", content: "第一条"}},
+		{name: "code block", first: codeComment},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := &commentState{
+				items:  []feedComment{test.first, {id: "200", author: "B", content: "第二条"}},
+				loaded: true,
+			}
+			view, _ := formatCommentView(feedItem{}, state, 0)
+			lines := layoutBodyLines(view, 80)
+			second := firstLineWithCommentID(lines, "200")
+			lastFirst := second - 1
+			for lastFirst >= 0 && (lines[lastFirst].commentID != "100" || styledLineText(lines[lastFirst]) == "") {
+				lastFirst--
+			}
+			blankRows := second - lastFirst - 1
+			if lastFirst < 0 || blankRows != 2 {
+				t.Fatalf("root comment gap=%d, want 2: %#v", blankRows, lines)
+			}
+			for _, line := range lines[lastFirst+1 : second] {
+				if styledLineText(line) != "" {
+					t.Fatalf("root comment separator contains content: %#v", lines)
+				}
+			}
+		})
 	}
-	view, _ := formatCommentView(feedItem{}, state, 0)
+}
+
+func TestCommentContentKeepsAtMostOneBlankLine(t *testing.T) {
+	comment := parseComment(map[string]any{
+		"id":      "100",
+		"author":  map[string]any{"name": "A"},
+		"content": "第一行\n\n第二行\n \n\n第三行",
+	})
+	if comment.content != "第一行\n\n第二行\n\n第三行" {
+		t.Fatalf("comment content=%q", comment.content)
+	}
+	view, _ := formatCommentView(feedItem{}, &commentState{items: []feedComment{comment}, loaded: true}, 0)
 	lines := layoutBodyLines(view, 80)
-	first := firstLineWithCommentID(lines, "100")
-	second := firstLineWithCommentID(lines, "200")
-	blankRows := 0
-	for _, line := range lines[first+1 : second] {
-		if line.commentID == "" && styledLineText(line) == "" {
-			blankRows++
+	requireBlankRowsBetweenText(t, lines, "第一行", "第二行", 1)
+	requireBlankRowsBetweenText(t, lines, "第二行", "第三行", 1)
+
+	posted := parsePostedComment(map[string]any{"id": "200"}, "第一行\r\n\r\n第二行", "")
+	if posted.content != "第一行\n\n第二行" {
+		t.Fatalf("posted comment content=%q", posted.content)
+	}
+}
+
+func TestCommentContentUsesOneBlankLineAcrossLayoutPaths(t *testing.T) {
+	comment := parseComment(map[string]any{
+		"id":     "100",
+		"author": map[string]any{"name": "A"},
+		"content": `<p><a href="https://example.com">链接段落</a></p><p>普通段落</p>` +
+			`<pre><code>code</code></pre><p>末段</p>`,
+	})
+	view, _ := formatCommentView(feedItem{}, &commentState{items: []feedComment{comment}, loaded: true}, 0)
+	lines := layoutBodyLines(view, 80)
+	requireBlankRowsBetweenText(t, lines, "链接段落", "普通段落", 1)
+	requireBlankRowsBetweenText(t, lines, "普通段落", "┌─ 代码", 1)
+	requireBlankRowsBetweenText(t, lines, "└─", "末段", 1)
+}
+
+func requireBlankRowsBetweenText(t *testing.T, lines []styledLine, before, after string, want int) {
+	t.Helper()
+	beforeRow, afterRow := -1, -1
+	for index, line := range lines {
+		switch styledLineText(line) {
+		case before:
+			beforeRow = index
+		case after:
+			afterRow = index
 		}
 	}
-	if blankRows != 2 {
-		t.Fatalf("root comment gap=%d, want 2: %#v", blankRows, lines)
+	if beforeRow < 0 || afterRow <= beforeRow {
+		t.Fatalf("cannot find %q before %q: %#v", before, after, lines)
+	}
+	if got := afterRow - beforeRow - 1; got != want {
+		t.Fatalf("blank rows between %q and %q=%d, want %d: %#v", before, after, got, want, lines)
 	}
 }
 

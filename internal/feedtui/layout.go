@@ -21,6 +21,8 @@ const (
 	paragraphGapLines = 2
 )
 
+const commentParagraphGapLines = 1
+
 type styledLine struct {
 	text         string
 	style        string
@@ -371,7 +373,7 @@ func adaptiveReadingWidth(viewportWidth int) int {
 	return minInt(available, target)
 }
 
-func addParagraphSpacing(lines []string) []string {
+func addParagraphSpacing(lines []string, gapLines int) []string {
 	result := make([]string, 0, len(lines)+len(lines)/4)
 	for _, line := range lines {
 		if line != "" {
@@ -381,7 +383,7 @@ func addParagraphSpacing(lines []string) []string {
 		if len(result) == 0 || result[len(result)-1] == "" {
 			continue
 		}
-		for range paragraphGapLines {
+		for range gapLines {
 			result = append(result, "")
 		}
 	}
@@ -389,8 +391,9 @@ func addParagraphSpacing(lines []string) []string {
 }
 
 func layoutProseLines(prose string, width int, commentID string) []styledLine {
+	gapLines := contentGapLines(commentID)
 	if !strings.Contains(prose, inlineLinkStartMarker) {
-		wrapped := addParagraphSpacing(wrapText(prose, width))
+		wrapped := addParagraphSpacing(wrapText(prose, width), gapLines)
 		result := make([]styledLine, 0, len(wrapped))
 		for _, text := range wrapped {
 			result = append(result, styledLine{text: text, commentID: commentID})
@@ -404,7 +407,7 @@ func layoutProseLines(prose string, width int, commentID string) []styledLine {
 		paragraph = strings.TrimSpace(paragraph)
 		if paragraph == "" {
 			if paragraphIndex > 0 && len(result) > 0 && styledLineText(result[len(result)-1]) != "" {
-				for range paragraphGapLines {
+				for range gapLines {
 					result = append(result, styledLine{commentID: commentID})
 				}
 			}
@@ -425,6 +428,13 @@ func layoutProseLines(prose string, width int, commentID string) []styledLine {
 		}
 	}
 	return result
+}
+
+func contentGapLines(commentID string) int {
+	if commentID != "" {
+		return commentParagraphGapLines
+	}
+	return paragraphGapLines
 }
 
 type inlineLinkSpan struct {
@@ -538,12 +548,13 @@ func layoutBodyLines(body string, width int) []styledLine {
 	var prose []string
 	currentCommentID := ""
 	appendParagraphGap := func() {
+		gapLines := contentGapLines(currentCommentID)
 		blankLines := 0
 		for index := len(result) - 1; index >= 0 && styledLineText(result[index]) == ""; index-- {
 			blankLines++
 		}
-		for blankLines < paragraphGapLines {
-			result = append(result, styledLine{})
+		for blankLines < gapLines {
+			result = append(result, styledLine{commentID: currentCommentID})
 			blankLines++
 		}
 	}
@@ -559,7 +570,13 @@ func layoutBodyLines(body string, width int) []styledLine {
 	for _, sourceLine := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
 		if strings.HasPrefix(sourceLine, commentStartMarker) && strings.HasSuffix(sourceLine, commentMarkerEnd) {
 			flushProse()
-			currentCommentID = strings.TrimSuffix(strings.TrimPrefix(sourceLine, commentStartMarker), commentMarkerEnd)
+			nextCommentID := strings.TrimSuffix(strings.TrimPrefix(sourceLine, commentStartMarker), commentMarkerEnd)
+			if nextCommentID == "" {
+				for len(result) > 0 && result[len(result)-1].commentID != "" && styledLineText(result[len(result)-1]) == "" {
+					result = result[:len(result)-1]
+				}
+			}
+			currentCommentID = nextCommentID
 			continue
 		}
 		if strings.HasPrefix(sourceLine, commentTreeMarker) {
