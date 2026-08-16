@@ -53,6 +53,7 @@ type feedItem struct {
 	title            string
 	pinTitle         string
 	author           string
+	authorToken      string
 	headline         string
 	body             string
 	stats            string
@@ -233,6 +234,7 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 		title:            title,
 		pinTitle:         pinTitle,
 		author:           authorName,
+		authorToken:      strings.TrimSpace(toString(author["url_token"])),
 		headline:         compactLine(plainText(toString(author["headline"]))),
 		body:             body,
 		stats:            stats,

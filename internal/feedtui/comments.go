@@ -162,7 +162,7 @@ func formatCommentView(item feedItem, state *commentState, spinner int) (string,
 		}
 		writeCommentMarker(&builder, comment.id)
 		expanded := state.expandedChildren[comment.id]
-		formatComment(&builder, comment, fmt.Sprintf("%d. ", index+1), "", false, "")
+		formatComment(&builder, comment, fmt.Sprintf("%d. ", index+1), "", false, "", item.authorToken)
 		if comment.childComments > 0 {
 			builder.WriteString("\n")
 			writeCommentMarker(&builder, comment.id)
@@ -179,7 +179,7 @@ func formatCommentView(item feedItem, state *commentState, spinner int) (string,
 		if len(comment.children) > 0 {
 			writeCommentTreeGap(&builder, "   │  ")
 		}
-		formatCommentTree(&builder, comment.children, "   ", remaining > 0)
+		formatCommentTree(&builder, comment.children, "   ", remaining > 0, item.authorToken)
 		if remaining > 0 {
 			builder.WriteString("\n")
 			writeCommentMarker(&builder, comment.id)
@@ -200,7 +200,7 @@ func writeCommentRootGap(builder *strings.Builder) {
 	builder.WriteString("\n")
 }
 
-func formatCommentTree(builder *strings.Builder, comments []feedComment, prefix string, hasFollowing bool) {
+func formatCommentTree(builder *strings.Builder, comments []feedComment, prefix string, hasFollowing bool, contentAuthorToken string) {
 	for index, comment := range comments {
 		builder.WriteString("\n")
 		writeCommentMarker(builder, comment.id)
@@ -211,11 +211,11 @@ func formatCommentTree(builder *strings.Builder, comments []feedComment, prefix 
 			branch = "└─ "
 			childPrefix = prefix + "   "
 		}
-		formatComment(builder, comment, prefix+branch, childPrefix, true, "")
+		formatComment(builder, comment, prefix+branch, childPrefix, true, "", contentAuthorToken)
 		if len(comment.children) > 0 {
 			writeCommentTreeGap(builder, childPrefix+"│  ")
 		}
-		formatCommentTree(builder, comment.children, childPrefix, false)
+		formatCommentTree(builder, comment.children, childPrefix, false, contentAuthorToken)
 		if index < len(comments)-1 || hasFollowing {
 			writeCommentTreeGap(builder, prefix+"│  ")
 		}
@@ -275,12 +275,12 @@ func countPendingReplies(comments []feedComment) int {
 	return count
 }
 
-func formatComment(builder *strings.Builder, comment feedComment, prefix, contentPrefix string, tree bool, replyMarker string) {
+func formatComment(builder *strings.Builder, comment feedComment, prefix, contentPrefix string, tree bool, replyMarker, contentAuthorToken string) {
 	var header strings.Builder
 	header.WriteString(comment.author)
-	if relationship := commentRelationshipLabel(comment); relationship != "" {
+	if labels := commentLabels(comment, contentAuthorToken); len(labels) > 0 {
 		header.WriteString("（")
-		header.WriteString(relationship)
+		header.WriteString(strings.Join(labels, "，"))
 		header.WriteString("）")
 	}
 	if comment.replyTo != "" && !comment.nestedReply {
@@ -320,6 +320,17 @@ func formatComment(builder *strings.Builder, comment feedComment, prefix, conten
 			builder.WriteString(line)
 		}
 	}
+}
+
+func commentLabels(comment feedComment, contentAuthorToken string) []string {
+	labels := make([]string, 0, 2)
+	if contentAuthorToken != "" && comment.authorToken == contentAuthorToken {
+		labels = append(labels, "作者")
+	}
+	if relationship := commentRelationshipLabel(comment); relationship != "" {
+		labels = append(labels, relationship)
+	}
+	return labels
 }
 
 func writeCommentTreeLine(builder *strings.Builder, prefix, text string) {

@@ -142,6 +142,7 @@ func TestParseArticleSeparatesLatestAndPreviousVoteActors(t *testing.T) {
 			"type":    "article",
 			"title":   "测试文章",
 			"content": "正文",
+			"author":  map[string]any{"name": "文章作者", "url_token": "article-author"},
 		},
 	})
 	if !ok {
@@ -152,6 +153,9 @@ func TestParseArticleSeparatesLatestAndPreviousVoteActors(t *testing.T) {
 	}
 	if got := strings.Join(voteActorNames(item.voteActors, ""), "、"); got != "甲、乙、triplex" {
 		t.Fatalf("voteActors=%q", got)
+	}
+	if item.authorToken != "article-author" {
+		t.Fatalf("authorToken=%q", item.authorToken)
 	}
 }
 

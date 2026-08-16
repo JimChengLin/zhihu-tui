@@ -434,6 +434,20 @@ func TestCommentRelationshipLabels(t *testing.T) {
 	}
 }
 
+func TestCommentViewMarksContentAuthorAlongsideRelationship(t *testing.T) {
+	state := &commentState{items: []feedComment{{
+		id:          "100",
+		author:      "文章作者",
+		authorToken: "article-author",
+		content:     "作者回复",
+		isFollowed:  true,
+	}}, loaded: true}
+	view, _ := formatCommentView(feedItem{kind: "article", authorToken: "article-author"}, state, 0)
+	if !strings.Contains(view, "文章作者（作者，关注我）") {
+		t.Fatalf("content author label is missing: %q", view)
+	}
+}
+
 func TestCommentSpaceLoadsNextPageBeforeSwitchingFeed(t *testing.T) {
 	source := &commentPagingTestSource{cursors: make(chan string, 2)}
 	model := &app{
