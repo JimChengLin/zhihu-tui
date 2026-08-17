@@ -34,6 +34,26 @@ func writeNotificationTestJSON(t *testing.T, w http.ResponseWriter, status int, 
 	}
 }
 
+func TestNotificationLimit(t *testing.T) {
+	tests := []struct {
+		name   string
+		values map[string][]string
+		want   int
+	}{
+		{name: "list default", want: 10},
+		{name: "monitor default", values: map[string][]string{"monitor": {"true"}}, want: 1},
+		{name: "list explicit", values: map[string][]string{"limit": {"7"}}, want: 7},
+		{name: "monitor explicit", values: map[string][]string{"monitor": {"true"}, "limit": {"7"}}, want: 7},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := notificationLimit(parsedOptions{values: tt.values}); got != tt.want {
+				t.Fatalf("notificationLimit=%d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseNotificationTarget(t *testing.T) {
 	tests := []struct {
 		link string
@@ -149,6 +169,32 @@ func TestNotificationFormatterActorCacheUsesTTL(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("calls=%d, want 2 after TTL expires", calls)
+	}
+}
+
+func TestNotificationFormatterFormatsActorsInReverseOrder(t *testing.T) {
+	formatter, closeServer := testNotificationFormatter(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v4/members/seeker":
+			writeNotificationTestJSON(t, w, http.StatusOK, map[string]any{"follower_count": 20})
+		case "/api/v4/members/qing-yi-dong-hua":
+			writeNotificationTestJSON(t, w, http.StatusOK, map[string]any{"follower_count": 93})
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	})
+	defer closeServer()
+	actors := []any{
+		map[string]any{"name": "Seeker", "url_token": "seeker"},
+		map[string]any{"name": "青衣动画", "url_token": "qing-yi-dong-hua"},
+	}
+
+	got, err := formatter.formatActors(context.Background(), actors)
+	if err != nil {
+		t.Fatalf("formatActors: %v", err)
+	}
+	if want := "青衣动画（粉丝 93）, Seeker（粉丝 20）"; got != want {
+		t.Fatalf("formatActors=%q, want %q", got, want)
 	}
 }
 

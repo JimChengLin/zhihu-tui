@@ -33,6 +33,7 @@ type parsedOptions struct {
 }
 
 const defaultNotificationLimit = 10
+const defaultNotificationMonitorLimit = 1
 const notificationHistoryRetention = 90 * 24 * time.Hour
 const notificationActorCacheTTL = 24 * time.Hour
 const notificationBellInterval = time.Hour
@@ -763,7 +764,7 @@ func runNotifications(ctx context.Context, args []string, out io.Writer) error {
 	}
 	defer c.Close()
 	formatter := newNotificationFormatter(c)
-	limit := opts.int("limit", defaultNotificationLimit)
+	limit := notificationLimit(opts)
 	if opts.has("monitor") {
 		interval := time.Duration(opts.int("interval", 60)) * time.Second
 		if interval <= 0 {
@@ -798,6 +799,13 @@ func runNotifications(ctx context.Context, args []string, out io.Writer) error {
 		}
 	}
 	return nil
+}
+
+func notificationLimit(opts parsedOptions) int {
+	if opts.has("monitor") {
+		return opts.int("limit", defaultNotificationMonitorLimit)
+	}
+	return opts.int("limit", defaultNotificationLimit)
 }
 
 func runNotificationsMarkRead(ctx context.Context, args []string, out io.Writer) error {
@@ -1751,7 +1759,8 @@ func (f *notificationFormatter) formatActors(ctx context.Context, actors []any) 
 	}
 	parts := make([]string, 0, len(actors))
 	now := f.now()
-	for _, raw := range actors {
+	for i := len(actors) - 1; i >= 0; i-- {
+		raw := actors[i]
 		actor := mapValue(raw)
 		name := toString(actor["name"])
 		if name == "" {
