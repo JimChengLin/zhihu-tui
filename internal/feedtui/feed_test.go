@@ -825,6 +825,24 @@ func TestFoldedPreviewMarksOnlyTruncatedExcerpts(t *testing.T) {
 	}
 }
 
+func TestFoldedPreviewLimitsChildTitleToTwoLines(t *testing.T) {
+	lines := layoutFoldedGroupPreview([]feedItem{
+		{kind: "question", title: strings.Repeat("长", 12), author: "甲", action: "甲关注了问题"},
+	}, 10)
+	if len(lines) != 3 {
+		t.Fatalf("folded preview lines=%#v, want two title lines and one activity line", lines)
+	}
+	if lines[0].text != strings.Repeat("长", 5) || lines[0].style != ansiBlue {
+		t.Fatalf("first title line=%#v", lines[0])
+	}
+	if lines[1].text != strings.Repeat("长", 4)+"…" || lines[1].style != ansiBlue {
+		t.Fatalf("second title line=%#v, want truncated blue title", lines[1])
+	}
+	if lines[2].style != ansiDim {
+		t.Fatalf("activity line=%#v, want dim activity after title", lines[2])
+	}
+}
+
 func TestFoldedPreviewOmitsMissingExcerpt(t *testing.T) {
 	lines := layoutFoldedGroupPreview([]feedItem{
 		{kind: "question", title: "如何评价游戏小丑牌？", author: "西行寺振凯", action: "codedump 关注了问题"},

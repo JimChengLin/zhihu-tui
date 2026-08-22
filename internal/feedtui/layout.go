@@ -803,7 +803,12 @@ func layoutFoldedGroupPreview(children []feedItem, width int) []styledLine {
 				lines = append(lines, styledLine{})
 			}
 		}
-		for _, titleLine := range wrapText(child.title, width) {
+		titleLines := wrapText(child.title, width)
+		if len(titleLines) > 2 {
+			titleLines = titleLines[:2]
+			titleLines[1] = truncateCells(strings.TrimSuffix(titleLines[1], "…")+"…", width)
+		}
+		for _, titleLine := range titleLines {
 			lines = append(lines, styledLine{text: titleLine, style: ansiBlue})
 		}
 		meta := foldedItemEventLabel(child)
