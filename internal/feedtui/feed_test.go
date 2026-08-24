@@ -50,6 +50,7 @@ func TestParseFeedItemFormatsFollowingActivity(t *testing.T) {
 			"content":       `<p>第一段。</p><p>第二段。<img src="x.jpg"></p>`,
 			"voteup_count":  12000,
 			"comment_count": 7,
+			"thanks_count":  5,
 			"author": map[string]any{
 				"name":     "Bob",
 				"headline": "第一行\n第二行",
@@ -80,7 +81,7 @@ func TestParseFeedItemFormatsFollowingActivity(t *testing.T) {
 	if item.headline != "第一行 第二行" {
 		t.Fatalf("headline=%q", item.headline)
 	}
-	if item.stats != "赞同 1.2万  ·  评论 7" {
+	if item.stats != "赞同 1.2万  ·  评论 7  ·  喜欢 5" {
 		t.Fatalf("stats=%q", item.stats)
 	}
 	if !item.hasCommentCount || item.commentCount != 7 {
@@ -138,11 +139,13 @@ func TestParseArticleSeparatesLatestAndPreviousVoteActors(t *testing.T) {
 			map[string]any{"id": "triplex", "name": "triplex"},
 		},
 		"target": map[string]any{
-			"id":      "789",
-			"type":    "article",
-			"title":   "测试文章",
-			"content": "正文",
-			"author":  map[string]any{"name": "文章作者", "url_token": "article-author"},
+			"id":           "789",
+			"type":         "article",
+			"title":        "测试文章",
+			"content":      "正文",
+			"voteup_count": 12,
+			"liked_count":  4,
+			"author":       map[string]any{"name": "文章作者", "url_token": "article-author"},
 		},
 	})
 	if !ok {
@@ -156,6 +159,53 @@ func TestParseArticleSeparatesLatestAndPreviousVoteActors(t *testing.T) {
 	}
 	if item.authorToken != "article-author" {
 		t.Fatalf("authorToken=%q", item.authorToken)
+	}
+	if item.stats != "赞同 12  ·  喜欢 4" {
+		t.Fatalf("stats=%q", item.stats)
+	}
+}
+
+func TestFeedStatsTreatsArticleLikeCountAsLikes(t *testing.T) {
+	stats := feedStats(map[string]any{
+		"type":       "article",
+		"like_count": 3,
+	})
+	if stats != "喜欢 3" {
+		t.Fatalf("stats=%q", stats)
+	}
+}
+
+func TestHydrateFeedLikeCountsLoadsMissingAnswerAndArticleCounts(t *testing.T) {
+	response := map[string]any{"data": []any{
+		map[string]any{"target": map[string]any{
+			"id": "answer-1", "type": "answer", "voteup_count": 12,
+		}},
+		map[string]any{"target": map[string]any{
+			"id": "article-1", "type": "article", "voteup_count": 79, "comment_count": 5,
+		}},
+	}}
+	source := &pinCardTestSource{
+		answerDetail:  map[string]any{"type": "answer", "thanks_count": 2},
+		articleDetail: map[string]any{"type": "article", "liked_count": 5},
+	}
+
+	hydrateFeedLinkCards(context.Background(), source, response)
+
+	items := parseFeedItems(asSlice(response["data"]))
+	if len(items) != 2 {
+		t.Fatalf("items=%#v", items)
+	}
+	if items[0].stats != "赞同 12  ·  喜欢 2" {
+		t.Fatalf("answer stats=%q", items[0].stats)
+	}
+	if items[1].stats != "赞同 79  ·  评论 5  ·  喜欢 5" {
+		t.Fatalf("article stats=%q", items[1].stats)
+	}
+	if len(source.answerCalls) != 1 || source.answerCalls[0] != "answer-1" {
+		t.Fatalf("answer calls=%v", source.answerCalls)
+	}
+	if len(source.articleCalls) != 1 || source.articleCalls[0] != "article-1" {
+		t.Fatalf("article calls=%v", source.articleCalls)
 	}
 }
 
@@ -273,6 +323,7 @@ func TestParsePinUsesAggregateVoteCount(t *testing.T) {
 
 func TestFeedStatsOmitsZeroReactionLikes(t *testing.T) {
 	stats := feedStats(map[string]any{
+		"type":         "pin",
 		"voteup_count": 4,
 		"reaction": map[string]any{
 			"statistics": map[string]any{"like_count": 0},

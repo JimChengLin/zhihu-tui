@@ -404,6 +404,8 @@ func feedContentTextWithRoot(value any, root linkCardRef) (string, int) {
 }
 
 func hydrateFeedLinkCards(ctx context.Context, source linkCardSource, response map[string]any) {
+	hydrateFeedLikeCounts(ctx, source, response)
+
 	pending := make([]map[string]any, 0)
 	rootDetails := make(map[linkCardRef]map[string]any)
 	var collectActivity func(map[string]any)
@@ -426,6 +428,51 @@ func hydrateFeedLinkCards(ctx context.Context, source linkCardSource, response m
 		cache[ref] = linkCardFetch{ref: ref, detail: detail}
 	}
 	hydrateLinkCards(ctx, source, pending, cache)
+}
+
+func hydrateFeedLikeCounts(ctx context.Context, source linkCardSource, response map[string]any) {
+	targetsByRef := make(map[linkCardRef][]map[string]any)
+	var collectActivity func(map[string]any)
+	collectActivity = func(activity map[string]any) {
+		target := mapValue(activity["target"])
+		ref, ok := feedTargetReference(target)
+		if ok && (ref.kind == "ANSWER" || ref.kind == "ARTICLE") {
+			if _, present := feedLikeValue(target); !present {
+				targetsByRef[ref] = append(targetsByRef[ref], target)
+			}
+		}
+		for _, rawChild := range asSlice(activity["list"]) {
+			collectActivity(mapValue(rawChild))
+		}
+	}
+	for _, rawActivity := range asSlice(response["data"]) {
+		collectActivity(mapValue(rawActivity))
+	}
+
+	results := make(chan linkCardFetch, len(targetsByRef))
+	for ref := range targetsByRef {
+		go func() {
+			detail, err := fetchLinkCardDetail(ctx, source, ref)
+			results <- linkCardFetch{ref: ref, detail: detail, err: err}
+		}()
+	}
+	for range targetsByRef {
+		fetched := <-results
+		if fetched.err != nil {
+			continue
+		}
+		value, ok := contentLikeValue(strings.ToLower(fetched.ref.kind), fetched.detail)
+		if !ok {
+			continue
+		}
+		field := "liked_count"
+		if fetched.ref.kind == "ANSWER" {
+			field = "thanks_count"
+		}
+		for _, target := range targetsByRef[fetched.ref] {
+			target[field] = value
+		}
+	}
 }
 
 type linkCardFetch struct {
@@ -990,7 +1037,7 @@ func feedStats(target map[string]any) string {
 	if value, ok := firstPresent(target["favorite_count"], target["favlists_count"], mapValue(mapValue(target["reaction"])["statistics"])["favorites"]); ok {
 		parts = append(parts, "收藏 "+display.FormatCount(value))
 	}
-	if value, ok := feedReactionLikeValue(target); ok && toInt64(value) > 0 {
+	if value, ok := feedLikeValue(target); ok && toInt64(value) > 0 {
 		parts = append(parts, "喜欢 "+display.FormatCount(value))
 	}
 	return strings.Join(parts, "  ·  ")
@@ -1022,17 +1069,37 @@ func feedFollowerCount(target map[string]any) (int64, bool) {
 
 func feedVoteValue(target map[string]any) (any, bool) {
 	statistics := mapValue(mapValue(target["reaction"])["statistics"])
+	if toString(target["type"]) == "pin" {
+		return firstPresent(
+			target["voteup_count"],
+			target["like_count"],
+			statistics["up_vote_count"],
+			statistics["applaud_count"],
+		)
+	}
 	return firstPresent(
 		target["voteup_count"],
-		target["like_count"],
 		statistics["up_vote_count"],
 		statistics["applaud_count"],
 	)
 }
 
-func feedReactionLikeValue(target map[string]any) (any, bool) {
+func feedLikeValue(target map[string]any) (any, bool) {
+	return contentLikeValue(toString(target["type"]), target)
+}
+
+func contentLikeValue(kind string, target map[string]any) (any, bool) {
 	statistics := mapValue(mapValue(target["reaction"])["statistics"])
-	return firstPresent(statistics["like_count"])
+	switch kind {
+	case "answer":
+		return firstPresent(target["thanks_count"], statistics["like_count"])
+	case "article":
+		return firstPresent(target["liked_count"], statistics["like_count"], target["like_count"])
+	case "pin":
+		return firstPresent(statistics["like_count"])
+	default:
+		return nil, false
+	}
 }
 
 func feedItemVoted(target map[string]any) bool {
