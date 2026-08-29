@@ -457,6 +457,44 @@ func TestSingleParagraphPinRendersAsCompleteBody(t *testing.T) {
 	}
 }
 
+func TestPinStartingWithLinkCardUsesVisibleCardTitle(t *testing.T) {
+	raw := map[string]any{
+		"id":          "activity-pin",
+		"action_text": "satanson 发布了想法",
+		"target": map[string]any{
+			"id":     "outer-pin",
+			"type":   "pin",
+			"author": map[string]any{"name": "satanson"},
+			"content": []any{map[string]any{
+				"type":              "link_card",
+				"data_content_type": "PIN",
+				"data_draft_title":  "引用想法",
+				"card_detail": map[string]any{
+					"content": []any{map[string]any{
+						"type":    "text",
+						"content": "会做面包 = 会做咖啡 | <p>引用摘要。</p>",
+					}},
+				},
+			}},
+		},
+	}
+	item, ok := parseFeedItem(raw)
+	if !ok {
+		t.Fatal("parseFeedItem returned false")
+	}
+	if item.title != "会做面包 = 会做咖啡" {
+		t.Fatalf("title=%q, want visible link-card title", item.title)
+	}
+	if strings.Contains(item.title, "link-card-title") || strings.Contains(item.title, "└─") {
+		t.Fatalf("title contains internal link-card markup: %q", item.title)
+	}
+
+	sidebar := renderSidebar(&app{items: []feedItem{item}, width: 100, height: 16}, 40)
+	if !strings.Contains(sidebar[3].text, item.title) {
+		t.Fatalf("sidebar title=%q, want %q", sidebar[3].text, item.title)
+	}
+}
+
 func TestPinLinkCardLoadsAndRendersReferencedPin(t *testing.T) {
 	linkCard := map[string]any{
 		"type":              "link_card",

@@ -175,7 +175,11 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 		imageCount = referenced
 	}
 	rawBodyTitle := firstParagraph(body)
-	bodyTitle := stripInlineLinkMarkers(rawBodyTitle)
+	bodyTitle := rawBodyTitle
+	if _, text, _, ok := splitLinkCardLine(rawBodyTitle); ok {
+		bodyTitle = text
+	}
+	bodyTitle = stripInlineLinkMarkers(bodyTitle)
 	if pinTitle != "" && bodyTitle == pinTitle {
 		body = strings.TrimSpace(strings.TrimPrefix(body, rawBodyTitle))
 		title = pinTitle
