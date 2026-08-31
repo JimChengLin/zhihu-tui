@@ -61,8 +61,8 @@ func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 
 	model.index, model.scroll = 0, 0
 	model.handleKey(ctx, " ")
-	if model.scroll != 5 || model.index != 0 || !model.pageAnchorVisible || model.pageAnchorLine != 8 {
-		t.Fatalf("first space state: index=%d scroll=%d anchor=(%d, %v)", model.index, model.scroll, model.pageAnchorLine, model.pageAnchorVisible)
+	if model.scroll != 5 || model.index != 0 || !model.pageAnchorVisible || model.pageAnchorLine != 8 || model.pageAnchorReadSide != pageAnchorReadAbove {
+		t.Fatalf("first space state: index=%d scroll=%d anchor=(%d, %v) readSide=%d", model.index, model.scroll, model.pageAnchorLine, model.pageAnchorVisible, model.pageAnchorReadSide)
 	}
 	model.handleKey(ctx, " ")
 	if model.scroll != 8 || model.index != 0 || model.boundarySwitchKey != "" {
@@ -88,8 +88,8 @@ func TestReadingKeysRequireExplicitBoundaryConfirmation(t *testing.T) {
 
 	model.scroll = 8
 	model.handleKey(ctx, "b")
-	if model.scroll != 3 || model.index != 1 || !model.pageAnchorVisible || model.pageAnchorLine != 7 {
-		t.Fatalf("first b state: index=%d scroll=%d anchor=(%d, %v)", model.index, model.scroll, model.pageAnchorLine, model.pageAnchorVisible)
+	if model.scroll != 3 || model.index != 1 || !model.pageAnchorVisible || model.pageAnchorLine != 7 || model.pageAnchorReadSide != pageAnchorReadBelow {
+		t.Fatalf("first b state: index=%d scroll=%d anchor=(%d, %v) readSide=%d", model.index, model.scroll, model.pageAnchorLine, model.pageAnchorVisible, model.pageAnchorReadSide)
 	}
 	model.handleKey(ctx, "b")
 	if model.scroll != 0 || model.index != 1 || model.boundarySwitchKey != "" {

@@ -313,17 +313,17 @@ func (model *app) pageDownWithBoundary(ctx context.Context, amount int, key keyE
 		previousLastLine := minInt(model.metrics.bodyLines-1, model.scroll+model.metrics.bodyHeight-1)
 		model.clearBoundarySwitch()
 		model.scroll = minInt(model.metrics.maxScroll, model.scroll+amount)
-		model.setPageAnchor(previousLastLine + 1)
+		model.setPageAnchor(previousLastLine+1, pageAnchorReadAbove)
 		model.clearMessage()
 		return
 	}
 	if model.ensureMoreComments(ctx) {
-		model.setPageAnchor(model.metrics.bodyLines - 1)
+		model.setPageAnchor(model.metrics.bodyLines-1, pageAnchorReadAbove)
 		return
 	}
 	if model.commentMode {
 		model.clearBoundarySwitch()
-		model.setPageAnchor(model.metrics.bodyLines - 1)
+		model.setPageAnchor(model.metrics.bodyLines-1, pageAnchorReadAbove)
 		if model.currentCommentsLoading() {
 			model.setMessage("正在加载更多评论", 2*time.Second)
 		} else {
@@ -335,7 +335,7 @@ func (model *app) pageDownWithBoundary(ctx context.Context, amount int, key keyE
 		model.moveNext(ctx)
 		return
 	}
-	model.setPageAnchor(model.metrics.bodyLines - 1)
+	model.setPageAnchor(model.metrics.bodyLines-1, pageAnchorReadAbove)
 	model.armBoundarySwitch(key, "已到"+model.readingAreaLabel()+"底部，再按一次 "+keyLabel+" 切换下一条")
 }
 
@@ -348,13 +348,13 @@ func (model *app) pageUpWithBoundary(ctx context.Context, amount int, key keyEve
 		previousFirstLine := model.scroll
 		model.clearBoundarySwitch()
 		model.scroll = maxInt(0, model.scroll-amount)
-		model.setPageAnchor(previousFirstLine - 1)
+		model.setPageAnchor(previousFirstLine-1, pageAnchorReadBelow)
 		model.clearMessage()
 		return
 	}
 	if model.commentMode {
 		model.clearBoundarySwitch()
-		model.setPageAnchor(0)
+		model.setPageAnchor(0, pageAnchorReadBelow)
 		model.setMessage("已到评论顶部", 2*time.Second)
 		return
 	}
@@ -362,7 +362,7 @@ func (model *app) pageUpWithBoundary(ctx context.Context, amount int, key keyEve
 		model.movePrevious(ctx, true)
 		return
 	}
-	model.setPageAnchor(0)
+	model.setPageAnchor(0, pageAnchorReadBelow)
 	model.armBoundarySwitch(key, "已到"+model.readingAreaLabel()+"顶部，再按一次 "+keyLabel+" 切换上一条")
 }
 
@@ -371,11 +371,11 @@ func (model *app) scrollDown(amount int) {
 	if model.scroll < model.metrics.maxScroll {
 		previousLastLine := minInt(model.metrics.bodyLines-1, model.scroll+model.metrics.bodyHeight-1)
 		model.scroll = minInt(model.metrics.maxScroll, model.scroll+amount)
-		model.setPageAnchor(previousLastLine + 1)
+		model.setPageAnchor(previousLastLine+1, pageAnchorReadAbove)
 		model.clearMessage()
 		return
 	}
-	model.setPageAnchor(maxInt(0, model.metrics.bodyLines-1))
+	model.setPageAnchor(maxInt(0, model.metrics.bodyLines-1), pageAnchorReadAbove)
 	model.setMessage("已到"+model.readingAreaLabel()+"底部", 2*time.Second)
 }
 
@@ -384,11 +384,11 @@ func (model *app) scrollUp(amount int) {
 	if model.scroll > 0 {
 		previousFirstLine := model.scroll
 		model.scroll = maxInt(0, model.scroll-amount)
-		model.setPageAnchor(previousFirstLine - 1)
+		model.setPageAnchor(previousFirstLine-1, pageAnchorReadBelow)
 		model.clearMessage()
 		return
 	}
-	model.setPageAnchor(0)
+	model.setPageAnchor(0, pageAnchorReadBelow)
 	model.setMessage("已到"+model.readingAreaLabel()+"顶部", 2*time.Second)
 }
 
@@ -444,14 +444,16 @@ func (model *app) clearMessage() {
 	model.messageUntil = time.Time{}
 }
 
-func (model *app) setPageAnchor(line int) {
+func (model *app) setPageAnchor(line int, readSide pageAnchorReadSide) {
 	model.pageAnchorLine = line
 	model.pageAnchorVisible = line >= 0
+	model.pageAnchorReadSide = readSide
 }
 
 func (model *app) clearPageAnchor() {
 	model.pageAnchorLine = 0
 	model.pageAnchorVisible = false
+	model.pageAnchorReadSide = pageAnchorReadNone
 	if model.boundarySwitchKey != "" {
 		model.boundarySwitchKey = ""
 		model.clearMessage()

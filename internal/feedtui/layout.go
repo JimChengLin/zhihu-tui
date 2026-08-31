@@ -187,8 +187,9 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	end := minInt(len(bodyLines), model.scroll+bodyHeight)
 	thumbStart, thumbSize := scrollbarThumb(bodyHeight, len(bodyLines), model.scroll, maxScroll)
 	for row, bodyLine := range bodyLines[model.scroll:end] {
+		bodyLineNumber := model.scroll + row
 		if maxScroll == 0 {
-			if model.pageAnchorVisible && row == model.pageAnchorLine {
+			if model.pageAnchorVisible && bodyLineNumber == model.pageAnchorLine {
 				anchorText := styledLineText(bodyLine)
 				if strings.TrimSpace(anchorText) == "" {
 					anchorText = strings.Repeat("┄", contentWidth)
@@ -200,7 +201,11 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 				continue
 			}
 			body := bodyLine
-			body.text = strings.Repeat(" ", left) + bodyLine.text
+			if pageAnchorReadTrailVisible(model.pageAnchorReadSide, bodyLineNumber, model.pageAnchorLine) {
+				body = addPageAnchorReadTrail(body, left)
+			} else {
+				body.text = strings.Repeat(" ", left) + bodyLine.text
+			}
 			if body.hasCursor {
 				body.cursorCell += left
 			}
@@ -212,11 +217,15 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 			bar = "┃"
 		}
 		body := bodyLine
-		body.text = strings.Repeat(" ", left) + bodyLine.text
+		if pageAnchorReadTrailVisible(model.pageAnchorReadSide, bodyLineNumber, model.pageAnchorLine) {
+			body = addPageAnchorReadTrail(body, left)
+		} else {
+			body.text = strings.Repeat(" ", left) + bodyLine.text
+		}
 		if body.hasCursor {
 			body.cursorCell += left
 		}
-		if model.pageAnchorVisible && model.scroll+row == model.pageAnchorLine {
+		if model.pageAnchorVisible && bodyLineNumber == model.pageAnchorLine {
 			anchorText := styledLineText(bodyLine)
 			if strings.TrimSpace(anchorText) == "" {
 				anchorText = strings.Repeat("┄", contentWidth)
@@ -348,6 +357,27 @@ func resolvePageAnchor(lines []styledLine, line int) int {
 	for line >= 0 && lines[line].noPageAnchor {
 		line--
 	}
+	return line
+}
+
+func pageAnchorReadTrailVisible(readSide pageAnchorReadSide, line, anchorLine int) bool {
+	switch readSide {
+	case pageAnchorReadAbove:
+		return line >= anchorLine-pageContextLines && line < anchorLine
+	case pageAnchorReadBelow:
+		return line > anchorLine && line <= anchorLine+pageContextLines
+	default:
+		return false
+	}
+}
+
+func addPageAnchorReadTrail(line styledLine, left int) styledLine {
+	segments := make([]styledSegment, 0, len(line.segments)+1)
+	segments = appendStyledSegment(segments, line.text, line.style)
+	segments = append(segments, line.segments...)
+	line.text = strings.Repeat(" ", maxInt(0, left-2)) + "┊ "
+	line.style = ansiDim
+	line.segments = segments
 	return line
 }
 

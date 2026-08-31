@@ -17,6 +17,7 @@ func (model *app) toggleComments(ctx context.Context) {
 		model.scroll = model.bodyScroll
 		model.pageAnchorLine = model.bodyPageAnchorLine
 		model.pageAnchorVisible = model.bodyPageAnchorVisible
+		model.pageAnchorReadSide = model.bodyPageAnchorReadSide
 		return
 	}
 	item := model.items[model.index]
@@ -33,6 +34,7 @@ func (model *app) toggleComments(ctx context.Context) {
 	model.bodyScroll = model.scroll
 	model.bodyPageAnchorLine = model.pageAnchorLine
 	model.bodyPageAnchorVisible = model.pageAnchorVisible
+	model.bodyPageAnchorReadSide = model.pageAnchorReadSide
 	model.clearPageAnchor()
 	model.scroll = 0
 	model.commentMode = true
@@ -279,7 +281,7 @@ func (model *app) toggleFocusedCommentChildren(ctx context.Context) {
 		delete(state.expandedChildren, root.id)
 		for line, commentID := range model.metrics.commentIDs {
 			if commentID == root.id {
-				model.setPageAnchor(line)
+				model.setPageAnchor(line, pageAnchorReadNone)
 				break
 			}
 		}

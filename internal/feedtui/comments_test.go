@@ -300,6 +300,7 @@ func TestToggleCommentsRestoresBodyPageAnchor(t *testing.T) {
 			model.handleKey(context.Background(), test.key)
 			bodyScroll := model.scroll
 			bodyAnchorLine := model.pageAnchorLine
+			bodyAnchorReadSide := model.pageAnchorReadSide
 			if !model.pageAnchorVisible {
 				t.Fatal("navigation key did not create a body page anchor")
 			}
@@ -309,8 +310,8 @@ func TestToggleCommentsRestoresBodyPageAnchor(t *testing.T) {
 				t.Fatalf("entered comments with commentMode=%v anchor=(%d,%v)", model.commentMode, model.pageAnchorLine, model.pageAnchorVisible)
 			}
 			model.handleKey(context.Background(), "c")
-			if model.commentMode || model.scroll != bodyScroll || !model.pageAnchorVisible || model.pageAnchorLine != bodyAnchorLine {
-				t.Fatalf("returned to body with commentMode=%v scroll=%d anchor=(%d,%v), want scroll=%d anchor=(%d,true)", model.commentMode, model.scroll, model.pageAnchorLine, model.pageAnchorVisible, bodyScroll, bodyAnchorLine)
+			if model.commentMode || model.scroll != bodyScroll || !model.pageAnchorVisible || model.pageAnchorLine != bodyAnchorLine || model.pageAnchorReadSide != bodyAnchorReadSide {
+				t.Fatalf("returned to body with commentMode=%v scroll=%d anchor=(%d,%v) readSide=%d, want scroll=%d anchor=(%d,true) readSide=%d", model.commentMode, model.scroll, model.pageAnchorLine, model.pageAnchorVisible, model.pageAnchorReadSide, bodyScroll, bodyAnchorLine, bodyAnchorReadSide)
 			}
 		})
 	}

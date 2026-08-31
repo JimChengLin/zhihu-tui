@@ -419,6 +419,64 @@ func TestLongBodyScrollbarTracksReadingPosition(t *testing.T) {
 	}
 }
 
+func TestPageContinuationTrailShowsReadSideWhenPageIsShort(t *testing.T) {
+	model := &app{
+		items: []feedItem{{
+			kind:  "answer",
+			title: "长文",
+			body:  strings.Repeat("这是一段用于测试不足一页时续读方向的正文。", 100),
+		}},
+		width:  100,
+		height: 24,
+	}
+	_, metrics := renderSingleApp(model)
+	amount := pageScrollAmount(metrics.bodyHeight)
+	if metrics.maxScroll <= amount {
+		t.Fatalf("test body is too short: %#v", metrics)
+	}
+	model.metrics = metrics
+
+	model.scroll = metrics.maxScroll - amount + 1
+	model.pageDownWithConfirmation(context.Background(), amount)
+	if model.scroll != metrics.maxScroll {
+		t.Fatalf("short downward page scroll=%d, want %d", model.scroll, metrics.maxScroll)
+	}
+	assertPageReadTrailSide(t, model, pageAnchorReadAbove)
+
+	model.scroll = amount - 1
+	model.pageUpWithConfirmation(context.Background(), amount)
+	if model.scroll != 0 {
+		t.Fatalf("short upward page scroll=%d, want 0", model.scroll)
+	}
+	assertPageReadTrailSide(t, model, pageAnchorReadBelow)
+}
+
+func assertPageReadTrailSide(t *testing.T, model *app, want pageAnchorReadSide) {
+	t.Helper()
+	lines, _ := renderSingleApp(model)
+	anchorRow := -1
+	var trailRows []int
+	for row, line := range lines {
+		if line.style == ansiBlue && strings.Contains(line.text, "▸ ") {
+			anchorRow = row
+		}
+		if line.style == ansiDim && strings.Contains(line.text, "┊ ") {
+			trailRows = append(trailRows, row)
+		}
+	}
+	if anchorRow < 0 || len(trailRows) != pageContextLines {
+		t.Fatalf("anchor row=%d trail rows=%v, want %d trail rows", anchorRow, trailRows, pageContextLines)
+	}
+	for _, row := range trailRows {
+		if want == pageAnchorReadAbove && row >= anchorRow {
+			t.Fatalf("downward trail row=%d is not above anchor row=%d", row, anchorRow)
+		}
+		if want == pageAnchorReadBelow && row <= anchorRow {
+			t.Fatalf("upward trail row=%d is not below anchor row=%d", row, anchorRow)
+		}
+	}
+}
+
 func TestWideLayoutPinsColumnSeparator(t *testing.T) {
 	line := mergeColumns(
 		styledLine{text: strings.Repeat("中", 20)},

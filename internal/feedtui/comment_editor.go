@@ -168,7 +168,7 @@ func (model *app) moveCommentFocus(ctx context.Context, direction int) {
 	model.clearMessage()
 	firstLine := positions[next].line
 	lastLine := lastCommentLine(model.metrics.commentIDs, positions[next].id)
-	model.setPageAnchor(firstLine)
+	model.setPageAnchor(firstLine, pageAnchorReadNone)
 	if firstLine < model.scroll {
 		model.scroll = firstLine
 	} else if lastLine >= model.scroll+model.metrics.bodyHeight {
@@ -276,7 +276,7 @@ func (model *app) applyCommentPost(ctx context.Context, result commentPostResult
 		model.commentMode = true
 		if inserted && !result.reply {
 			model.scroll = 0
-			model.setPageAnchor(0)
+			model.setPageAnchor(0, pageAnchorReadNone)
 		}
 		if !inserted && (state == nil || !state.loaded) {
 			model.scroll = 0

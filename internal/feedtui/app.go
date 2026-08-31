@@ -19,6 +19,14 @@ const feedPageSize = 10
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 var foldedGroupCountPattern = regexp.MustCompile(`^(还有\s*)\d+`)
 
+type pageAnchorReadSide uint8
+
+const (
+	pageAnchorReadNone pageAnchorReadSide = iota
+	pageAnchorReadAbove
+	pageAnchorReadBelow
+)
+
 type feedSource interface {
 	linkCardSource
 	GetSelfInfo(context.Context) (map[string]any, error)
@@ -61,6 +69,7 @@ type app struct {
 	boundarySwitchKey      keyEvent
 	pageAnchorLine         int
 	pageAnchorVisible      bool
+	pageAnchorReadSide     pageAnchorReadSide
 	showHelp               bool
 	zenMode                bool
 	hideFeedHeader         bool
@@ -81,6 +90,7 @@ type app struct {
 	bodyScroll             int
 	bodyPageAnchorLine     int
 	bodyPageAnchorVisible  bool
+	bodyPageAnchorReadSide pageAnchorReadSide
 	comments               map[string]*commentState
 	commentFetches         chan commentFetchResult
 	commentRelations       map[string]commentRelation
