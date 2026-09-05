@@ -7,18 +7,15 @@ import (
 )
 
 const (
-	tableStartMarker  = "\ue000table-start\ue001"
-	tableEndMarker    = "\ue000table-end\ue001"
-	tableRowMarker    = "\ue000table-row\ue001"
-	tableCellMarker   = "\ue000table-cell\ue001"
-	tableHeaderMarker = "\ue000table-header\ue001"
+	tableStartMarker     = "\ue000table-start\ue001"
+	tableEndMarker       = "\ue000table-end\ue001"
+	tableRowMarker       = "\ue000table-row\ue001"
+	tableCellMarker      = "\ue000table-cell\ue001"
+	tableHeaderMarker    = "\ue000table-header\ue001"
+	minTableContentWidth = 8
 )
 
 var tableStructurePattern = regexp.MustCompile(`(?is)` + codeBlockStartMarker + `|` + codeBlockEndMarker + `|<(/?)(table|tr|td|th)\b[^>]*>`)
-var tableMarkerReplacer = strings.NewReplacer(
-	tableStartMarker, "", tableEndMarker, "",
-	tableRowMarker, "\n", tableCellMarker, "\n", tableHeaderMarker, "\n",
-)
 
 type tableCell struct {
 	text   string
@@ -87,7 +84,7 @@ func layoutTableLines(source []string, width int, commentID string) []styledLine
 
 	var result []styledLine
 	if text := strings.TrimSpace(strings.Join(caption, "\n")); text != "" {
-		result = append(result, layoutProseLines(text, width, commentID)...)
+		result = append(result, layoutContentLines(text, width, commentID)...)
 	}
 	var widths []int
 	for _, row := range rows {
@@ -96,8 +93,8 @@ func layoutTableLines(source []string, width int, commentID string) []styledLine
 			if column == len(widths) {
 				widths = append(widths, 2)
 			}
-			for _, line := range strings.Split(stripInlineLinkMarkers(row[column].text), "\n") {
-				widths[column] = maxInt(widths[column], stringCellWidth(line))
+			for _, line := range layoutContentLines(row[column].text, width, commentID) {
+				widths[column] = maxInt(widths[column], stringCellWidth(styledLineText(line)))
 			}
 		}
 	}
@@ -109,7 +106,7 @@ func layoutTableLines(source []string, width int, commentID string) []styledLine
 	available := width - 3*len(widths) - 1
 	minimum, total := 0, 0
 	for _, size := range widths {
-		minimum += minInt(size, 8)
+		minimum += minInt(size, minTableContentWidth)
 		total += size
 	}
 	if available < minimum {
@@ -138,7 +135,7 @@ func layoutTableLines(source []string, width int, commentID string) []styledLine
 		cells := make([][]styledLine, len(widths))
 		height := 1
 		for column, cell := range row {
-			cells[column] = layoutProseLines(cell.text, widths[column], commentID)
+			cells[column] = layoutContentLines(cell.text, widths[column], commentID)
 			height = maxInt(height, len(cells[column]))
 		}
 		for lineIndex := 0; lineIndex < height; lineIndex++ {
@@ -153,10 +150,12 @@ func layoutTableLines(source []string, width int, commentID string) []styledLine
 					if row[column].header {
 						style = ansiBold
 					}
-					line.segments = appendStyledSegment(line.segments, cellLine.text, style)
+					line.segments = appendStyledSegment(line.segments, cellLine.text, style+cellLine.style)
 					for _, segment := range cellLine.segments {
 						line.segments = appendStyledSegment(line.segments, segment.text, style+segment.style)
 					}
+					line.segments = appendStyledSegment(line.segments, cellLine.middle, style+cellLine.middleStyle)
+					line.segments = appendStyledSegment(line.segments, cellLine.tail, style+cellLine.tailStyle)
 					used = stringCellWidth(styledLineText(cellLine))
 				}
 				line.segments = appendStyledSegment(line.segments, strings.Repeat(" ", size-used+1), "")
@@ -188,9 +187,23 @@ func layoutStackedTable(rows [][]tableCell, width int, commentID string) []style
 		for column, cell := range row {
 			label := fmt.Sprintf("第 %d 列", column+1)
 			if hasHeaders && column < len(headers) {
-				label = compactLine(headers[column].text)
+				label = compactLine(blockMarkerReplacer.Replace(stripInlineLinkMarkers(headers[column].text)))
 			}
-			result = append(result, layoutProseLines(label+"："+cell.text, width, commentID)...)
+			prefix := label + "："
+			prefixWidth := stringCellWidth(prefix)
+			// Put long labels on their own line to leave room for the cell content.
+			if prefixWidth+minTableContentWidth > width {
+				result = append(result, layoutProseLines(prefix, width, commentID)...)
+				result = append(result, layoutContentLines(cell.text, width, commentID)...)
+				continue
+			}
+			lines := layoutContentLines(cell.text, width-prefixWidth, commentID)
+			for index, line := range lines {
+				if index > 0 {
+					prefix = strings.Repeat(" ", prefixWidth)
+				}
+				result = append(result, prependStyledLine(line, prefix, ""))
+			}
 		}
 	}
 	return result

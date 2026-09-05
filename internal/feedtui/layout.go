@@ -16,6 +16,7 @@ const (
 	ansiGreen         = "\033[38;5;114m"
 	ansiRed           = "\033[38;5;203m"
 	ansiCode          = "\033[38;5;245m"
+	ansiQuote         = "\033[38;5;248m"
 	minReadingWidth   = 96
 	maxReadingWidth   = 112
 	paragraphGapLines = 2
@@ -574,9 +575,12 @@ func appendStyledSegment(segments []styledSegment, text, style string) []styledS
 }
 
 func layoutBodyLines(body string, width int) []styledLine {
+	return layoutContentLines(body, width, "")
+}
+
+func layoutContentLines(body string, width int, currentCommentID string) []styledLine {
 	var result []styledLine
 	var prose []string
-	currentCommentID := ""
 	appendParagraphGap := func() {
 		gapLines := contentGapLines(currentCommentID)
 		blankLines := 0
@@ -599,7 +603,9 @@ func layoutBodyLines(body string, width int) []styledLine {
 	inCodeBlock := false
 	inTable := false
 	var tableLines []string
-	for _, sourceLine := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
+	source := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+	for index := 0; index < len(source); index++ {
+		sourceLine := source[index]
 		if !inCodeBlock && sourceLine == tableStartMarker {
 			flushProse()
 			if len(result) > 0 {
@@ -619,6 +625,31 @@ func layoutBodyLines(body string, width int) []styledLine {
 			}
 			continue
 		}
+		if !inCodeBlock && sourceLine == quoteStartMarker {
+			flushProse()
+			if len(result) > 0 {
+				appendParagraphGap()
+			}
+			start := index + 1
+			depth := 1
+			for index++; index < len(source); index++ {
+				switch source[index] {
+				case quoteStartMarker:
+					depth++
+				case quoteEndMarker:
+					depth--
+				}
+				if depth == 0 {
+					break
+				}
+			}
+			result = append(result, layoutQuoteLines(source[start:index], width, currentCommentID)...)
+			appendParagraphGap()
+			continue
+		}
+		if !inCodeBlock && sourceLine == quoteEndMarker {
+			continue
+		}
 		if strings.HasPrefix(sourceLine, commentStartMarker) && strings.HasSuffix(sourceLine, commentMarkerEnd) {
 			flushProse()
 			nextCommentID := strings.TrimSuffix(strings.TrimPrefix(sourceLine, commentStartMarker), commentMarkerEnd)
@@ -635,7 +666,15 @@ func layoutBodyLines(body string, width int) []styledLine {
 			marked := strings.TrimPrefix(sourceLine, commentTreeMarker)
 			prefix, text, found := strings.Cut(marked, commentMarkerEnd)
 			if found {
-				result = append(result, layoutCommentTreeLines(prefix, text, width, currentCommentID)...)
+				var content strings.Builder
+				content.WriteString(text)
+				marker := commentTreeMarker + prefix + commentMarkerEnd
+				for index+1 < len(source) && strings.HasPrefix(source[index+1], marker) {
+					index++
+					content.WriteByte('\n')
+					content.WriteString(strings.TrimPrefix(source[index], marker))
+				}
+				result = append(result, layoutCommentTreeLines(prefix, content.String(), width, currentCommentID)...)
 				continue
 			}
 		}
@@ -650,10 +689,10 @@ func layoutBodyLines(body string, width int) []styledLine {
 			if len(result) > 0 {
 				appendParagraphGap()
 			}
-			result = append(result, styledLine{text: "┌─ 代码", style: ansiCode, commentID: currentCommentID})
+			result = append(result, styledLine{text: truncateCells("┌─ 代码", width), style: ansiCode, commentID: currentCommentID})
 			inCodeBlock = true
 		case codeBlockEndMarker:
-			result = append(result, styledLine{text: "└─", style: ansiCode, commentID: currentCommentID})
+			result = append(result, styledLine{text: truncateCells("└─", width), style: ansiCode, commentID: currentCommentID})
 			appendParagraphGap()
 			inCodeBlock = false
 		default:
@@ -674,24 +713,30 @@ func layoutBodyLines(body string, width int) []styledLine {
 		result = result[:len(result)-1]
 	}
 	if len(result) == 0 {
-		return []styledLine{{}}
+		return []styledLine{{commentID: currentCommentID}}
 	}
 	return result
 }
 
 func layoutCommentTreeLines(prefix, text string, width int, commentID string) []styledLine {
-	lines := layoutProseLines(text, maxInt(1, width-stringCellWidth(prefix)), commentID)
-	if len(lines) == 0 {
-		return []styledLine{{text: prefix, style: ansiDim, commentID: commentID}}
-	}
+	lines := layoutContentLines(text, maxInt(1, width-stringCellWidth(prefix)), commentID)
 	for index := range lines {
-		if len(lines[index].segments) == 0 {
-			lines[index].middle = lines[index].text
-		}
-		lines[index].text = prefix
-		lines[index].style = ansiDim
+		lines[index] = prependStyledLine(lines[index], prefix, ansiDim)
 	}
 	return lines
+}
+
+func prependStyledLine(line styledLine, prefix, style string) styledLine {
+	if len(line.segments) == 0 && line.middle == "" {
+		line.middle = line.text
+		line.middleStyle = line.style
+	} else {
+		segments := appendStyledSegment(nil, line.text, line.style)
+		line.segments = append(segments, line.segments...)
+	}
+	line.text = prefix
+	line.style = style
+	return line
 }
 
 func layoutLinkCardLine(sourceLine string, width int, commentID string) (styledLine, bool) {
@@ -934,8 +979,8 @@ func foldedItemExcerpt(item feedItem) string {
 		if _, text, _, ok := splitLinkCardLine(sourceLine); ok {
 			sourceLine = text
 		}
-		text := compactLine(tableMarkerReplacer.Replace(stripInlineLinkMarkers(sourceLine)))
-		if text == "" || text == codeBlockStartMarker || text == codeBlockEndMarker {
+		text := compactLine(blockMarkerReplacer.Replace(stripInlineLinkMarkers(sourceLine)))
+		if text == "" {
 			continue
 		}
 		meaningful = append(meaningful, text)
