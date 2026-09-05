@@ -180,6 +180,7 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 		bodyTitle = text
 	}
 	bodyTitle = stripInlineLinkMarkers(bodyTitle)
+	bodyTitle = strings.TrimSpace(tableMarkerReplacer.Replace(bodyTitle))
 	if pinTitle != "" && bodyTitle == pinTitle {
 		body = strings.TrimSpace(strings.TrimPrefix(body, rawBodyTitle))
 		title = pinTitle
@@ -320,6 +321,7 @@ func contentTextFrom(value string, previousImages int) (string, int) {
 }
 
 func bodyText(value string) string {
+	value = markHTMLTables(value)
 	value = anchorTagPattern.ReplaceAllStringFunc(value, func(anchor string) string {
 		match := anchorTagPattern.FindStringSubmatch(anchor)
 		if len(match) != 2 {
@@ -850,7 +852,7 @@ func linkCardFallbackLabel(node map[string]any) string {
 
 func linkCardExcerpt(detail map[string]any) string {
 	value := firstNonEmpty(toString(detail["excerpt_new"]), toString(detail["excerpt"]), toString(detail["content"]))
-	return truncateInlineLinkText(compactLine(bodyText(value)), 512)
+	return truncateInlineLinkText(compactLine(tableMarkerReplacer.Replace(bodyText(value))), 512)
 }
 
 func pinLinkCardTitle(detail map[string]any) string {

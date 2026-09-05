@@ -597,7 +597,28 @@ func layoutBodyLines(body string, width int) []styledLine {
 	}
 
 	inCodeBlock := false
+	inTable := false
+	var tableLines []string
 	for _, sourceLine := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
+		if !inCodeBlock && sourceLine == tableStartMarker {
+			flushProse()
+			if len(result) > 0 {
+				appendParagraphGap()
+			}
+			inTable = true
+			continue
+		}
+		if inTable {
+			if sourceLine == tableEndMarker {
+				result = append(result, layoutTableLines(tableLines, width, currentCommentID)...)
+				appendParagraphGap()
+				tableLines = tableLines[:0]
+				inTable = false
+			} else {
+				tableLines = append(tableLines, sourceLine)
+			}
+			continue
+		}
 		if strings.HasPrefix(sourceLine, commentStartMarker) && strings.HasSuffix(sourceLine, commentMarkerEnd) {
 			flushProse()
 			nextCommentID := strings.TrimSuffix(strings.TrimPrefix(sourceLine, commentStartMarker), commentMarkerEnd)
@@ -644,6 +665,9 @@ func layoutBodyLines(body string, width int) []styledLine {
 				result = append(result, styledLine{text: "│ " + codeLine, style: ansiCode, commentID: currentCommentID})
 			}
 		}
+	}
+	if inTable {
+		result = append(result, layoutTableLines(tableLines, width, currentCommentID)...)
 	}
 	flushProse()
 	for len(result) > 0 && styledLineText(result[len(result)-1]) == "" {
@@ -910,7 +934,7 @@ func foldedItemExcerpt(item feedItem) string {
 		if _, text, _, ok := splitLinkCardLine(sourceLine); ok {
 			sourceLine = text
 		}
-		text := compactLine(stripInlineLinkMarkers(sourceLine))
+		text := compactLine(tableMarkerReplacer.Replace(stripInlineLinkMarkers(sourceLine)))
 		if text == "" || text == codeBlockStartMarker || text == codeBlockEndMarker {
 			continue
 		}
