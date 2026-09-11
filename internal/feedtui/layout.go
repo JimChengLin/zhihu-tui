@@ -939,11 +939,12 @@ func foldedItemEventLabel(item feedItem) string {
 	if strings.HasPrefix(item.action, author+" ") {
 		return item.action
 	}
-	if item.kind == "answer" {
-		for _, verb := range []string{"赞同了回答", "收藏了回答"} {
-			actor := strings.TrimSpace(strings.TrimSuffix(item.action, verb))
+	if item.kind == "answer" || item.kind == "article" || item.kind == "pin" {
+		contentType := typeLabel(item.kind)
+		for _, verb := range []string{"赞同了", "收藏了"} {
+			actor := strings.TrimSpace(strings.TrimSuffix(item.action, verb+contentType))
 			if actor != "" && actor != item.action {
-				return actor + " " + strings.TrimSuffix(verb, "回答") + " " + author + " 的回答"
+				return actor + " " + verb + " " + author + " 的" + contentType
 			}
 		}
 	}

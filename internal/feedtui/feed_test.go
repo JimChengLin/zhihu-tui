@@ -979,7 +979,7 @@ func TestFoldedPreviewLabelsContentAuthorRoles(t *testing.T) {
 	if !strings.Contains(rendered, "codedump 关注了 不方的圆 的问题") {
 		t.Fatalf("question author role is ambiguous: %q", rendered)
 	}
-	if !strings.Contains(rendered, "作者 作者甲 · 某人赞同了文章") {
+	if !strings.Contains(rendered, "某人 赞同了 作者甲 的文章") {
 		t.Fatalf("article author role is ambiguous: %q", rendered)
 	}
 }
