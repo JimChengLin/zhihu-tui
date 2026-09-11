@@ -112,13 +112,15 @@ zhihu feed --tui
 
 ## 通知监控
 
-监控模式默认展示最新 10 条通知，然后每 60 秒刷新一次，仅输出新增通知：
+监控模式默认展示最新 1 条通知，然后每 60 秒刷新一次，仅输出新增通知：
 
 ```bash
 zhihu notifications --monitor
 zhihu notifications --monitor -l 50
 zhihu notifications --monitor --interval 30
 ```
+
+同一内容、同一动作的合并通知只显示本次新增的人；若接口只增加合并人数而未提供新人姓名，则显示新增人数。去重记录仅保存在当前监控进程内，按通知时间保留 90 天；重启后重新以首次拉取的通知建立记录。
 
 发现新通知并发送终端响铃后，程序会将 `default`、`follow`、`vote_thank` 三个通知页签标记为已读。
 

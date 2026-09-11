@@ -912,6 +912,167 @@ func TestNotificationSeenStateUsesNotificationIDAlias(t *testing.T) {
 	}
 }
 
+func testMergedVoteNotification(names ...string) map[string]any {
+	actors := make([]any, 0, len(names))
+	for _, name := range names {
+		actors = append(actors, map[string]any{"name": name, "url_token": name})
+	}
+	return map[string]any{
+		"merge_count": len(actors),
+		"content": map[string]any{
+			"verb":   "赞同了你的回答",
+			"actors": actors,
+			"target": map[string]any{
+				"link": "https://www.zhihu.com/question/1/answer/456",
+				"text": "问题标题",
+			},
+		},
+		"target": map[string]any{"type": "answer", "id": "456"},
+	}
+}
+
+func TestNotificationUpdatesOnlyDisplayNewActors(t *testing.T) {
+	tests := []struct {
+		name       string
+		actors     []string
+		mergeCount int
+		want       string
+	}{
+		{
+			name:       "merged old and new actors",
+			actors:     []string{"胸毛在燃烧", "PenChaCha", "我是懒大王"},
+			mergeCount: 3,
+			want:       "我是懒大王（粉丝 69） 赞同了你的回答\n  问题标题\n  赞同 14",
+		},
+		{
+			name:       "multiple new actors keep display order",
+			actors:     []string{"胸毛在燃烧", "我是懒大王", "PenChaCha", "Alice"},
+			mergeCount: 4,
+			want:       "Alice（粉丝 69）, 我是懒大王（粉丝 69） 赞同了你的回答\n  问题标题\n  赞同 14",
+		},
+		{
+			name:       "reordered known actors",
+			actors:     []string{"胸毛在燃烧", "PenChaCha"},
+			mergeCount: 2,
+		},
+		{
+			name:       "new actor names missing from API",
+			actors:     []string{"胸毛在燃烧", "PenChaCha"},
+			mergeCount: 3,
+			want:       "另有 1 人 赞同了你的回答\n  问题标题\n  赞同 14",
+		},
+		{
+			name:       "only some new actors named by API",
+			actors:     []string{"胸毛在燃烧", "PenChaCha", "我是懒大王"},
+			mergeCount: 4,
+			want:       "我是懒大王（粉丝 69）, 另有 1 人 赞同了你的回答\n  问题标题\n  赞同 14",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			formatter, closeServer := testNotificationFormatter(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v4/members/我是懒大王", "/api/v4/members/Alice":
+					writeNotificationTestJSON(t, w, http.StatusOK, map[string]any{"follower_count": 69})
+				case "/api/v4/answers/456":
+					writeNotificationTestJSON(t, w, http.StatusOK, map[string]any{"voteup_count": 14})
+				default:
+					t.Errorf("unexpected request: %s", r.URL.Path)
+					w.WriteHeader(http.StatusBadRequest)
+				}
+			})
+			defer closeServer()
+			now := time.Now()
+			seen := map[string]notificationSeenState{}
+			rememberNotificationState(seen, testMergedVoteNotification("PenChaCha", "胸毛在燃烧"), now)
+			n := testMergedVoteNotification(tt.actors...)
+			n["id"] = "new-notification-id"
+			n["merge_count"] = tt.mergeCount
+			updates, pending, err := collectNotificationUpdates([]any{n}, seen, now, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines, err := formatNotificationUpdates(context.Background(), formatter, updates)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(lines, "\n"); got != tt.want {
+				t.Fatalf("output=%q, want %q", got, tt.want)
+			}
+			if got := len(notificationActors(n)); got != len(tt.actors) {
+				t.Fatalf("API actors were changed: got %d, want %d", got, len(tt.actors))
+			}
+			for key, state := range pending {
+				seen[key] = mergeNotificationSeenState(seen[key], state)
+			}
+			repeated, _, err := collectNotificationUpdates([]any{n}, seen, now, nil)
+			if err != nil || len(repeated) != 0 {
+				t.Fatalf("repeat produced %d updates, error=%v", len(repeated), err)
+			}
+		})
+	}
+}
+
+func TestNotificationUpdatesDeduplicateWithinRefreshWithoutChangingHistory(t *testing.T) {
+	now := time.Now()
+	seen := map[string]notificationSeenState{}
+	seed := testMergedVoteNotification("PenChaCha")
+	rememberNotificationState(seen, seed, now)
+	first := testMergedVoteNotification("PenChaCha", "我是懒大王")
+	first["create_time"] = now.Unix()
+	second := testMergedVoteNotification("PenChaCha", "我是懒大王", "Alice")
+	second["create_time"] = now.Add(-time.Minute).Unix()
+	data := []any{first, second, first}
+	// Repeat before committing, as the monitor does after a formatting failure.
+	for attempt := 0; attempt < 2; attempt++ {
+		updates, _, err := collectNotificationUpdates(data, seen, now, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(updates) != 2 {
+			t.Fatalf("attempt %d: got %d updates, want 2", attempt, len(updates))
+		}
+		for i, want := range []string{"我是懒大王", "Alice"} {
+			if len(updates[i].actors) != 1 || toString(mapValue(updates[i].actors[0])["name"]) != want {
+				t.Fatalf("update %d actors=%v, want %s", i, updates[i].actors, want)
+			}
+		}
+		state := seen[notificationGroupKey(seed)]
+		if len(state.actors) != 1 || len(state.signatures) != 1 || state.mergeCount != 1 {
+			t.Fatalf("uncommitted history changed: %+v", state)
+		}
+		formatter := newNotificationFormatter(nil)
+		formatter.targetCache["https://www.zhihu.com/question/1/answer/456"] = "赞同 14"
+		formatter.actorCache["我是懒大王"] = notificationActorCacheEntry{text: "我是懒大王", cachedAt: now}
+		formatter.actorCache["Alice"] = notificationActorCacheEntry{text: "Alice", cachedAt: now}
+		lines, err := formatNotificationUpdates(context.Background(), formatter, updates)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(lines[0], "Alice ") || !strings.HasPrefix(lines[1], "我是懒大王 ") {
+			t.Fatalf("notifications should display oldest first: %v", lines)
+		}
+	}
+}
+
+func TestNotificationUpdatesKeepTargetsAndActionsSeparate(t *testing.T) {
+	now := time.Now()
+	seen := map[string]notificationSeenState{}
+	rememberNotificationState(seen, testMergedVoteNotification("我是懒大王"), now)
+	comment := testMergedVoteNotification("我是懒大王")
+	comment["target"] = map[string]any{"type": "comment", "id": "comment-1"}
+	mapValue(comment["content"])["verb"] = "喜欢了你的评论"
+	otherAnswer := testMergedVoteNotification("我是懒大王")
+	mapValue(mapValue(otherAnswer["content"])["target"])["link"] = "https://www.zhihu.com/question/1/answer/789"
+	updates, _, err := collectNotificationUpdates([]any{comment, otherAnswer}, seen, now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updates) != 2 || len(updates[0].actors) != 1 || len(updates[1].actors) != 1 {
+		t.Fatalf("different targets and actions must remain new: %+v", updates)
+	}
+}
+
 func TestPruneNotificationHistory(t *testing.T) {
 	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.Local)
 	seen := map[string]notificationSeenState{

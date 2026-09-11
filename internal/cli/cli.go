@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -46,6 +47,12 @@ type notificationSeenState struct {
 	actors     map[string]struct{}
 	mergeCount int
 	createTime int64
+}
+
+type notificationUpdate struct {
+	notification  map[string]any
+	actors        []any
+	unnamedActors int
 }
 
 type notificationActorCacheEntry struct {
@@ -922,44 +929,16 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				monitorOut.Status(checkedAt, "refresh failed: "+err.Error(), monitorRefreshStatus(time.Now(), nextRefreshAt, false))
 				continue
 			}
-			newItems := make([]any, 0)
-			newStates := make(map[string]notificationSeenState)
-			for i, raw := range asSlice(result["data"]) {
-				notification := mapValue(raw)
-				key, signature := notificationState(notification)
-				if key == "" {
-					if err := debugLog.LogNotification(checkedAt, "refresh", i, notification, key, signature, "skip", "empty_key", notificationSeenState{}, false); err != nil {
-						return err
-					}
-					continue
-				}
-				seenState, ok := notificationKnownState(seen, newStates, key)
-				if ok {
-					known, reason := notificationSeenStateContains(seenState, notification, signature)
-					decision := "new"
-					if known {
-						decision = "seen"
-					}
-					if err := debugLog.LogNotification(checkedAt, "refresh", i, notification, key, signature, decision, reason, seenState, true); err != nil {
-						return err
-					}
-					if known {
-						continue
-					}
-				} else {
-					if err := debugLog.LogNotification(checkedAt, "refresh", i, notification, key, signature, "new", "missing_key", notificationSeenState{}, false); err != nil {
-						return err
-					}
-				}
-				newItems = append(newItems, raw)
-				rememberNotificationState(newStates, notification, checkedAt)
+			newItems, newStates, err := collectNotificationUpdates(asSlice(result["data"]), seen, checkedAt, debugLog)
+			if err != nil {
+				return err
 			}
 			if len(newItems) == 0 {
 				monitorOut.Status(checkedAt, "no new notifications", monitorRefreshStatus(time.Now(), nextRefreshAt, false))
 				continue
 			}
 			formatter.clearTargetCache()
-			lines, err := formatNotificationItems(ctx, formatter, oldestFirstNotifications(newItems))
+			lines, err := formatNotificationUpdates(ctx, formatter, newItems)
 			if err != nil {
 				if logErr := debugLog.Log(checkedAt, "format_error", map[string]any{"error": err.Error(), "new_count": len(newItems)}); logErr != nil {
 					return logErr
@@ -1164,6 +1143,70 @@ func formatNotificationItems(ctx context.Context, formatter *notificationFormatt
 	lines := make([]string, 0, len(data))
 	for _, raw := range data {
 		line, err := formatter.format(ctx, mapValue(raw))
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, line)
+	}
+	return lines, nil
+}
+
+func collectNotificationUpdates(data []any, seen map[string]notificationSeenState, now time.Time, debugLog *notificationDebugLogger) ([]notificationUpdate, map[string]notificationSeenState, error) {
+	updates := make([]notificationUpdate, 0)
+	pending := make(map[string]notificationSeenState)
+	for i, raw := range data {
+		n := mapValue(raw)
+		key, signature := notificationState(n)
+		state, ok := notificationKnownState(seen, pending, key)
+		decision, reason := "new", "missing_key"
+		if key == "" {
+			decision, reason = "skip", "empty_key"
+		} else if ok {
+			var known bool
+			known, reason = notificationSeenStateContains(state, n, signature)
+			if known {
+				decision = "seen"
+			}
+		}
+		if err := debugLog.LogNotification(now, "refresh", i, n, key, signature, decision, reason, state, ok); err != nil {
+			return nil, nil, err
+		}
+		if decision != "new" {
+			continue
+		}
+		actors := notificationActors(n)
+		update := notificationUpdate{notification: n}
+		for _, raw := range actors {
+			if _, known := state.actors[notificationActorKey(mapValue(raw))]; !known {
+				update.actors = append(update.actors, raw)
+			}
+		}
+		update.unnamedActors = max(0, notificationMergeCountValue(n, len(actors))-state.mergeCount-len(update.actors))
+		updates = append(updates, update)
+		// Keep the full API state; the actor subset is only for display.
+		rememberNotificationState(pending, n, now)
+	}
+	return updates, pending, nil
+}
+
+func formatNotificationUpdates(ctx context.Context, formatter *notificationFormatter, updates []notificationUpdate) ([]string, error) {
+	ordered := append([]notificationUpdate(nil), updates...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return notificationCreateTime(ordered[i].notification) < notificationCreateTime(ordered[j].notification)
+	})
+	lines := make([]string, 0, len(ordered))
+	for _, update := range ordered {
+		actorText, err := formatter.formatActors(ctx, update.actors)
+		if err != nil {
+			return nil, err
+		}
+		if update.unnamedActors > 0 {
+			if actorText != "" {
+				actorText += ", "
+			}
+			actorText += fmt.Sprintf("另有 %d 人", update.unnamedActors)
+		}
+		line, err := formatter.formatWithActorText(ctx, update.notification, actorText)
 		if err != nil {
 			return nil, err
 		}
@@ -1707,14 +1750,18 @@ func (f *notificationFormatter) clearTargetCache() {
 }
 
 func (f *notificationFormatter) format(ctx context.Context, n map[string]any) (string, error) {
-	content := mapValue(n["content"])
-	target := mapValue(content["target"])
-	targetText := compactPlainText(toString(target["text"]))
-	verb := strings.TrimSpace(toString(content["verb"]))
 	actorText, err := f.formatActors(ctx, notificationActors(n))
 	if err != nil {
 		return "", err
 	}
+	return f.formatWithActorText(ctx, n, actorText)
+}
+
+func (f *notificationFormatter) formatWithActorText(ctx context.Context, n map[string]any, actorText string) (string, error) {
+	content := mapValue(n["content"])
+	target := mapValue(content["target"])
+	targetText := compactPlainText(toString(target["text"]))
+	verb := strings.TrimSpace(toString(content["verb"]))
 	summary := formatNotificationSummary(actorText, verb, targetText)
 	lines := make([]string, 0, 4)
 	if summary != "" {
@@ -2083,6 +2130,9 @@ func mergeNotificationSeenState(current, incoming notificationSeenState) notific
 	if current.createTime == 0 {
 		return incoming
 	}
+	// Pending refreshes must not change committed history before formatting succeeds.
+	current.signatures = maps.Clone(current.signatures)
+	current.actors = maps.Clone(current.actors)
 	if current.signatures == nil {
 		current.signatures = map[string]struct{}{}
 	}
@@ -2198,14 +2248,17 @@ func notificationActorKeys(n map[string]any) []string {
 	actors := notificationActors(n)
 	actorKeys := make([]string, 0, len(actors))
 	for _, raw := range actors {
-		actor := mapValue(raw)
-		actorKey := firstNonEmpty(toString(actor["url_token"]), toString(actor["link"]), toString(actor["name"]))
+		actorKey := notificationActorKey(mapValue(raw))
 		if actorKey != "" {
 			actorKeys = append(actorKeys, actorKey)
 		}
 	}
 	sort.Strings(actorKeys)
 	return actorKeys
+}
+
+func notificationActorKey(actor map[string]any) string {
+	return firstNonEmpty(toString(actor["url_token"]), toString(actor["link"]), toString(actor["name"]))
 }
 
 func notificationMergeCount(n map[string]any, actorCount int) string {
