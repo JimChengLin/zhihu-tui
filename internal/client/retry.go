@@ -1,6 +1,8 @@
 package client
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
 	"math/rand/v2"
 	"net/http"
@@ -20,7 +22,7 @@ func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
 			return nil, err
 		}
 		resp, err := c.httpClient.Do(req)
-		if attempt == requestMaxAttempts-1 || (err == nil && !retryableStatus(resp.StatusCode)) {
+		if attempt == requestMaxAttempts-1 || (err == nil && !retryableResponse(resp)) {
 			return resp, err
 		}
 		// With an error, Client.Do can return an already-closed redirect response.
@@ -42,15 +44,33 @@ func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
 	}
 }
 
-func retryableStatus(status int) bool {
-	switch status {
+func retryableResponse(resp *http.Response) bool {
+	switch resp.StatusCode {
 	case http.StatusRequestTimeout, http.StatusTooManyRequests,
 		http.StatusInternalServerError, http.StatusBadGateway,
 		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		return true
+	case http.StatusForbidden:
 	default:
 		return false
 	}
+	// Zhihu can transiently return 403/code 10003 for a valid read request.
+	// Restore the bytes we inspect so callers still receive the original error.
+	body := resp.Body
+	data, err := io.ReadAll(io.LimitReader(body, 4096))
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(data), body), body}
+	if err != nil {
+		return false
+	}
+	var payload struct {
+		Error struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
+	return json.Unmarshal(data, &payload) == nil && payload.Error.Code == 10003
 }
 
 func requestRetryDelay(attempt int, resp *http.Response) time.Duration {

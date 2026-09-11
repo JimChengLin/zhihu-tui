@@ -122,7 +122,7 @@ zhihu notifications --monitor --interval 30
 
 发现新通知并发送终端响铃后，程序会将 `default`、`follow`、`vote_thank` 三个通知页签标记为已读。
 
-读取 API 的 GET/HEAD 请求遇到网络错误或 HTTP 408、429、500、502、503、504 时，最多尝试 3 次（含首次请求）。两次重试前分别等待约 250–500ms、500–1000ms，并遵守服务端的 `Retry-After`。POST、PUT、PATCH、DELETE 等变更请求不会自动重试。
+读取 API 的 GET/HEAD 请求遇到网络错误、HTTP 408、429、500、502、503、504，或 HTTP 403 且知乎错误码为 `10003` 时，最多尝试 3 次（含首次请求）。两次重试前分别等待约 250–500ms、500–1000ms，并遵守服务端的 `Retry-After`。其他 403，以及 POST、PUT、PATCH、DELETE 等变更请求不会自动重试。
 
 ## 开发
 

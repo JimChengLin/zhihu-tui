@@ -40,7 +40,7 @@ func newRetryTestClient(transport retryTestTransport) *Client {
 }
 
 func TestReadRequestRetriesTransientStatus(t *testing.T) {
-	for _, status := range []int{408, 429, 500, 502, 503, 504} {
+	for _, status := range []int{403, 408, 429, 500, 502, 503, 504} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				var calls []time.Time
@@ -53,7 +53,7 @@ func TestReadRequestRetriesTransientStatus(t *testing.T) {
 						t.Fatalf("unexpected path: %s", req.URL.Path)
 					}
 					calls = append(calls, time.Now())
-					resp := retryTestResponse(status, `{"error":"temporary"}`)
+					resp := retryTestResponse(status, `{"error":{"code":10003,"message":"temporary"}}`)
 					if len(calls) == 3 {
 						resp = retryTestResponse(http.StatusOK, `{"name":"ok"}`)
 					}
@@ -155,9 +155,62 @@ func TestReadRequestDoesNotRetryPermanentErrors(t *testing.T) {
 	}
 }
 
+func TestForbiddenReadReturnsThirdFailure(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const body = `{"error":{"message":"请求参数异常，请升级客户端后重试。","code":10003}}`
+		calls := 0
+		c := newRetryTestClient(func(*http.Request) (*http.Response, error) {
+			calls++
+			return retryTestResponse(http.StatusForbidden, body), nil
+		})
+		_, err := c.GetAnswer(context.Background(), "123")
+		var fetchErr DataFetchError
+		if !errors.As(err, &fetchErr) || fetchErr.StatusCode != http.StatusForbidden || !strings.Contains(err.Error(), body) {
+			t.Fatalf("did not preserve final 403 error: %v", err)
+		}
+		if calls != 3 {
+			t.Fatalf("attempts=%d, want 3", calls)
+		}
+	})
+}
+
+func TestOtherForbiddenResponsesAreNotRetriedOrConsumed(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		body string
+	}{
+		{"other code", `{"error":{"code":10001,"message":"forbidden"}}`},
+		{"missing code", `{"error":{"message":"forbidden"}}`},
+		{"invalid JSON", `{"error":`},
+		{"large response", strings.Repeat("x", 8192)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			response := retryTestResponse(http.StatusForbidden, tt.body)
+			originalBody := response.Body.(*retryTestBody)
+			c := newRetryTestClient(func(*http.Request) (*http.Response, error) {
+				calls++
+				return response, nil
+			})
+			resp, err := c.do(context.Background(), http.MethodGet, "https://www.zhihu.com/api/v4/me", nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil || string(body) != tt.body {
+				t.Fatalf("response body changed: got %d bytes, want %d, err=%v", len(body), len(tt.body), err)
+			}
+			if calls != 1 || !originalBody.closed {
+				t.Fatalf("attempts=%d, original body closed=%v", calls, originalBody.closed)
+			}
+		})
+	}
+}
+
 func TestMutationRequestsAreNeverRetried(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
-		for _, status := range []int{0, 429, 503} {
+		for _, status := range []int{0, 403, 429, 503} {
 			name := http.StatusText(status)
 			if status == 0 {
 				name = "network error"
@@ -174,7 +227,7 @@ func TestMutationRequestsAreNeverRetried(t *testing.T) {
 					if status == 0 {
 						return nil, errors.New("connection reset after accepting mutation")
 					}
-					return retryTestResponse(status, "temporary failure"), nil
+					return retryTestResponse(status, `{"error":{"code":10003,"message":"temporary"}}`), nil
 				})
 				resp, err := c.doJSONRequest(context.Background(), method, "https://www.zhihu.com/api/v4/comments", map[string]string{"content": "hello"}, nil)
 				if status == 0 {
