@@ -647,7 +647,7 @@ func (c *Client) do(ctx context.Context, method, target string, body io.Reader, 
 	if xsrf := c.cookies["_xsrf"]; xsrf != "" {
 		req.Header.Set("x-xsrftoken", xsrf)
 	}
-	return c.httpClient.Do(req)
+	return c.doWithRetry(req)
 }
 
 func checkStatus(resp *http.Response, label string) error {
