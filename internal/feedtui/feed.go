@@ -17,6 +17,7 @@ import (
 var htmlBreakPattern = regexp.MustCompile(`(?i)<(?:br\s*/?|/?(?:p|div|li|blockquote|h[1-6]))[^>]*>`)
 var repeatedBlankLinesPattern = regexp.MustCompile(`\n[\t ]*\n(?:[\t ]*\n)+`)
 var imageTagPattern = regexp.MustCompile(`(?is)<img\b[^>]*>`)
+var imagePlaceholderPattern = regexp.MustCompile(`▣ 图片 \d+`)
 var codeBlockPattern = regexp.MustCompile(`(?is)<pre\b[^>]*>(.*?)</pre\s*>`)
 var classCodeBlockPattern = regexp.MustCompile(`(?is)<code\b[^>]*\bclass\s*=\s*(?:"[^"]*"|'[^']*')[^>]*>(.*?)</code\s*>`)
 var anchorTagPattern = regexp.MustCompile(`(?is)<a\b[^>]*>(.*?)</a\s*>`)
@@ -869,7 +870,7 @@ func pinLinkCardTitle(detail map[string]any) string {
 	if !found {
 		return ""
 	}
-	return strings.TrimSpace(strings.TrimSuffix(firstParagraph(plainText(before)), "|"))
+	return strings.TrimSpace(before)
 }
 
 func pinLinkCardExcerpt(detail map[string]any) string {
@@ -877,17 +878,30 @@ func pinLinkCardExcerpt(detail map[string]any) string {
 	if _, after, found := strings.Cut(content, " | "); found {
 		content = after
 	}
-	return truncateCells(compactLine(plainText(content)), 512)
+	return truncateCells(content, 512)
 }
 
 func pinLinkCardContent(detail map[string]any) string {
-	for _, rawNode := range asSlice(detail["content"]) {
-		node := mapValue(rawNode)
-		if strings.EqualFold(toString(node["type"]), "text") {
-			return toString(node["content"])
+	value := detail["content"]
+	if _, ok := value.(string); !ok {
+		content := make([]any, 0)
+		for _, rawNode := range asSlice(value) {
+			// Nested link cards are rendered separately by formatLinkCardTree.
+			if !strings.EqualFold(toString(mapValue(rawNode)["type"]), "link_card") {
+				content = append(content, rawNode)
+			}
 		}
+		value = content
 	}
-	return toString(detail["excerpt_title"])
+	content, imageCount := feedContentText(value)
+	if content == "" {
+		content, imageCount = contentText(toString(detail["excerpt_title"]))
+	}
+	if referenced := referencedImageCount(nil, detail); referenced > imageCount {
+		content = appendImagePlaceholders(content, imageCount+1, referenced)
+	}
+	content = imagePlaceholderPattern.ReplaceAllString(content, "[▣ 图片]")
+	return compactLine(stripInlineLinkMarkers(blockMarkerReplacer.Replace(content)))
 }
 
 func linkCardStats(detail map[string]any) string {

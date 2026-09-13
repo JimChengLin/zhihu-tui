@@ -200,6 +200,27 @@ func TestLinkCardTreeConnectsSiblingReferences(t *testing.T) {
 	}
 }
 
+func TestLinkCardTreeKeepsImagesInTheirOwnPin(t *testing.T) {
+	child := linkCardTreeNode("PIN", "child-pin", "引用想法")
+	child["card_detail"] = map[string]any{"content": []any{
+		map[string]any{"type": "text", "content": "子想法"},
+		map[string]any{"type": "image", "url": "child.jpg"},
+	}}
+	parent := linkCardTreeNode("PIN", "parent-pin", "引用想法")
+	parent["card_detail"] = map[string]any{"content": []any{
+		map[string]any{"type": "text", "content": "父想法"},
+		map[string]any{"type": "image", "url": "parent.jpg"},
+		child,
+	}}
+
+	lines := layoutBodyLines(formatLinkCard(parent), 80)
+	requireLinkCardTreeLine(t, lines, "└─ ", "父想法 [▣ 图片]", "")
+	requireLinkCardTreeLine(t, lines, "   └─ ", "子想法 [▣ 图片]", "")
+	if got := visibleLinkCardTree(lines); strings.Count(got, "[▣ 图片]") != 2 || strings.Count(got, "子想法") != 1 {
+		t.Fatalf("nested images leaked into parent excerpt: %q", got)
+	}
+}
+
 func TestLinkCardTreeHydratesDuplicateReferenceOnce(t *testing.T) {
 	first := linkCardTreeNode("ANSWER", "same-answer", "引用回答")
 	second := linkCardTreeNode("ANSWER", "same-answer", "引用回答")

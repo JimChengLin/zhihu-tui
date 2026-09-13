@@ -570,6 +570,75 @@ func TestPinLinkCardExcerptFallsBackToExcerptTitle(t *testing.T) {
 	}
 }
 
+func TestPinLinkCardPreservesImagePlaceholders(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		detail map[string]any
+		want   string
+	}{
+		{
+			name: "structured images",
+			detail: map[string]any{"content": []any{
+				map[string]any{"type": "text", "content": "<p>救命，原来真相是这样。我彻底绷不住了。</p>"},
+				map[string]any{"type": "image", "url": "first.jpg"},
+				map[string]any{"type": "image", "url": "second.jpg"},
+				map[string]any{"type": "image", "url": "third.jpg"},
+			}},
+			want: "救命，原来真相是这样。我彻底绷不住了。 [▣ 图片] [▣ 图片] [▣ 图片]",
+		},
+		{
+			name: "mixed images and text",
+			detail: map[string]any{"content": []any{
+				map[string]any{"type": "text", "content": `标题 | <p>前文<img src="first.jpg"></p>`},
+				map[string]any{"type": "image", "url": "second.jpg"},
+				map[string]any{"type": "text", "content": `<p>后文<a href="third.jpg">查看图片</a></p>`},
+			}},
+			want: "前文 [▣ 图片] [▣ 图片] 后文 [▣ 图片]",
+		},
+		{
+			name: "image only",
+			detail: map[string]any{
+				"content":       []any{map[string]any{"type": "image", "url": "first.jpg"}},
+				"excerpt_title": "[图片]",
+			},
+			want: "[▣ 图片]",
+		},
+		{
+			name:   "HTML content",
+			detail: map[string]any{"content": `<p>正文<img src="first.jpg"></p>`},
+			want:   "正文 [▣ 图片]",
+		},
+		{
+			name:   "excerpt fallback",
+			detail: map[string]any{"excerpt_title": `标题 | <p>摘要<img src="first.jpg"></p>`},
+			want:   "摘要 [▣ 图片]",
+		},
+		{
+			name: "referenced images",
+			detail: map[string]any{
+				"content":     []any{map[string]any{"type": "text", "content": `<p>正文<img src="first.jpg"></p>`}},
+				"content_img": []any{"first.jpg", "second.jpg"},
+			},
+			want: "正文 [▣ 图片] [▣ 图片]",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := pinLinkCardExcerpt(test.detail); got != test.want {
+				t.Fatalf("excerpt=%q, want %q", got, test.want)
+			}
+			card := formatLinkCard(map[string]any{
+				"data_content_type": "PIN",
+				"data_draft_title":  "引用想法",
+				"card_detail":       test.detail,
+			})
+			rendered := visibleLinkCardTree(layoutBodyLines(card, 160))
+			if !strings.Contains(rendered, test.want) {
+				t.Fatalf("rendered card lost image placeholders: %q", rendered)
+			}
+		})
+	}
+}
+
 func TestLinkCardFailureRendersBelowTitleInRed(t *testing.T) {
 	node := map[string]any{
 		"data_content_type": "QUESTION",
