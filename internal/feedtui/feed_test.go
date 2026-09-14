@@ -664,6 +664,7 @@ func TestLinkCardFailureRendersBelowTitleInRed(t *testing.T) {
 func TestPinLinkCardWithoutTitleSkipsBlueTitle(t *testing.T) {
 	detail := map[string]any{
 		"content":    []any{map[string]any{"type": "text", "content": "<p>这是一条没有标题的想法正文。</p>"}},
+		"author":     map[string]any{"name": "想法作者"},
 		"like_count": 3,
 	}
 	card := formatLinkCard(map[string]any{
@@ -676,7 +677,7 @@ func TestPinLinkCardWithoutTitleSkipsBlueTitle(t *testing.T) {
 	}
 	lines := layoutBodyLines(card, 80)
 	assertLinkCardLine(t, lines, "这是一条没有标题的想法正文。", "", false)
-	assertLinkCardLine(t, lines, "赞同 3", ansiDim, true)
+	assertLinkCardLine(t, lines, "想法作者  ·  赞同 3  ·  想法", ansiDim, true)
 }
 
 func assertLinkCardLine(t *testing.T, lines []styledLine, text, style string, indented bool) {

@@ -771,8 +771,16 @@ func pinLinkCardFields(node, detail map[string]any) []linkCardField {
 			fields = append(fields, linkCardField{marker: linkCardExcerptMarker, text: excerpt})
 		}
 	}
+	metadata := make([]string, 0, 3)
+	if author := strings.TrimSpace(toString(mapValue(detail["author"])["name"])); author != "" {
+		metadata = append(metadata, author)
+	}
 	if stats := linkCardStats(detail); stats != "" {
-		fields = append(fields, linkCardField{marker: linkCardMetadataMarker, text: stats + "  ·  想法"})
+		metadata = append(metadata, stats)
+	}
+	if len(metadata) > 0 {
+		metadata = append(metadata, "想法")
+		fields = append(fields, linkCardField{marker: linkCardMetadataMarker, text: strings.Join(metadata, "  ·  ")})
 	}
 	return fields
 }

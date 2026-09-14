@@ -138,6 +138,9 @@ func TestLinkCardTreeHydratesPinPinAnswerRecursively(t *testing.T) {
 			"comment_count": 3,
 		},
 	})
+	source.details["PIN:pin-1"]["author"] = map[string]any{"name": "一级作者"}
+	source.details["PIN:pin-2"]["author"] = map[string]any{"name": "二级作者"}
+	source.details["PIN:pin-2"]["like_count"] = 6
 	response := linkCardTreeResponse(rootPin)
 
 	hydrateFeedLinkCards(context.Background(), source, response)
@@ -157,13 +160,15 @@ func TestLinkCardTreeHydratesPinPinAnswerRecursively(t *testing.T) {
 
 	lines := layoutLinkCardTreeResponse(t, response)
 	requireLinkCardTreeLine(t, lines, "└─ ", "一级想法", ansiBlue)
+	requireLinkCardTreeLine(t, lines, "   ", "一级作者  ·  想法", ansiDim)
 	requireLinkCardTreeLine(t, lines, "   └─ ", "二级想法", ansiBlue)
+	requireLinkCardTreeLine(t, lines, "      ", "二级作者  ·  赞同 6  ·  想法", ansiDim)
 	requireLinkCardTreeLine(t, lines, "      └─ ", "内层问题", ansiBlue)
 	requireLinkCardTreeLine(t, lines, "         ", "答主  ·  赞同 12  ·  评论 3  ·  回答", ansiDim)
 	rendered := visibleLinkCardTree(lines)
 	for _, want := range []string{
-		"   一级摘要。\n   │  \n   └─ 二级想法",
-		"      二级摘要。\n      │  \n      └─ 内层问题",
+		"   一级摘要。\n   一级作者  ·  想法\n   │  \n   └─ 二级想法",
+		"      二级摘要。\n      二级作者  ·  赞同 6  ·  想法\n      │  \n      └─ 内层问题",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("link card tree has no comment-style parent-child gap %q: %q", want, rendered)
