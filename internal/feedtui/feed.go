@@ -28,6 +28,7 @@ var pinTitlePattern = regexp.MustCompile(`(?is)^\s*([^<\r\n]+?)\s*<br\s*/?>\s*<p
 var feedActionLabels = []string{
 	"赞同了回答", "收藏了回答", "回答了问题", "关注了问题", "关注了话题",
 	"发布了文章", "赞同了文章", "收藏了文章", "发布了想法", "赞同了想法",
+	"发布了视频", "赞同了视频", "收藏了视频",
 }
 
 const (
