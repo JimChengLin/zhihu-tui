@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/JimChengLin/zhihu-tui/internal/client"
 	"github.com/JimChengLin/zhihu-tui/internal/display"
 )
 
@@ -550,7 +551,9 @@ func failedLinkCardsInContent(content any) []map[string]any {
 	failed := make([]map[string]any, 0)
 	for _, node := range linkCardsInContent(content) {
 		if toString(node["card_error"]) != "" {
-			failed = append(failed, node)
+			if !truthy(node["card_not_found"]) {
+				failed = append(failed, node)
+			}
 			continue
 		}
 		failed = append(failed, failedLinkCardsInContent(mapValue(node["card_detail"])["content"])...)
@@ -612,10 +615,16 @@ func applyLinkCardResult(node, detail map[string]any, err error) {
 	if err != nil {
 		delete(node, "card_detail")
 		node["card_error"] = err.Error()
+		if client.IsNotFoundError(err) {
+			node["card_not_found"] = true
+		} else {
+			delete(node, "card_not_found")
+		}
 		return
 	}
 	delete(node, "card_error")
 	delete(node, "card_retry_count")
+	delete(node, "card_not_found")
 	node["card_detail"] = detail
 }
 
@@ -845,6 +854,12 @@ func linkCardStatusField(node map[string]any) (linkCardField, bool) {
 	retryCount := toInt64(node["card_retry_count"])
 	if toString(node["card_error"]) == "" {
 		return linkCardField{}, false
+	}
+	if truthy(node["card_not_found"]) {
+		return linkCardField{
+			marker: linkCardErrorMarker,
+			text:   linkCardFallbackLabel(node) + "不存在或无权访问",
+		}, true
 	}
 	text := "详情加载失败"
 	if retryCount > 0 {

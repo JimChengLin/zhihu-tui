@@ -2,9 +2,12 @@ package feedtui
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JimChengLin/zhihu-tui/internal/client"
 )
 
 type pinCardTestSource struct {
@@ -659,6 +662,28 @@ func TestLinkCardFailureRendersBelowTitleInRed(t *testing.T) {
 	node["card_retry_count"] = 2
 	lines = layoutBodyLines(formatLinkCard(node), 100)
 	assertLinkCardLine(t, lines, "详情加载失败（已重试 2 次）", ansiRed, true)
+}
+
+func TestNotFoundLinkCardRendersPermanentFailure(t *testing.T) {
+	node := map[string]any{
+		"type":              "link_card",
+		"data_content_type": "ANSWER",
+		"data_content_id":   "answer-1",
+		"data_draft_title":  "已删除回答所属的问题",
+	}
+	applyLinkCardResult(node, nil, client.DataFetchError{
+		Message:    "API request failed with status 404",
+		StatusCode: http.StatusNotFound,
+	})
+
+	lines := layoutBodyLines(formatLinkCard(node), 100)
+	assertLinkCardLine(t, lines, "引用回答不存在或无权访问", ansiRed, true)
+	if incrementFailedLinkCardRetryCounts([]any{node}) {
+		t.Fatal("not-found link card was marked for retry")
+	}
+	if failed := failedLinkCardsInContent([]any{node}); len(failed) != 0 {
+		t.Fatalf("not-found link cards queued for retry: %#v", failed)
+	}
 }
 
 func TestPinLinkCardWithoutTitleSkipsBlueTitle(t *testing.T) {

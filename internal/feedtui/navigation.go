@@ -526,6 +526,9 @@ func incrementFailedLinkCardRetryCounts(content any) bool {
 	incremented := false
 	for _, node := range linkCardsInContent(content) {
 		if toString(node["card_error"]) != "" {
+			if truthy(node["card_not_found"]) {
+				continue
+			}
 			node["card_retry_count"] = toInt64(node["card_retry_count"]) + 1
 			incremented = true
 			continue
