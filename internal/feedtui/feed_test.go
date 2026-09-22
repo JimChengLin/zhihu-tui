@@ -793,6 +793,22 @@ func TestAnswerLinkCardPreservesInlineLinkStyle(t *testing.T) {
 	t.Fatalf("answer card mention is missing: %#v", lines)
 }
 
+func TestAnswerLinkCardRendersExcerptBeforeOffscreenLink(t *testing.T) {
+	card := formatLinkCard(map[string]any{
+		"data_content_type": "ANSWER",
+		"data_content_id":   "2",
+		"card_detail": map[string]any{
+			"question": map[string]any{"title": "怎么评价 CodeMidas？"},
+			"content": `<p>这篇论文含金量很高，主要讨论怎样低成本、大规模地制造后训练 RL 任务。</p>` +
+				`<p>这里还有一些补充说明。</p>` +
+				`<a href="https://zhuanlan.zhihu.com/p/1">延伸阅读</a>`,
+		},
+	})
+	lines := layoutBodyLines(card, 40)
+
+	assertLinkCardLine(t, lines, "这篇论文含金量很高", "", true)
+}
+
 func TestLinkCardExcerptKeepsVisibleLimitAndLinkMarkers(t *testing.T) {
 	excerpt := linkCardExcerpt(map[string]any{
 		"content": `<p>` + strings.Repeat("前", 240) + `<a href="https://www.zhihu.com/people/example">@普通河南人</a>` + strings.Repeat("后", 100) + `</p>`,

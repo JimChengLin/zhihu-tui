@@ -749,9 +749,7 @@ func layoutLinkCardLine(sourceLine string, width int, commentID string) (styledL
 		plain, spans := inlineLinkSpans(text)
 		plain = truncateCells(plain, lineWidth)
 		line := styledLineFromSpans(plain, plain, spans, 0, commentID)
-		line.text = prefix
-		line.style = ansiDim
-		return line, true
+		return prependStyledLine(line, prefix, ansiDim), true
 	}
 	text = truncateCells(text, lineWidth)
 	return styledLine{
