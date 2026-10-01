@@ -291,7 +291,10 @@ func TestToggleCommentsRestoresBodyPageAnchor(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
 			model := &app{
+				source:   &commentRefreshTestSource{requests: make(chan commentRefreshPageRequest, 1)},
 				items:    []feedItem{{key: "answer:42", id: "42", kind: "answer", commentCount: 1}},
 				comments: map[string]*commentState{"answer:42": {loaded: true, items: []feedComment{{id: "100"}}}},
 				scroll:   test.scroll,
@@ -305,11 +308,11 @@ func TestToggleCommentsRestoresBodyPageAnchor(t *testing.T) {
 				t.Fatal("navigation key did not create a body page anchor")
 			}
 
-			model.handleKey(context.Background(), "c")
+			model.handleKey(ctx, "c")
 			if !model.commentMode || model.pageAnchorVisible {
 				t.Fatalf("entered comments with commentMode=%v anchor=(%d,%v)", model.commentMode, model.pageAnchorLine, model.pageAnchorVisible)
 			}
-			model.handleKey(context.Background(), "c")
+			model.handleKey(ctx, "c")
 			if model.commentMode || model.scroll != bodyScroll || !model.pageAnchorVisible || model.pageAnchorLine != bodyAnchorLine || model.pageAnchorReadSide != bodyAnchorReadSide {
 				t.Fatalf("returned to body with commentMode=%v scroll=%d anchor=(%d,%v) readSide=%d, want scroll=%d anchor=(%d,true) readSide=%d", model.commentMode, model.scroll, model.pageAnchorLine, model.pageAnchorVisible, model.pageAnchorReadSide, bodyScroll, bodyAnchorLine, bodyAnchorReadSide)
 			}
@@ -347,34 +350,14 @@ func TestEmptyCommentsOnlyAppearInBottomStatus(t *testing.T) {
 	}
 }
 
-func TestKnownEmptyCommentsStayInBodyView(t *testing.T) {
-	tests := []struct {
-		name     string
-		item     feedItem
-		comments map[string]*commentState
-	}{
-		{
-			name: "API count is zero",
-			item: feedItem{key: "answer:42", id: "42", kind: "answer", hasCommentCount: true},
-		},
-		{
-			name:     "empty result is cached",
-			item:     feedItem{key: "answer:42", id: "42", kind: "answer"},
-			comments: map[string]*commentState{"answer:42": {loaded: true, end: true}},
-		},
+func TestKnownZeroCommentCountStaysInBodyView(t *testing.T) {
+	model := &app{
+		items:  []feedItem{{key: "answer:42", id: "42", kind: "answer", hasCommentCount: true}},
+		scroll: 5,
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			model := &app{
-				items:    []feedItem{test.item},
-				comments: test.comments,
-				scroll:   5,
-			}
-			model.toggleComments(context.Background())
-			if model.commentMode || model.scroll != 5 || model.message != "暂无评论" {
-				t.Fatalf("commentMode=%v scroll=%d message=%q", model.commentMode, model.scroll, model.message)
-			}
-		})
+	model.toggleComments(context.Background())
+	if model.commentMode || model.scroll != 5 || model.message != "暂无评论" {
+		t.Fatalf("commentMode=%v scroll=%d message=%q", model.commentMode, model.scroll, model.message)
 	}
 }
 
@@ -606,7 +589,7 @@ func TestInitialCommentPageWithoutOpaqueCursorFailsFast(t *testing.T) {
 			},
 		},
 	})
-	if !state.loaded || state.loading || len(state.items) != 1 || state.moreErr == nil {
+	if !state.loaded || state.loading || len(state.items) != 0 || state.err == nil || state.moreErr != nil {
 		t.Fatalf("invalid first page did not fail fast: %#v", state)
 	}
 }
@@ -981,14 +964,14 @@ func TestCommentLabelExplainsWhereToRetryFailedPage(t *testing.T) {
 	}
 }
 
-func TestCommentLabelExplainsFilteredTotalAtRootEnd(t *testing.T) {
+func TestCommentLabelReportsCountMismatchAtRootEnd(t *testing.T) {
 	state := &commentState{
 		items:  []feedComment{{id: "100", author: "A", content: "可见评论"}},
 		loaded: true,
 		end:    true,
 	}
 	_, label := formatCommentView(feedItem{commentCount: 2}, state, 0)
-	if !strings.Contains(label, "可见评论已全部加载") {
+	if !strings.Contains(label, "分页已结束，统计数多 1 条") || strings.Contains(label, "可见评论已全部加载") {
 		t.Fatalf("comment label=%q", label)
 	}
 }

@@ -268,6 +268,9 @@ func Run(ctx context.Context, source feedSource, in, out *os.File) error {
 			}
 		case fetched := <-model.commentChildFetches:
 			model.applyCommentChildFetch(fetched)
+			if state := model.comments[fetched.stateKey]; state != nil && fetched.generation != state.generation {
+				model.startCommentChildFetch(ctx, fetched.stateKey)
+			}
 			model.startCommentRelationshipFetch(ctx, fetched.stateKey)
 			if err := model.render(out); err != nil {
 				return err

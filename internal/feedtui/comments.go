@@ -40,7 +40,9 @@ type commentState struct {
 	items            []feedComment
 	expandedChildren map[string]bool
 	loading          bool
+	refreshing       bool
 	loaded           bool
+	generation       int
 	end              bool
 	nextCursor       string
 	err              error
@@ -131,10 +133,14 @@ func formatCommentView(item feedItem, state *commentState, spinner int) (string,
 	if item.commentCount > 0 {
 		label += fmt.Sprintf(" · 共 %s 条", display.FormatCount(item.commentCount))
 	}
-	if state == nil || state.loading && !state.loaded {
-		return spinnerFrames[spinner%len(spinnerFrames)] + " 正在加载评论…", label
+	if state == nil || state.loading && (!state.loaded || len(state.items) == 0) {
+		status := "正在加载评论…"
+		if state != nil && state.refreshing {
+			status = "正在刷新评论…"
+		}
+		return spinnerFrames[spinner%len(spinnerFrames)] + " " + status, label
 	}
-	if state.err != nil {
+	if state.err != nil && len(state.items) == 0 {
 		return "评论加载失败：" + state.err.Error() + "\n\n按 c 返回正文，再按 c 重试。", label
 	}
 	if len(state.items) == 0 {
@@ -143,7 +149,13 @@ func formatCommentView(item feedItem, state *commentState, spinner int) (string,
 	loadedComments := countLoadedComments(state.items)
 	label += fmt.Sprintf(" · 已加载 %d 条", loadedComments)
 	if state.loading {
-		label += " · " + spinnerFrames[spinner%len(spinnerFrames)] + " 正在加载更多"
+		status := "正在加载更多"
+		if state.refreshing {
+			status = "正在刷新评论"
+		}
+		label += " · " + spinnerFrames[spinner%len(spinnerFrames)] + " " + status
+	} else if state.err != nil {
+		label += " · 刷新评论失败，按 c 返回后再进入重试"
 	} else if state.moreErr != nil {
 		label += " · 加载更多失败，滚至评论区底部后按 space 重试"
 	} else if state.end {
@@ -152,7 +164,7 @@ func formatCommentView(item feedItem, state *commentState, spinner int) (string,
 		case pendingReplies > 0:
 			label += fmt.Sprintf(" · %d 条子回复未返回", pendingReplies)
 		case item.commentCount > loadedComments:
-			label += " · 可见评论已全部加载"
+			label += fmt.Sprintf(" · 分页已结束，统计数多 %d 条", item.commentCount-loadedComments)
 		}
 	}
 	var builder strings.Builder
@@ -478,9 +490,10 @@ func applyCommentRelations(comments []feedComment, relations map[string]commentR
 }
 
 type commentChildFetchResult struct {
-	stateKey string
-	rootIDs  []string
-	children map[string][]feedComment
+	stateKey   string
+	generation int
+	rootIDs    []string
+	children   map[string][]feedComment
 }
 
 func fetchCommentChildren(ctx context.Context, source commentChildSource, rootIDs []string) map[string][]feedComment {

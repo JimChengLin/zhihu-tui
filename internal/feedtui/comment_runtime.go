@@ -26,8 +26,7 @@ func (model *app) toggleComments(ctx context.Context) {
 		return
 	}
 	state := model.comments[item.key]
-	knownEmpty := state != nil && state.loaded && state.err == nil && len(state.items) == 0
-	if item.hasCommentCount && item.commentCount == 0 || knownEmpty {
+	if state == nil && item.hasCommentCount && item.commentCount == 0 {
 		model.setMessage("暂无评论", 3*time.Second)
 		return
 	}
@@ -50,7 +49,7 @@ func (model *app) startComments(ctx context.Context, item feedItem) {
 		state = &commentState{}
 		model.comments[item.key] = state
 	}
-	if state.loading || state.loaded && state.err == nil {
+	if state.loading {
 		return
 	}
 	model.startCommentPage(ctx, item, state, false)
@@ -58,6 +57,7 @@ func (model *app) startComments(ctx context.Context, item feedItem) {
 
 func (model *app) startCommentPage(ctx context.Context, item feedItem, state *commentState, appendPage bool) {
 	state.loading = true
+	state.refreshing = !appendPage && state.loaded
 	if appendPage {
 		state.moreErr = nil
 	} else {
@@ -86,6 +86,11 @@ func (model *app) applyCommentFetch(result commentFetchResult) {
 		model.comments[result.key] = state
 	}
 	state.loading = false
+	state.refreshing = false
+	nextCursor, end := commentPaging(result.response)
+	if result.err == nil && !end && nextCursor == "" {
+		result.err = errors.New("知乎评论分页没有返回有效游标")
+	}
 	if result.err != nil {
 		if result.append && state.loaded {
 			state.moreErr = result.err
@@ -96,15 +101,17 @@ func (model *app) applyCommentFetch(result commentFetchResult) {
 		return
 	}
 	page := parseComments(asSlice(result.response["data"]))
-	nextCursor, end := commentPaging(result.response)
-	var pageErr error
-	if !end && nextCursor == "" {
-		pageErr = errors.New("知乎评论分页没有返回有效游标")
-	}
 	if result.append {
 		state.items = appendUniqueComments(state.items, page)
 	} else {
+		state.generation++
+		for _, root := range state.items {
+			delete(model.commentChildComplete, commentChildKey(result.key, root.id))
+		}
 		state.items = page
+	}
+	if total, ok := firstPresent(mapValue(result.response["counts"])["total_counts"]); ok {
+		updateCommentTotal(model.items, result.key, int(toInt64(total)))
 	}
 	if commentPagingExhausted(result.cursor, nextCursor, end) {
 		nextCursor = ""
@@ -112,12 +119,20 @@ func (model *app) applyCommentFetch(result commentFetchResult) {
 	}
 	state.loaded = true
 	state.err = nil
-	if pageErr != nil {
-		state.moreErr = pageErr
-		return
-	}
 	state.moreErr = nil
 	state.nextCursor, state.end = nextCursor, end
+}
+
+func updateCommentTotal(items []feedItem, key string, total int) {
+	for index := range items {
+		item := &items[index]
+		if item.key == key {
+			item.commentCount = total
+			item.hasCommentCount = true
+			item.stats = replaceCommentStat(item.stats, total)
+		}
+		updateCommentTotal(item.foldedItems, key, total)
+	}
 }
 
 func appendUniqueComments(existing, incoming []feedComment) []feedComment {
@@ -137,7 +152,7 @@ func appendUniqueComments(existing, incoming []feedComment) []feedComment {
 
 func (model *app) maybePrefetchComments(ctx context.Context) {
 	state := model.currentCommentState()
-	if state == nil || !state.loaded || state.loading || state.end || state.moreErr != nil || len(model.items) == 0 {
+	if state == nil || !state.loaded || state.loading || state.end || state.err != nil || state.moreErr != nil || len(model.items) == 0 {
 		return
 	}
 	remainingLines := model.metrics.maxScroll - model.scroll
@@ -161,6 +176,10 @@ func (model *app) ensureMoreComments(ctx context.Context) bool {
 	}
 	if state.end {
 		return false
+	}
+	if state.err != nil {
+		model.setMessage("刷新评论失败，按 c 返回后再进入重试", 3*time.Second)
+		return true
 	}
 	model.clearBoundarySwitch()
 	model.startCommentPage(ctx, model.items[model.index], state, true)
@@ -216,10 +235,11 @@ func (model *app) startCommentChildFetch(ctx context.Context, stateKey string) {
 	if len(rootIDs) == 0 {
 		return
 	}
+	generation := state.generation
 	go func() {
 		children := fetchCommentChildren(ctx, model.source, rootIDs)
 		select {
-		case model.commentChildFetches <- commentChildFetchResult{stateKey: stateKey, rootIDs: rootIDs, children: children}:
+		case model.commentChildFetches <- commentChildFetchResult{stateKey: stateKey, generation: generation, rootIDs: rootIDs, children: children}:
 		case <-ctx.Done():
 		}
 	}()
@@ -230,14 +250,14 @@ func (model *app) applyCommentChildFetch(result commentChildFetchResult) {
 	for _, rootID := range result.rootIDs {
 		key := commentChildKey(result.stateKey, rootID)
 		delete(model.commentChildPending, key)
+		if state == nil || result.generation != state.generation {
+			continue
+		}
 		children, fetched := result.children[rootID]
 		if !fetched {
 			continue
 		}
 		model.commentChildComplete[key] = struct{}{}
-		if state == nil {
-			continue
-		}
 		for index := range state.items {
 			if state.items[index].id == rootID {
 				state.items[index].children = children
