@@ -915,15 +915,14 @@ func layoutFoldedGroupPreview(children []feedItem, width int) []styledLine {
 		if excerpt == "" {
 			continue
 		}
-		excerptWidth := width
-		excerptLines := wrapText(excerpt, excerptWidth)
+		excerptLines := wrapText(excerpt, width)
 		truncated := len(excerptLines) > 2
 		if len(excerptLines) > 2 {
 			excerptLines = excerptLines[:2]
 		}
 		if truncated {
 			last := len(excerptLines) - 1
-			excerptLines[last] = truncateCells(strings.TrimSuffix(excerptLines[last], "…")+"…", excerptWidth)
+			excerptLines[last] = truncateCells(strings.TrimSuffix(excerptLines[last], "…")+"…", width)
 		}
 		for _, excerptLine := range excerptLines {
 			lines = append(lines, styledLine{text: excerptLine})
@@ -975,6 +974,9 @@ func foldedItemAuthorLabel(item feedItem) string {
 func foldedItemExcerpt(item feedItem) string {
 	meaningful := make([]string, 0, 2)
 	for _, sourceLine := range strings.Split(item.body, "\n") {
+		if strings.HasPrefix(sourceLine, linkCardMetadataMarker) {
+			continue
+		}
 		if _, text, _, ok := splitLinkCardLine(sourceLine); ok {
 			sourceLine = text
 		}
