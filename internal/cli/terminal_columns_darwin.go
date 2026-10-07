@@ -20,7 +20,7 @@ func terminalColumns() (int, bool) {
 	if err != nil {
 		return 0, false
 	}
-	defer tty.Close()
+	defer func() { _ = tty.Close() }()
 	var size terminalWindowSize
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, tty.Fd(), uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(&size)))
 	if errno != 0 || size.column == 0 {

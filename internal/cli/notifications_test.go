@@ -1159,9 +1159,13 @@ func TestMonitorOutputUpdatesCountdown(t *testing.T) {
 	var out strings.Builder
 	tm := time.Date(2026, 7, 8, 15, 4, 5, 0, time.Local)
 	monitor := newMonitorOutput(&out)
-	monitor.Status(tm, "waiting", "next refresh in 60s")
+	if err := monitor.Status(tm, "waiting", "next refresh in 60s"); err != nil {
+		t.Fatal(err)
+	}
 	first := monitorStatusLine(tm, "waiting", "next refresh in 60s")
-	monitor.Tick("next refresh in 59s")
+	if err := monitor.Tick("next refresh in 59s"); err != nil {
+		t.Fatal(err)
+	}
 	want := first + monitorClearStatus(monitorStatusRows(first)) + monitorStatusLine(tm, "waiting", "next refresh in 59s")
 	if got := out.String(); got != want {
 		t.Fatalf("output=%q, want %q", got, want)
@@ -1204,7 +1208,9 @@ func TestMonitorOutputClearsPreviousStatusBeforeSeparator(t *testing.T) {
 	var out strings.Builder
 	tm := time.Date(2026, 7, 8, 15, 4, 5, 0, time.Local)
 	monitor := &monitorOutput{out: &out, statusRows: 3}
-	monitor.NewSeparator(tm, 1, true)
+	if err := monitor.NewSeparator(tm, 1, true); err != nil {
+		t.Fatal(err)
+	}
 	want := monitorClearStatus(3) + monitorNewSeparator(tm, 1, true)
 	if got := out.String(); got != want {
 		t.Fatalf("output=%q, want %q", got, want)

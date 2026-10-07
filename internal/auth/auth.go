@@ -218,7 +218,7 @@ func QRCodeLogin(ctx context.Context, out io.Writer) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("request QR code: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
 		return "", fmt.Errorf("request QR code returned %d: %s", resp.StatusCode, string(body))
@@ -238,7 +238,9 @@ func QRCodeLogin(ctx context.Context, out io.Writer) (string, error) {
 	if err := saveQRCodeLink(link); err != nil {
 		return "", err
 	}
-	fmt.Fprintf(out, "Open this link with Zhihu app to login:\n%s\n", link)
+	if _, err := fmt.Fprintf(out, "Open this link with Zhihu app to login:\n%s\n", link); err != nil {
+		return "", fmt.Errorf("write QR login instructions: %w", err)
+	}
 
 	scanURL := config.ZhihuQRCodeAPI + "/" + url.PathEscape(token) + "/scan_info"
 	deadline := time.Now().Add(120 * time.Second)
@@ -264,7 +266,7 @@ func QRCodeLogin(ctx context.Context, out io.Writer) (string, error) {
 		var info map[string]any
 		if resp.Body != nil {
 			_ = json.NewDecoder(resp.Body).Decode(&info)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 			return "", fmt.Errorf("poll QR login returned %d", resp.StatusCode)
@@ -291,7 +293,7 @@ func getForCookies(ctx context.Context, c *http.Client, url string) error {
 	if err != nil {
 		return fmt.Errorf("GET %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
 		return fmt.Errorf("GET %s returned %d: %s", url, resp.StatusCode, string(body))
@@ -313,7 +315,7 @@ func postJSONForCookies(ctx context.Context, c *http.Client, url string, body an
 	if err != nil {
 		return fmt.Errorf("POST %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
 		return fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(body))

@@ -152,7 +152,7 @@ type linkCardRetryResult struct {
 }
 
 // following feed and restores the terminal before returning.
-func Run(ctx context.Context, source feedSource, in, out *os.File) error {
+func Run(ctx context.Context, source feedSource, in, out *os.File) (runErr error) {
 	if !isTerminal(in) || !isTerminal(out) {
 		return fmt.Errorf("zhihu feed --tui requires an interactive terminal")
 	}
@@ -173,7 +173,11 @@ func Run(ctx context.Context, source feedSource, in, out *os.File) error {
 	if _, err := fmt.Fprint(out, "\033[?1049h\033[?25l\033[2J\033[H"); err != nil {
 		return err
 	}
-	defer fmt.Fprint(out, "\033[?25h\033[?1049l")
+	defer func() {
+		if _, err := fmt.Fprint(out, "\033[?25h\033[?1049l"); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("restore terminal display: %w", err))
+		}
+	}()
 
 	width, height, err := terminalSize(out)
 	if err != nil {

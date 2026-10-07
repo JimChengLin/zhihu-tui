@@ -130,6 +130,8 @@ zhihu notifications --monitor --interval 30
 
 ```bash
 go test ./...
+golangci-lint run ./...
+go build -o zhihu ./cmd/zhihu
 ```
 
 项目主要目录：

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -62,26 +63,23 @@ type notificationActorCacheEntry struct {
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		printRootHelp(stdout)
-		return 0
+		return commandExitCode(printRootHelp(stdout), stderr)
 	}
 	if args[0] == "--version" || args[0] == "version" {
-		fmt.Fprintf(stdout, "zhihu-tui %s\n", config.Version)
-		return 0
+		_, err := fmt.Fprintf(stdout, "zhihu-tui %s\n", config.Version)
+		return commandExitCode(err, stderr)
 	}
 	if args[0] == "-v" || args[0] == "--verbose" {
 		args = args[1:]
 		if len(args) == 0 {
-			printRootHelp(stdout)
-			return 0
+			return commandExitCode(printRootHelp(stdout), stderr)
 		}
 	}
 
 	ctx := context.Background()
 	cmd, rest := args[0], args[1:]
 	if wantsHelp(rest) {
-		printCommandHelp(stdout, cmd)
-		return 0
+		return commandExitCode(printCommandHelp(stdout, cmd), stderr)
 	}
 	var err error
 	switch cmd {
@@ -142,84 +140,91 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "delete-comment":
 		err = runDelete(ctx, rest, stdout, "comment")
 	default:
-		fmt.Fprintln(stderr, display.Error("unknown command: "+cmd))
-		printRootHelp(stderr)
+		// Diagnostics are best effort once the command has already failed.
+		_, _ = fmt.Fprintln(stderr, display.Error("unknown command: "+cmd))
+		_ = printRootHelp(stderr)
 		return 2
 	}
+	return commandExitCode(err, stderr)
+}
+
+func commandExitCode(err error, stderr io.Writer) int {
 	if err != nil {
-		fmt.Fprintln(stderr, display.Error(err.Error()))
+		// A failed diagnostic write cannot be reported to the same stream.
+		_, _ = fmt.Fprintln(stderr, display.Error(err.Error()))
 		return 1
 	}
 	return 0
 }
 
-func printRootHelp(w io.Writer) {
-	fmt.Fprintln(w, "zhihu-tui - Zhihu from your terminal")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  zhihu <command> [options]")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Commands:")
-	fmt.Fprintln(w, "  login, logout, status, whoami")
-	fmt.Fprintln(w, "  search, hot, answers, answer, feed, feeds")
-	fmt.Fprintln(w, "  user, user-answers, user-articles, followers, following")
-	fmt.Fprintln(w, "  vote, follow-question, collections, notifications")
-	fmt.Fprintln(w, "  reply-comment")
-	fmt.Fprintln(w, "  ask, pin, article, delete-question, delete-pin, delete-article, delete-comment")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Interactive:")
-	fmt.Fprintf(w, "  %-32s %s\n", "zhihu feed --tui", "Browse your following feed in a full-screen terminal UI")
-	fmt.Fprintf(w, "  %-32s %s\n", "zhihu notifications --monitor", "Monitor new notifications continuously")
+func printRootHelp(w io.Writer) error {
+	_, err := fmt.Fprintf(w, `zhihu-tui - Zhihu from your terminal
+
+Usage:
+  zhihu <command> [options]
+
+Commands:
+  login, logout, status, whoami
+  search, hot, answers, answer, feed, feeds
+  user, user-answers, user-articles, followers, following
+  vote, follow-question, collections, notifications
+  reply-comment
+  ask, pin, article, delete-question, delete-pin, delete-article, delete-comment
+
+Interactive:
+  %-32s %s
+  %-32s %s
+`, "zhihu feed --tui", "Browse your following feed in a full-screen terminal UI",
+		"zhihu notifications --monitor", "Monitor new notifications continuously")
+	return err
 }
 
-func printCommandHelp(w io.Writer, cmd string) {
+func printCommandHelp(w io.Writer, cmd string) error {
+	var usage string
 	switch cmd {
 	case "--feed-tui":
-		fmt.Fprintln(w, "Usage: zhihu feed --tui")
+		usage = "Usage: zhihu feed --tui"
 	case "login":
-		fmt.Fprintln(w, "Usage: zhihu login [--qrcode] [--cookie COOKIE]")
+		usage = "Usage: zhihu login [--qrcode] [--cookie COOKIE]"
 	case "search":
-		fmt.Fprintln(w, "Usage: zhihu search QUERY [-t TYPE] [-l LIMIT] [-a ANSWERS] [--json]")
+		usage = "Usage: zhihu search QUERY [-t TYPE] [-l LIMIT] [-a ANSWERS] [--json]"
 	case "hot":
-		fmt.Fprintln(w, "Usage: zhihu hot [-l LIMIT] [--json]")
+		usage = "Usage: zhihu hot [-l LIMIT] [--json]"
 	case "answers":
-		fmt.Fprintln(w, "Usage: zhihu answers QUESTION_ID [-l LIMIT] [--sort default|created] [--json]")
+		usage = "Usage: zhihu answers QUESTION_ID [-l LIMIT] [--sort default|created] [--json]"
 	case "answer":
-		fmt.Fprintln(w, "Usage: zhihu answer ANSWER_ID [-c] [-l LIMIT] [--json]")
+		usage = "Usage: zhihu answer ANSWER_ID [-c] [-l LIMIT] [--json]"
 	case "feed":
-		fmt.Fprintln(w, "Usage:")
-		fmt.Fprintln(w, "  zhihu feed [-l LIMIT] [--json]")
-		fmt.Fprintln(w, "  zhihu feed --tui")
+		usage = "Usage:\n  zhihu feed [-l LIMIT] [--json]\n  zhihu feed --tui"
 	case "feeds":
-		fmt.Fprintln(w, "Usage: zhihu feeds [-l LIMIT] [-c COMMENT_LIMIT]")
+		usage = "Usage: zhihu feeds [-l LIMIT] [-c COMMENT_LIMIT]"
 	case "user":
-		fmt.Fprintln(w, "Usage: zhihu user URL_TOKEN [--json]")
+		usage = "Usage: zhihu user URL_TOKEN [--json]"
 	case "user-answers", "user-articles", "followers", "following":
-		fmt.Fprintf(w, "Usage: zhihu %s URL_TOKEN [-l LIMIT] [--json]\n", cmd)
+		usage = fmt.Sprintf("Usage: zhihu %s URL_TOKEN [-l LIMIT] [--json]", cmd)
 	case "vote":
-		fmt.Fprintln(w, "Usage: zhihu vote ANSWER_ID [--neutral]")
+		usage = "Usage: zhihu vote ANSWER_ID [--neutral]"
 	case "follow-question":
-		fmt.Fprintln(w, "Usage: zhihu follow-question QUESTION_ID [--unfollow]")
+		usage = "Usage: zhihu follow-question QUESTION_ID [--unfollow]"
 	case "collections":
-		fmt.Fprintln(w, "Usage: zhihu collections [-l LIMIT] [--json]")
+		usage = "Usage: zhihu collections [-l LIMIT] [--json]"
 	case "notifications":
-		fmt.Fprintln(w, "Usage:")
-		fmt.Fprintln(w, "  zhihu notifications [-l LIMIT] [--offset OFFSET] [--monitor] [--interval SECONDS] [--debug-log PATH] [--json]")
-		fmt.Fprintln(w, "  zhihu notifications mark-read --tab default|follow|vote_thank")
-		fmt.Fprintln(w, "  zhihu notifications mark-read --all-tabs")
+		usage = "Usage:\n  zhihu notifications [-l LIMIT] [--offset OFFSET] [--monitor] [--interval SECONDS] [--debug-log PATH] [--json]\n  zhihu notifications mark-read --tab default|follow|vote_thank\n  zhihu notifications mark-read --all-tabs"
 	case "reply-comment":
-		fmt.Fprintln(w, "Usage: zhihu reply-comment COMMENT_ID CONTENT [--resource-type TYPE --resource-id ID] [--json]")
+		usage = "Usage: zhihu reply-comment COMMENT_ID CONTENT [--resource-type TYPE --resource-id ID] [--json]"
 	case "ask":
-		fmt.Fprintln(w, "Usage: zhihu ask TITLE [-d DETAIL] [-t TOPIC] [-i IMAGE]")
+		usage = "Usage: zhihu ask TITLE [-d DETAIL] [-t TOPIC] [-i IMAGE]"
 	case "pin":
-		fmt.Fprintln(w, "Usage: zhihu pin TITLE [-c CONTENT] [-i IMAGE]")
+		usage = "Usage: zhihu pin TITLE [-c CONTENT] [-i IMAGE]"
 	case "article":
-		fmt.Fprintln(w, "Usage: zhihu article TITLE CONTENT [-t TOPIC] [-i IMAGE]")
+		usage = "Usage: zhihu article TITLE CONTENT [-t TOPIC] [-i IMAGE]"
 	case "delete-question", "delete-pin", "delete-article", "delete-comment":
-		fmt.Fprintf(w, "Usage: zhihu %s ID -y\n", cmd)
+		usage = fmt.Sprintf("Usage: zhihu %s ID -y", cmd)
 	default:
-		printRootHelp(w)
+		return printRootHelp(w)
 	}
+	_, err := fmt.Fprintln(w, usage)
+	return err
 }
 
 func runFeedTUI(ctx context.Context, args []string, out io.Writer) error {
@@ -240,7 +245,9 @@ func runFeedTUI(ctx context.Context, args []string, out io.Writer) error {
 
 func runLogin(ctx context.Context, args []string, out io.Writer) error {
 	if wantsHelp(args) {
-		fmt.Fprintln(out, "Usage: zhihu login [--qrcode] [--cookie COOKIE]")
+		if _, err := fmt.Fprintln(out, "Usage: zhihu login [--qrcode] [--cookie COOKIE]"); err != nil {
+			return err
+		}
 		return nil
 	}
 	opts, err := parseOptions(args, specs(
@@ -258,7 +265,9 @@ func runLogin(ctx context.Context, args []string, out io.Writer) error {
 		if err := auth.SaveCookies(auth.CookieString(parsed)); err != nil {
 			return err
 		}
-		fmt.Fprintln(out, display.Success("cookie saved"))
+		if _, err := fmt.Fprintln(out, display.Success("cookie saved")); err != nil {
+			return err
+		}
 		return nil
 	}
 	if opts.has("qrcode") {
@@ -266,7 +275,9 @@ func runLogin(ctx context.Context, args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(out, display.Success("login successful; cookie saved"))
+		if _, err := fmt.Fprintln(out, display.Success("login successful; cookie saved")); err != nil {
+			return err
+		}
 		return nil
 	}
 	cookieStr, ok, err := auth.GetCookieString()
@@ -288,13 +299,17 @@ func runLogin(ctx context.Context, args []string, out io.Writer) error {
 	if toString(info["id"]) == "" && toString(info["name"]) == "" {
 		return fmt.Errorf("saved cookie did not return user info")
 	}
-	fmt.Fprintln(out, display.Success("already authenticated"))
+	if _, err := fmt.Fprintln(out, display.Success("already authenticated")); err != nil {
+		return err
+	}
 	return nil
 }
 
 func runLogout(args []string, out io.Writer) error {
 	if wantsHelp(args) {
-		fmt.Fprintln(out, "Usage: zhihu logout")
+		if _, err := fmt.Fprintln(out, "Usage: zhihu logout"); err != nil {
+			return err
+		}
 		return nil
 	}
 	removed, err := auth.ClearCookies()
@@ -302,16 +317,22 @@ func runLogout(args []string, out io.Writer) error {
 		return err
 	}
 	if len(removed) == 0 {
-		fmt.Fprintln(out, display.Warning("no saved credentials to clear"))
+		if _, err := fmt.Fprintln(out, display.Warning("no saved credentials to clear")); err != nil {
+			return err
+		}
 		return nil
 	}
-	fmt.Fprintln(out, display.Success("logged out; removed: "+strings.Join(removed, ", ")))
+	if _, err := fmt.Fprintln(out, display.Success("logged out; removed: "+strings.Join(removed, ", "))); err != nil {
+		return err
+	}
 	return nil
 }
 
 func runStatus(args []string, out io.Writer) error {
 	if wantsHelp(args) {
-		fmt.Fprintln(out, "Usage: zhihu status")
+		if _, err := fmt.Fprintln(out, "Usage: zhihu status"); err != nil {
+			return err
+		}
 		return nil
 	}
 	_, ok, err := auth.GetSavedCookieString()
@@ -321,8 +342,12 @@ func runStatus(args []string, out io.Writer) error {
 	if !ok {
 		return fmt.Errorf("not authenticated")
 	}
-	fmt.Fprintln(out, display.Success("authenticated (saved cookie)"))
-	fmt.Fprintln(out, "hint: run zhihu whoami to view profile")
+	if _, err := fmt.Fprintln(out, display.Success("authenticated (saved cookie)")); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(out, "hint: run zhihu whoami to view profile"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -343,8 +368,7 @@ func runWhoami(ctx context.Context, args []string, out io.Writer) error {
 	if opts.has("json") {
 		return printJSON(out, info)
 	}
-	printProfile(out, info, "Me")
-	return nil
+	return printProfile(out, info, "Me")
 }
 
 func runSearch(ctx context.Context, args []string, out io.Writer) error {
@@ -374,7 +398,9 @@ func runSearch(ctx context.Context, args []string, out io.Writer) error {
 	}
 	data := asSlice(result["data"])
 	if len(data) == 0 {
-		fmt.Fprintf(out, "No results for %q\n", opts.positionals[0])
+		if _, err := fmt.Fprintf(out, "No results for %q\n", opts.positionals[0]); err != nil {
+			return err
+		}
 		return nil
 	}
 	for i, item := range data {
@@ -384,9 +410,13 @@ func runSearch(ctx context.Context, args []string, out io.Writer) error {
 		}
 		itemType := firstNonEmpty(toString(mapValue(item)["type"]), toString(obj["type"]), "-")
 		title := display.StripHTML(firstNonEmpty(toString(obj["title"]), toString(obj["name"]), "-"))
-		fmt.Fprintf(out, "%d. [%s] %s\n", i+1, itemType, title)
+		if _, err := fmt.Fprintf(out, "%d. [%s] %s\n", i+1, itemType, title); err != nil {
+			return err
+		}
 		if id := toString(obj["id"]); id != "" {
-			fmt.Fprintf(out, "   ID: %s\n", id)
+			if _, err := fmt.Fprintf(out, "   ID: %s\n", id); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -411,16 +441,22 @@ func runHot(ctx context.Context, args []string, out io.Writer) error {
 	}
 	data := asSlice(result["data"])
 	if len(data) == 0 {
-		fmt.Fprintln(out, "Hot list is empty")
+		if _, err := fmt.Fprintln(out, "Hot list is empty"); err != nil {
+			return err
+		}
 		return nil
 	}
-	fmt.Fprintln(out, "Trending")
+	if _, err := fmt.Fprintln(out, "Trending"); err != nil {
+		return err
+	}
 	for i, item := range data {
 		m := mapValue(item)
 		target := mapValue(firstMap(m["target"], m["question"], item))
 		title := display.StripHTML(firstNonEmpty(toString(target["title"]), "-"))
 		heat := firstNonEmpty(toString(m["detail_text"]), display.FormatCount(mapValue(m["reaction"])["pv"])+" views")
-		fmt.Fprintf(out, "%d. %s\n   %s\n", i+1, title, heat)
+		if _, err := fmt.Fprintf(out, "%d. %s\n   %s\n", i+1, title, heat); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -447,14 +483,18 @@ func runAnswers(ctx context.Context, args []string, out io.Writer) error {
 	}
 	data := asSlice(result["data"])
 	if len(data) == 0 {
-		fmt.Fprintln(out, "No answers yet")
+		if _, err := fmt.Fprintln(out, "No answers yet"); err != nil {
+			return err
+		}
 		return nil
 	}
 	for i, item := range data {
 		ans := mapValue(item)
 		author := toString(mapValue(ans["author"])["name"])
 		excerpt := display.Truncate(display.StripHTML(firstNonEmpty(toString(ans["excerpt"]), toString(ans["content"]))), 90)
-		fmt.Fprintf(out, "%d. %s - %s (%s upvotes)\n", i+1, firstNonEmpty(author, "Anonymous"), excerpt, display.FormatCount(ans["voteup_count"]))
+		if _, err := fmt.Fprintf(out, "%d. %s - %s (%s upvotes)\n", i+1, firstNonEmpty(author, "Anonymous"), excerpt, display.FormatCount(ans["voteup_count"])); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -480,8 +520,12 @@ func runAnswer(ctx context.Context, args []string, out io.Writer) error {
 		return printJSON(out, ans)
 	}
 	author := firstNonEmpty(toString(mapValue(ans["author"])["name"]), "Anonymous")
-	fmt.Fprintf(out, "Answer by %s\n\n%s\n", author, display.StripHTML(toString(ans["content"])))
-	fmt.Fprintln(out, display.StatsLine(map[string]any{"Upvotes": ans["voteup_count"], "Comments": ans["comment_count"]}))
+	if _, err := fmt.Fprintf(out, "Answer by %s\n\n%s\n", author, display.StripHTML(toString(ans["content"]))); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(out, display.StatsLine(map[string]any{"Upvotes": ans["voteup_count"], "Comments": ans["comment_count"]})); err != nil {
+		return err
+	}
 	if opts.has("comments") {
 		limit := opts.int("limit", 20)
 		result, err := c.GetAnswerComments(ctx, opts.positionals[0], 0, limit, "normal")
@@ -490,7 +534,9 @@ func runAnswer(ctx context.Context, args []string, out io.Writer) error {
 		}
 		for i, raw := range asSlice(result["data"]) {
 			comment := mapValue(raw)
-			fmt.Fprintf(out, "%d. %s (%s likes)\n", i+1, display.StripHTML(toString(comment["content"])), display.FormatCount(comment["vote_count"]))
+			if _, err := fmt.Fprintf(out, "%d. %s (%s likes)\n", i+1, display.StripHTML(toString(comment["content"])), display.FormatCount(comment["vote_count"])); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -535,7 +581,9 @@ func runFeeds(ctx context.Context, args []string, out io.Writer) error {
 	}
 	data := asSlice(result["data"])
 	if len(data) == 0 {
-		fmt.Fprintln(out, "Feed is empty")
+		if _, err := fmt.Fprintln(out, "Feed is empty"); err != nil {
+			return err
+		}
 		return nil
 	}
 	commentLimit := opts.int("comment-limit", 10)
@@ -544,13 +592,17 @@ func runFeeds(ctx context.Context, args []string, out io.Writer) error {
 		itemType := toString(target["type"])
 		itemID := toString(target["id"])
 		title := display.StripHTML(firstNonEmpty(toString(target["title"]), toString(mapValue(target["question"])["title"]), toString(target["excerpt"]), "-"))
-		fmt.Fprintf(out, "%d. [%s] %s\n", i+1, itemType, title)
+		if _, err := fmt.Fprintf(out, "%d. [%s] %s\n", i+1, itemType, title); err != nil {
+			return err
+		}
 		if commentLimit > 0 && itemType == "answer" && itemID != "" {
 			comments, err := c.GetAnswerComments(ctx, itemID, 0, commentLimit, "normal")
 			if err == nil {
 				for j, rawComment := range asSlice(comments["data"]) {
 					comment := mapValue(rawComment)
-					fmt.Fprintf(out, "   %d. %s\n", j+1, display.StripHTML(toString(comment["content"])))
+					if _, err := fmt.Fprintf(out, "   %d. %s\n", j+1, display.StripHTML(toString(comment["content"]))); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -578,8 +630,7 @@ func runUser(ctx context.Context, args []string, out io.Writer) error {
 	if opts.has("json") {
 		return printJSON(out, info)
 	}
-	printProfile(out, info, "@"+opts.positionals[0])
-	return nil
+	return printProfile(out, info, "@"+opts.positionals[0])
 }
 
 func runUserAnswers(ctx context.Context, args []string, out io.Writer) error {
@@ -631,18 +682,26 @@ func runUserList(ctx context.Context, args []string, out io.Writer, kind string)
 	}
 	data := asSlice(result["data"])
 	if len(data) == 0 {
-		fmt.Fprintf(out, "No %s found\n", kind)
+		if _, err := fmt.Fprintf(out, "No %s found\n", kind); err != nil {
+			return err
+		}
 		return nil
 	}
 	for i, raw := range data {
 		item := mapValue(raw)
 		switch kind {
 		case "answers":
-			fmt.Fprintf(out, "%d. %s (%s upvotes)\n", i+1, display.StripHTML(toString(mapValue(item["question"])["title"])), display.FormatCount(item["voteup_count"]))
+			if _, err := fmt.Fprintf(out, "%d. %s (%s upvotes)\n", i+1, display.StripHTML(toString(mapValue(item["question"])["title"])), display.FormatCount(item["voteup_count"])); err != nil {
+				return err
+			}
 		case "articles":
-			fmt.Fprintf(out, "%d. %s (%s upvotes)\n", i+1, display.StripHTML(toString(item["title"])), display.FormatCount(item["voteup_count"]))
+			if _, err := fmt.Fprintf(out, "%d. %s (%s upvotes)\n", i+1, display.StripHTML(toString(item["title"])), display.FormatCount(item["voteup_count"])); err != nil {
+				return err
+			}
 		default:
-			fmt.Fprintf(out, "%d. %s - %s\n", i+1, toString(item["name"]), toString(item["headline"]))
+			if _, err := fmt.Fprintf(out, "%d. %s - %s\n", i+1, toString(item["name"]), toString(item["headline"])); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -674,9 +733,13 @@ func runVote(ctx context.Context, args []string, out io.Writer) error {
 		return fmt.Errorf("vote request was not accepted by the server")
 	}
 	if opts.has("neutral") {
-		fmt.Fprintln(out, display.Success("cancelled vote on answer "+opts.positionals[0]))
+		if _, err := fmt.Fprintln(out, display.Success("cancelled vote on answer "+opts.positionals[0])); err != nil {
+			return err
+		}
 	} else {
-		fmt.Fprintln(out, display.Success("upvoted answer "+opts.positionals[0]))
+		if _, err := fmt.Fprintln(out, display.Success("upvoted answer "+opts.positionals[0])); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -707,9 +770,13 @@ func runFollowQuestion(ctx context.Context, args []string, out io.Writer) error 
 		return fmt.Errorf("follow request was not accepted by the server")
 	}
 	if opts.has("unfollow") {
-		fmt.Fprintln(out, display.Success("unfollowed question "+opts.positionals[0]))
+		if _, err := fmt.Fprintln(out, display.Success("unfollowed question "+opts.positionals[0])); err != nil {
+			return err
+		}
 	} else {
-		fmt.Fprintln(out, display.Success("followed question "+opts.positionals[0]))
+		if _, err := fmt.Fprintln(out, display.Success("followed question "+opts.positionals[0])); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -733,17 +800,21 @@ func runCollections(ctx context.Context, args []string, out io.Writer) error {
 	}
 	data := asSlice(result["data"])
 	if len(data) == 0 {
-		fmt.Fprintln(out, "No collections found")
+		if _, err := fmt.Fprintln(out, "No collections found"); err != nil {
+			return err
+		}
 		return nil
 	}
 	for i, raw := range data {
 		item := mapValue(raw)
-		fmt.Fprintf(out, "%d. %s (%s items)\n", i+1, toString(item["title"]), display.FormatCount(firstNonEmptyAny(item["item_count"], item["answer_count"], 0)))
+		if _, err := fmt.Fprintf(out, "%d. %s (%s items)\n", i+1, toString(item["title"]), display.FormatCount(firstNonEmptyAny(item["item_count"], item["answer_count"], 0))); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func runNotifications(ctx context.Context, args []string, out io.Writer) error {
+func runNotifications(ctx context.Context, args []string, out io.Writer) (runErr error) {
 	if len(args) > 0 && args[0] == "mark-read" {
 		return runNotificationsMarkRead(ctx, args[1:], out)
 	}
@@ -782,7 +853,11 @@ func runNotifications(ctx context.Context, args []string, out io.Writer) error {
 			return err
 		}
 		if debugLog != nil {
-			defer debugLog.Close()
+			defer func() {
+				if err := debugLog.Close(); err != nil {
+					runErr = errors.Join(runErr, fmt.Errorf("close notification debug log: %w", err))
+				}
+			}()
 		}
 		return runNotificationsMonitor(ctx, c, formatter, out, limit, interval, debugLog)
 	}
@@ -801,7 +876,9 @@ func runNotifications(ctx context.Context, args []string, out io.Writer) error {
 	if !truthy(paging["is_end"]) && strings.Contains(nextURL, "offset=") {
 		if parsed, err := url.Parse(nextURL); err == nil {
 			if nextOffset := parsed.Query().Get("offset"); nextOffset != "" {
-				fmt.Fprintf(out, "hint: zhihu notifications --offset %s -l %d\n", nextOffset, limit)
+				if _, err := fmt.Fprintf(out, "hint: zhihu notifications --offset %s -l %d\n", nextOffset, limit); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -839,14 +916,18 @@ func runNotificationsMarkRead(ctx context.Context, args []string, out io.Writer)
 		if err := c.MarkAllNotificationsRead(ctx); err != nil {
 			return err
 		}
-		fmt.Fprintln(out, display.Success("marked all notification tabs read"))
+		if _, err := fmt.Fprintln(out, display.Success("marked all notification tabs read")); err != nil {
+			return err
+		}
 		return nil
 	}
 	tab := opts.str("tab", "")
 	if err := c.MarkNotificationsRead(ctx, tab); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, display.Success("marked notification tab read: "+tab))
+	if _, err := fmt.Fprintln(out, display.Success("marked notification tab read: "+tab)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -877,7 +958,9 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 	if err := printNotifications(ctx, out, formatter, result, false); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Monitoring notifications every %s. Press Ctrl+C to stop.\n", interval)
+	if _, err := fmt.Fprintf(out, "Monitoring notifications every %s. Press Ctrl+C to stop.\n", interval); err != nil {
+		return err
+	}
 	var lastBellAt time.Time
 	tickerStartedAt := time.Now()
 	nextRefreshAt := tickerStartedAt.Add(interval)
@@ -886,7 +969,9 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 	countdownTicker := time.NewTicker(monitorCountdownInterval)
 	defer countdownTicker.Stop()
 	monitorOut := newMonitorOutput(out)
-	monitorOut.Status(tickerStartedAt, "waiting", monitorRefreshStatus(tickerStartedAt, nextRefreshAt, false))
+	if err := monitorOut.Status(tickerStartedAt, "waiting", monitorRefreshStatus(tickerStartedAt, nextRefreshAt, false)); err != nil {
+		return err
+	}
 	type refreshResult struct {
 		checkedAt time.Time
 		result    map[string]any
@@ -899,7 +984,9 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 		case <-ctx.Done():
 			return ctx.Err()
 		case now := <-countdownTicker.C:
-			monitorOut.Tick(monitorRefreshStatus(now, nextRefreshAt, refreshInFlight))
+			if err := monitorOut.Tick(monitorRefreshStatus(now, nextRefreshAt, refreshInFlight)); err != nil {
+				return err
+			}
 		case tickedAt := <-ticker.C:
 			nextRefreshAt = tickedAt.Add(interval)
 			if refreshInFlight {
@@ -914,7 +1001,9 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				return err
 			}
 			refreshInFlight = true
-			monitorOut.Tick("refreshing")
+			if err := monitorOut.Tick("refreshing"); err != nil {
+				return err
+			}
 			go func() {
 				result, err := c.GetNotifications(ctx, limit, 0, "all")
 				refreshes <- refreshResult{checkedAt: checkedAt, result: result, err: err}
@@ -926,7 +1015,9 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				if logErr := debugLog.Log(checkedAt, "refresh_error", map[string]any{"error": err.Error()}); logErr != nil {
 					return logErr
 				}
-				monitorOut.Status(checkedAt, "refresh failed: "+err.Error(), monitorRefreshStatus(time.Now(), nextRefreshAt, false))
+				if err := monitorOut.Status(checkedAt, "refresh failed: "+err.Error(), monitorRefreshStatus(time.Now(), nextRefreshAt, false)); err != nil {
+					return err
+				}
 				continue
 			}
 			newItems, newStates, err := collectNotificationUpdates(asSlice(result["data"]), seen, checkedAt, debugLog)
@@ -934,7 +1025,9 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				return err
 			}
 			if len(newItems) == 0 {
-				monitorOut.Status(checkedAt, "no new notifications", monitorRefreshStatus(time.Now(), nextRefreshAt, false))
+				if err := monitorOut.Status(checkedAt, "no new notifications", monitorRefreshStatus(time.Now(), nextRefreshAt, false)); err != nil {
+					return err
+				}
 				continue
 			}
 			formatter.clearTargetCache()
@@ -943,7 +1036,9 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				if logErr := debugLog.Log(checkedAt, "format_error", map[string]any{"error": err.Error(), "new_count": len(newItems)}); logErr != nil {
 					return logErr
 				}
-				monitorOut.Status(checkedAt, "error: "+err.Error(), monitorRefreshStatus(time.Now(), nextRefreshAt, false))
+				if err := monitorOut.Status(checkedAt, "error: "+err.Error(), monitorRefreshStatus(time.Now(), nextRefreshAt, false)); err != nil {
+					return err
+				}
 				continue
 			}
 			for key, state := range newStates {
@@ -957,8 +1052,12 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				notifyTTY()
 				lastBellAt = checkedAt
 			}
-			monitorOut.NewSeparator(checkedAt, len(newItems), sendBell)
-			writeNotificationLines(out, lines)
+			if err := monitorOut.NewSeparator(checkedAt, len(newItems), sendBell); err != nil {
+				return err
+			}
+			if err := writeNotificationLines(out, lines); err != nil {
+				return err
+			}
 			if sendBell {
 				if err := c.MarkAllNotificationsRead(ctx); err != nil {
 					if logErr := debugLog.Log(checkedAt, "mark_read_error", map[string]any{"error": err.Error()}); logErr != nil {
@@ -970,7 +1069,9 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 					return err
 				}
 			}
-			monitorOut.Status(checkedAt, "waiting", monitorRefreshStatus(time.Now(), nextRefreshAt, false))
+			if err := monitorOut.Status(checkedAt, "waiting", monitorRefreshStatus(time.Now(), nextRefreshAt, false)); err != nil {
+				return err
+			}
 		}
 	}
 }
@@ -1000,7 +1101,7 @@ func openNotificationDebugLog(path string) (*notificationDebugLogger, error) {
 		return nil, fmt.Errorf("open notification debug log: %w", err)
 	}
 	if err := file.Chmod(0o600); err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("chmod notification debug log: %w", err)
 	}
 	return &notificationDebugLogger{path: expanded, file: file, enc: json.NewEncoder(file)}, nil
@@ -1123,10 +1224,14 @@ func printNotifications(ctx context.Context, out io.Writer, formatter *notificat
 		if omitEmpty {
 			return nil
 		}
-		fmt.Fprintln(out, "No notifications")
+		if _, err := fmt.Fprintln(out, "No notifications"); err != nil {
+			return err
+		}
 		return nil
 	}
-	fmt.Fprintln(out, "Notifications")
+	if _, err := fmt.Fprintln(out, "Notifications"); err != nil {
+		return err
+	}
 	return printNotificationItems(ctx, out, formatter, oldestFirstNotifications(data))
 }
 
@@ -1135,8 +1240,7 @@ func printNotificationItems(ctx context.Context, out io.Writer, formatter *notif
 	if err != nil {
 		return err
 	}
-	writeNotificationLines(out, lines)
-	return nil
+	return writeNotificationLines(out, lines)
 }
 
 func formatNotificationItems(ctx context.Context, formatter *notificationFormatter, data []any) ([]string, error) {
@@ -1215,13 +1319,18 @@ func formatNotificationUpdates(ctx context.Context, formatter *notificationForma
 	return lines, nil
 }
 
-func writeNotificationLines(out io.Writer, lines []string) {
+func writeNotificationLines(out io.Writer, lines []string) error {
 	for i, line := range lines {
 		if i > 0 {
-			fmt.Fprintln(out)
+			if _, err := fmt.Fprintln(out); err != nil {
+				return err
+			}
 		}
-		fmt.Fprintln(out, line)
+		if _, err := fmt.Fprintln(out, line); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func notifyTTY() {
@@ -1229,8 +1338,9 @@ func notifyTTY() {
 	if err != nil {
 		return
 	}
-	defer tty.Close()
-	fmt.Fprint(tty, terminalNotificationSequence())
+	// Ringing the terminal bell is best effort; notification output is separate.
+	defer func() { _ = tty.Close() }()
+	_, _ = fmt.Fprint(tty, terminalNotificationSequence())
 }
 
 func terminalNotificationSequence() string {
@@ -1254,41 +1364,52 @@ func newMonitorOutput(out io.Writer) *monitorOutput {
 	return &monitorOutput{out: out}
 }
 
-func (m *monitorOutput) Status(t time.Time, status, refresh string) {
+func (m *monitorOutput) Status(t time.Time, status, refresh string) error {
 	m.statusAt = t
 	m.status = status
 	m.refresh = refresh
 	m.hasStatus = true
-	m.renderStatus()
+	return m.renderStatus()
 }
 
-func (m *monitorOutput) Tick(refresh string) {
+func (m *monitorOutput) Tick(refresh string) error {
 	if !m.hasStatus {
-		return
+		return nil
 	}
 	m.refresh = refresh
-	m.renderStatus()
+	return m.renderStatus()
 }
 
-func (m *monitorOutput) renderStatus() {
+func (m *monitorOutput) renderStatus() error {
 	line := monitorStatusLine(m.statusAt, m.status, m.refresh)
-	m.clearStatus()
-	fmt.Fprint(m.out, line)
-	m.statusRows = monitorStatusRows(line)
-}
-
-func (m *monitorOutput) NewSeparator(t time.Time, count int, bell bool) {
-	m.clearStatus()
-	m.hasStatus = false
-	fmt.Fprint(m.out, monitorNewSeparator(t, count, bell))
-}
-
-func (m *monitorOutput) clearStatus() {
-	if m.statusRows <= 0 {
-		return
+	if err := m.clearStatus(); err != nil {
+		return err
 	}
-	fmt.Fprint(m.out, monitorClearStatus(m.statusRows))
+	if _, err := fmt.Fprint(m.out, line); err != nil {
+		return err
+	}
+	m.statusRows = monitorStatusRows(line)
+	return nil
+}
+
+func (m *monitorOutput) NewSeparator(t time.Time, count int, bell bool) error {
+	if err := m.clearStatus(); err != nil {
+		return err
+	}
+	m.hasStatus = false
+	_, err := fmt.Fprint(m.out, monitorNewSeparator(t, count, bell))
+	return err
+}
+
+func (m *monitorOutput) clearStatus() error {
+	if m.statusRows <= 0 {
+		return nil
+	}
+	if _, err := fmt.Fprint(m.out, monitorClearStatus(m.statusRows)); err != nil {
+		return err
+	}
 	m.statusRows = 0
+	return nil
 }
 
 func monitorClearStatus(rows int) string {
@@ -1326,10 +1447,6 @@ func monitorStatusLine(t time.Time, status, refresh string) string {
 
 func monitorStatusLineWithColumns(t time.Time, status, refresh string, columns int) string {
 	return "\r\033[2K" + monitorStatusTextWithColumns(t, status, refresh, columns)
-}
-
-func monitorStatusText(t time.Time, status, refresh string) string {
-	return monitorStatusTextWithColumns(t, status, refresh, monitorStatusColumns())
 }
 
 func monitorStatusTextWithColumns(t time.Time, status, refresh string, columns int) string {
@@ -1422,10 +1539,14 @@ func runReplyComment(ctx context.Context, args []string, out io.Writer) error {
 	}
 	id := firstNonEmpty(toString(result["id"]), toString(mapValue(result["data"])["id"]))
 	if id == "" {
-		fmt.Fprintln(out, display.Success("comment reply posted"))
+		if _, err := fmt.Fprintln(out, display.Success("comment reply posted")); err != nil {
+			return err
+		}
 		return nil
 	}
-	fmt.Fprintf(out, "%s\n", display.Success("comment reply posted; ID: "+id))
+	if _, err := fmt.Fprintf(out, "%s\n", display.Success("comment reply posted; ID: "+id)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1452,10 +1573,14 @@ func runAsk(ctx context.Context, args []string, out io.Writer) error {
 	}
 	id := toString(result["id"])
 	if id == "" {
-		fmt.Fprintln(out, display.Warning("question may have been created but no ID returned"))
+		if _, err := fmt.Fprintln(out, display.Warning("question may have been created but no ID returned")); err != nil {
+			return err
+		}
 		return nil
 	}
-	fmt.Fprintf(out, "%s\nhttps://www.zhihu.com/question/%s\n", display.Success("question created; ID: "+id), id)
+	if _, err := fmt.Fprintf(out, "%s\nhttps://www.zhihu.com/question/%s\n", display.Success("question created; ID: "+id), id); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1482,10 +1607,14 @@ func runPin(ctx context.Context, args []string, out io.Writer) error {
 	}
 	id := toString(result["id"])
 	if id == "" {
-		fmt.Fprintln(out, display.Warning("pin may have been created but no ID returned"))
+		if _, err := fmt.Fprintln(out, display.Warning("pin may have been created but no ID returned")); err != nil {
+			return err
+		}
 		return nil
 	}
-	fmt.Fprintf(out, "%s\nhttps://www.zhihu.com/pin/%s\n", display.Success("pin published; ID: "+id), id)
+	if _, err := fmt.Fprintf(out, "%s\nhttps://www.zhihu.com/pin/%s\n", display.Success("pin published; ID: "+id), id); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1513,10 +1642,14 @@ func runArticle(ctx context.Context, args []string, out io.Writer) error {
 	}
 	id := toString(result["id"])
 	if id == "" {
-		fmt.Fprintln(out, display.Warning("article may have been published but no ID returned"))
+		if _, err := fmt.Fprintln(out, display.Warning("article may have been published but no ID returned")); err != nil {
+			return err
+		}
 		return nil
 	}
-	fmt.Fprintf(out, "%s\nhttps://zhuanlan.zhihu.com/p/%s\n", display.Success("article published; ID: "+id), id)
+	if _, err := fmt.Fprintf(out, "%s\nhttps://zhuanlan.zhihu.com/p/%s\n", display.Success("article published; ID: "+id), id); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1553,7 +1686,9 @@ func runDelete(ctx context.Context, args []string, out io.Writer, kind string) e
 	if !ok {
 		return fmt.Errorf("delete request was not accepted by the server")
 	}
-	fmt.Fprintf(out, "%s\n", display.Success(kind+" "+opts.positionals[0]+" deleted"))
+	if _, err := fmt.Fprintf(out, "%s\n", display.Success(kind+" "+opts.positionals[0]+" deleted")); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1582,7 +1717,9 @@ func uploadImages(ctx context.Context, c *client.Client, paths []string, source 
 	}
 	infos := make([]map[string]any, 0, len(paths))
 	for _, path := range paths {
-		fmt.Fprintln(out, display.Info("uploading image: "+path))
+		if _, err := fmt.Fprintln(out, display.Info("uploading image: "+path)); err != nil {
+			return nil, err
+		}
 		info, err := c.UploadImage(ctx, path, source)
 		if err != nil {
 			return nil, err
@@ -1694,37 +1831,64 @@ func printJSON(out io.Writer, v any) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, text)
+	if _, err := fmt.Fprintln(out, text); err != nil {
+		return err
+	}
 	return nil
 }
 
-func printProfile(out io.Writer, info map[string]any, title string) {
-	fmt.Fprintf(out, "%s\n", title)
-	fmt.Fprintf(out, "Name: %s\n", firstNonEmpty(toString(info["name"]), "Unknown"))
+func printProfile(out io.Writer, info map[string]any, title string) error {
+	if _, err := fmt.Fprintf(out, "%s\n", title); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "Name: %s\n", firstNonEmpty(toString(info["name"]), "Unknown")); err != nil {
+		return err
+	}
 	if headline := toString(info["headline"]); headline != "" {
-		fmt.Fprintf(out, "Headline: %s\n", headline)
+		if _, err := fmt.Fprintf(out, "Headline: %s\n", headline); err != nil {
+			return err
+		}
 	}
 	if desc := display.StripHTML(toString(info["description"])); desc != "" {
-		fmt.Fprintf(out, "Bio: %s\n", display.Truncate(desc, 120))
+		if _, err := fmt.Fprintf(out, "Bio: %s\n", display.Truncate(desc, 120)); err != nil {
+			return err
+		}
 	}
-	fmt.Fprintf(out, "Answers: %s\n", display.FormatCount(info["answer_count"]))
-	fmt.Fprintf(out, "Articles: %s\n", display.FormatCount(info["articles_count"]))
-	fmt.Fprintf(out, "Followers: %s\n", display.FormatCount(info["follower_count"]))
-	fmt.Fprintf(out, "Following: %s\n", display.FormatCount(info["following_count"]))
-	fmt.Fprintf(out, "Upvotes: %s\n", display.FormatCount(info["voteup_count"]))
+	if _, err := fmt.Fprintf(out, "Answers: %s\n", display.FormatCount(info["answer_count"])); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "Articles: %s\n", display.FormatCount(info["articles_count"])); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "Followers: %s\n", display.FormatCount(info["follower_count"])); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "Following: %s\n", display.FormatCount(info["following_count"])); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "Upvotes: %s\n", display.FormatCount(info["voteup_count"])); err != nil {
+		return err
+	}
+	return nil
 }
 
 func printFeed(out io.Writer, result map[string]any) error {
 	data := asSlice(result["data"])
 	if len(data) == 0 {
-		fmt.Fprintln(out, "Feed is empty")
+		if _, err := fmt.Fprintln(out, "Feed is empty"); err != nil {
+			return err
+		}
 		return nil
 	}
-	fmt.Fprintln(out, "Recommended Feed")
+	if _, err := fmt.Fprintln(out, "Recommended Feed"); err != nil {
+		return err
+	}
 	for i, raw := range data {
 		target := mapValue(mapValue(raw)["target"])
 		title := display.StripHTML(firstNonEmpty(toString(target["title"]), toString(mapValue(target["question"])["title"]), toString(target["excerpt"]), "-"))
-		fmt.Fprintf(out, "%d. [%s] %s - %s\n", i+1, firstNonEmpty(toString(target["type"]), "-"), title, firstNonEmpty(toString(mapValue(target["author"])["name"]), "-"))
+		if _, err := fmt.Fprintf(out, "%d. [%s] %s - %s\n", i+1, firstNonEmpty(toString(target["type"]), "-"), title, firstNonEmpty(toString(mapValue(target["author"])["name"]), "-")); err != nil {
+			return err
+		}
 	}
 	return nil
 }

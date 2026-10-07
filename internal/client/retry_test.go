@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"testing/synctest"
 	"time"
 )
@@ -19,12 +20,13 @@ func (f retryTestTransport) RoundTrip(req *http.Request) (*http.Response, error)
 
 type retryTestBody struct {
 	io.Reader
-	closed bool
+	closed   bool
+	closeErr error
 }
 
 func (b *retryTestBody) Close() error {
 	b.closed = true
-	return nil
+	return b.closeErr
 }
 
 func retryTestResponse(status int, body string) *http.Response {
@@ -102,6 +104,33 @@ func TestReadRequestReturnsThirdFailure(t *testing.T) {
 	})
 }
 
+func TestReadRequestRetriesDespiteCleanupErrors(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		body := &retryTestBody{
+			Reader:   iotest.ErrReader(errors.New("read failed")),
+			closeErr: errors.New("close failed"),
+		}
+		calls := 0
+		c := newRetryTestClient(func(*http.Request) (*http.Response, error) {
+			calls++
+			if calls == 1 {
+				return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: body}, nil
+			}
+			if !body.closed {
+				t.Fatal("failed response was not closed before retry")
+			}
+			return retryTestResponse(http.StatusOK, `{"name":"ok"}`), nil
+		})
+		info, err := c.GetSelfInfo(context.Background())
+		if err != nil || info["name"] != "ok" {
+			t.Fatalf("info=%v, err=%v", info, err)
+		}
+		if calls != 2 {
+			t.Fatalf("attempts=%d, want 2", calls)
+		}
+	})
+}
+
 func TestReadRequestRetriesNetworkErrors(t *testing.T) {
 	for _, succeeds := range []bool{false, true} {
 		name := "exhausted"
@@ -124,7 +153,9 @@ func TestReadRequestRetriesNetworkErrors(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					resp.Body.Close()
+					if err := resp.Body.Close(); err != nil {
+						t.Fatal(err)
+					}
 				} else if !errors.Is(err, networkErr) {
 					t.Fatalf("err=%v, want original network error", err)
 				}
@@ -197,7 +228,9 @@ func TestOtherForbiddenResponsesAreNotRetriedOrConsumed(t *testing.T) {
 				t.Fatal(err)
 			}
 			body, err := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
 			if err != nil || string(body) != tt.body {
 				t.Fatalf("response body changed: got %d bytes, want %d, err=%v", len(body), len(tt.body), err)
 			}
@@ -219,7 +252,11 @@ func TestMutationRequestsAreNeverRetried(t *testing.T) {
 				calls := 0
 				c := newRetryTestClient(func(req *http.Request) (*http.Response, error) {
 					calls++
-					defer req.Body.Close()
+					defer func() {
+						if err := req.Body.Close(); err != nil {
+							t.Errorf("close request body: %v", err)
+						}
+					}()
 					body, err := io.ReadAll(req.Body)
 					if err != nil || string(body) != `{"content":"hello"}` || req.Method != method {
 						t.Fatalf("method=%s, body=%q, err=%v", req.Method, body, err)
@@ -238,7 +275,9 @@ func TestMutationRequestsAreNeverRetried(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					resp.Body.Close()
+					if err := resp.Body.Close(); err != nil {
+						t.Fatal(err)
+					}
 					if resp.StatusCode != status {
 						t.Fatalf("status=%d, want %d", resp.StatusCode, status)
 					}

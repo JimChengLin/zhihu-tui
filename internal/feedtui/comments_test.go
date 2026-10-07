@@ -242,7 +242,7 @@ func TestToggleCommentsLoadsAndReturnsToBody(t *testing.T) {
 	if state == nil || len(state.items) != 1 {
 		t.Fatalf("comment state=%#v", state)
 	}
-	view, label := formatCommentView(model.items[0], state, 0)
+	view, _ := formatCommentView(model.items[0], state, 0)
 	for _, want := range []string{"Alice（互相关注）", "评论正文", "▣ 图片 1", "赞同 8"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("comment view does not contain %q: %s", want, view)
@@ -255,7 +255,7 @@ func TestToggleCommentsLoadsAndReturnsToBody(t *testing.T) {
 		t.Fatalf("collapsed root is missing disclosure tree node:\n%s", collapsed)
 	}
 	state.expandedChildren = map[string]bool{"100": true}
-	view, label = formatCommentView(model.items[0], state, 0)
+	view, label := formatCommentView(model.items[0], state, 0)
 	var laidOut strings.Builder
 	for _, line := range layoutBodyLines(view, 80) {
 		laidOut.WriteString(line.text)

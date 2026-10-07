@@ -31,8 +31,9 @@ func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
 		}
 		delay := requestRetryDelay(attempt, resp)
 		if resp != nil {
-			io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-			resp.Body.Close()
+			// Cleanup errors must not prevent retrying a transient failure.
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+			_ = resp.Body.Close()
 		}
 		timer := time.NewTimer(delay)
 		select {

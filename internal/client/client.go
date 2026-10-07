@@ -290,7 +290,7 @@ func (c *Client) FollowQuestion(ctx context.Context, questionID string) (bool, e
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp)
 	return resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent, nil
 }
 
@@ -299,7 +299,7 @@ func (c *Client) UnfollowQuestion(ctx context.Context, questionID string) (bool,
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp)
 	return resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent, nil
 }
 
@@ -487,7 +487,7 @@ func (c *Client) MarkNotificationsRead(ctx context.Context, tab string) error {
 	if err != nil {
 		return DataFetchError{Message: fmt.Sprintf("request failed: %v", err)}
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp)
 	return checkExpectedStatus(resp, map[int]bool{http.StatusOK: true, http.StatusNoContent: true}, "mark notifications read")
 }
 
@@ -530,7 +530,7 @@ func (c *Client) submitVote(ctx context.Context, resourceType, resourceID string
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp)
 	if err := checkStatus(resp, "vote"); err != nil {
 		return false, err
 	}
@@ -569,7 +569,7 @@ func (c *Client) getJSON(ctx context.Context, target string, params url.Values) 
 	if err != nil {
 		return nil, DataFetchError{Message: fmt.Sprintf("request failed: %v", err)}
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp)
 	if err := checkStatus(resp, "API request"); err != nil {
 		return nil, err
 	}
@@ -587,7 +587,7 @@ func (c *Client) postJSON(ctx context.Context, target string, payload any, okSta
 	if err != nil {
 		return nil, DataFetchError{Message: fmt.Sprintf("request failed: %v", err)}
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp)
 	if okStatuses == nil {
 		okStatuses = map[int]bool{http.StatusOK: true}
 	}
@@ -602,7 +602,7 @@ func (c *Client) putJSON(ctx context.Context, target string, payload any, okStat
 	if err != nil {
 		return nil, DataFetchError{Message: fmt.Sprintf("request failed: %v", err)}
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp)
 	if err := checkExpectedStatus(resp, okStatuses, "API request"); err != nil {
 		return nil, err
 	}
@@ -614,7 +614,7 @@ func (c *Client) patchJSONNoBody(ctx context.Context, target string, payload any
 	if err != nil {
 		return DataFetchError{Message: fmt.Sprintf("request failed: %v", err)}
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp)
 	return checkExpectedStatus(resp, okStatuses, "API request")
 }
 
@@ -648,6 +648,11 @@ func (c *Client) do(ctx context.Context, method, target string, body io.Reader, 
 		req.Header.Set("x-xsrftoken", xsrf)
 	}
 	return c.doWithRetry(req)
+}
+
+func closeResponseBody(resp *http.Response) {
+	// Closing only releases resources; it must not replace the request result.
+	_ = resp.Body.Close()
 }
 
 func checkStatus(resp *http.Response, label string) error {
@@ -706,7 +711,7 @@ func (c *Client) uploadToOSS(ctx context.Context, objKey string, data []byte, to
 	if err != nil {
 		return DataFetchError{Message: fmt.Sprintf("OSS upload failed: %v", err)}
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp)
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
 		return DataFetchError{Message: fmt.Sprintf("OSS upload failed (%d): %s", resp.StatusCode, string(body))}
@@ -789,7 +794,7 @@ func (c *Client) deleteAccepted(ctx context.Context, target, contentType string)
 	if err != nil {
 		return false, DataFetchError{Message: fmt.Sprintf("delete %s failed: %v", contentType, err)}
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp)
 	if resp.StatusCode == http.StatusUnauthorized {
 		return false, LoginError{Message: "session expired or not logged in"}
 	}
@@ -808,7 +813,8 @@ func buildImgHTML(imageInfos []map[string]any) string {
 		watermarkSrc := defaultString(info["watermark_src"], "")
 		width := toInt(info["width"])
 		height := toInt(info["height"])
-		b.WriteString(fmt.Sprintf(`<img src="%s" data-caption="" data-size="normal" data-rawwidth="%d" data-rawheight="%d" data-watermark="%s" data-original-src="%s" data-watermark-src="%s" data-private-watermark-src=""/>`, src, width, height, watermark, original, watermarkSrc))
+		// strings.Builder writes cannot fail.
+		_, _ = fmt.Fprintf(&b, `<img src="%s" data-caption="" data-size="normal" data-rawwidth="%d" data-rawheight="%d" data-watermark="%s" data-original-src="%s" data-watermark-src="%s" data-private-watermark-src=""/>`, src, width, height, watermark, original, watermarkSrc)
 	}
 	return b.String()
 }
@@ -836,7 +842,10 @@ func imageDimensions(path string) (int, int) {
 	if err != nil {
 		return 0, 0
 	}
-	defer f.Close()
+	defer func() {
+		// Closing a read-only file does not affect the decoded dimensions.
+		_ = f.Close()
+	}()
 	cfg, _, err := image.DecodeConfig(f)
 	if err != nil {
 		return 0, 0

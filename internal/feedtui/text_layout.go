@@ -90,7 +90,7 @@ func writeFrame(out interface{ Write([]byte) (int, error) }, lines []styledLine,
 		}
 	}
 	if cursorRow >= 0 {
-		builder.WriteString(fmt.Sprintf("\033[%d;%dH\033[?25h", cursorRow+1, cursorCell+1))
+		fmt.Fprintf(&builder, "\033[%d;%dH\033[?25h", cursorRow+1, cursorCell+1)
 	}
 	_, err := out.Write([]byte(builder.String()))
 	return err

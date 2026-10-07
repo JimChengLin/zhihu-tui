@@ -162,7 +162,7 @@ func (c *Client) setPinLiked(ctx context.Context, pinID string, liked bool) (boo
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp)
 	if err := checkExpectedStatus(resp, map[int]bool{http.StatusOK: true, http.StatusCreated: true, http.StatusNoContent: true}, "pin like"); err != nil {
 		return false, err
 	}
@@ -190,7 +190,7 @@ func (c *Client) setCommentLiked(ctx context.Context, commentID string, liked bo
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp)
 	if err := checkExpectedStatus(resp, map[int]bool{http.StatusOK: true, http.StatusCreated: true, http.StatusNoContent: true}, "comment like"); err != nil {
 		return false, err
 	}

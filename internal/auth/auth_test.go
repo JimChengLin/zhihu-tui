@@ -1,12 +1,32 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/JimChengLin/zhihu-tui/internal/config"
 )
+
+type authTransportFunc func(*http.Request) (*http.Response, error)
+
+func (transport authTransportFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return transport(request)
+}
+
+type errorWriter struct {
+	err error
+}
+
+func (writer errorWriter) Write([]byte) (int, error) {
+	return 0, writer.err
+}
 
 func TestParseCookieString(t *testing.T) {
 	tests := []struct {
@@ -120,5 +140,32 @@ func TestRenderQRHalfBlocks(t *testing.T) {
 		if ch != '\n' && ch != ' ' && ch != '▀' && ch != '▄' && ch != '█' {
 			t.Fatalf("unexpected QR char %q", ch)
 		}
+	}
+}
+
+func TestQRCodeLoginReturnsOutputErrorBeforePolling(t *testing.T) {
+	t.Setenv("ZHIHU_CLI_HOME", t.TempDir())
+	originalTransport := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+	requests := 0
+	http.DefaultTransport = authTransportFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		body := "{}"
+		if request.URL.String() == config.ZhihuQRCodeAPI {
+			body = `{"token":"qr-token","link":"https://www.zhihu.com/qr-login"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})
+	wantErr := errors.New("output failed")
+	cookies, err := QRCodeLogin(context.Background(), errorWriter{err: wantErr})
+	if !errors.Is(err, wantErr) || cookies != "" {
+		t.Fatalf("QRCodeLogin returned cookies=%q err=%v, want output error", cookies, err)
+	}
+	if requests != 4 {
+		t.Fatalf("requests=%d, want three setup requests and one QR request before stopping", requests)
 	}
 }
