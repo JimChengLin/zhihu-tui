@@ -242,7 +242,7 @@ func TestToggleCommentsLoadsAndReturnsToBody(t *testing.T) {
 	if state == nil || len(state.items) != 1 {
 		t.Fatalf("comment state=%#v", state)
 	}
-	view, _ := formatCommentView(model.items[0], state, 0)
+	view, _ := formatCommentView(model.items[0], state, 0, 80)
 	for _, want := range []string{"Alice（互相关注）", "评论正文", "▣ 图片 1", "赞同 8"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("comment view does not contain %q: %s", want, view)
@@ -255,7 +255,7 @@ func TestToggleCommentsLoadsAndReturnsToBody(t *testing.T) {
 		t.Fatalf("collapsed root is missing disclosure tree node:\n%s", collapsed)
 	}
 	state.expandedChildren = map[string]bool{"100": true}
-	view, label := formatCommentView(model.items[0], state, 0)
+	view, label := formatCommentView(model.items[0], state, 0, 80)
 	var laidOut strings.Builder
 	for _, line := range layoutBodyLines(view, 80) {
 		laidOut.WriteString(line.text)
@@ -426,7 +426,7 @@ func TestCommentViewMarksContentAuthorAlongsideRelationship(t *testing.T) {
 		content:     "作者回复",
 		isFollowed:  true,
 	}}, loaded: true}
-	view, _ := formatCommentView(feedItem{kind: "article", authorToken: "article-author"}, state, 0)
+	view, _ := formatCommentView(feedItem{kind: "article", authorToken: "article-author"}, state, 0, 80)
 	if !strings.Contains(view, "文章作者（作者，关注我）") {
 		t.Fatalf("content author label is missing: %q", view)
 	}
@@ -731,7 +731,7 @@ func TestCommentRepliesFormFileTreeFromParentIDs(t *testing.T) {
 		expandedChildren: map[string]bool{"100": true},
 		loaded:           true,
 	}
-	view, _ := formatCommentView(feedItem{}, state, 0)
+	view, _ := formatCommentView(feedItem{}, state, 0, 80)
 	var laidOut strings.Builder
 	for _, line := range layoutBodyLines(view, 100) {
 		laidOut.WriteString(styledLineText(line))
@@ -769,7 +769,7 @@ func TestNestedCommentLinkUsesVisibleTextAndLinkStyle(t *testing.T) {
 		expandedChildren: map[string]bool{"100": true},
 		loaded:           true,
 	}
-	view, _ := formatCommentView(feedItem{}, state, 0)
+	view, _ := formatCommentView(feedItem{}, state, 0, 80)
 	lines := layoutBodyLines(view, 100)
 	foundLink := false
 	for _, line := range lines {
@@ -803,7 +803,7 @@ func TestOrphanReplyKeepsReplyTargetLabel(t *testing.T) {
 		expandedChildren: map[string]bool{"100": true},
 		loaded:           true,
 	}
-	view, _ := formatCommentView(feedItem{}, state, 0)
+	view, _ := formatCommentView(feedItem{}, state, 0, 80)
 	if !strings.Contains(view, "A 回复 未加载用户") {
 		t.Fatalf("orphan reply lost its target: %q", view)
 	}
@@ -824,7 +824,7 @@ func TestSiblingCommentsHaveConnectedBreathingRoom(t *testing.T) {
 		expandedChildren: map[string]bool{"100": true},
 		loaded:           true,
 	}
-	view, _ := formatCommentView(feedItem{}, state, 0)
+	view, _ := formatCommentView(feedItem{}, state, 0, 80)
 	lines := layoutBodyLines(view, 80)
 	first, second, gap := -1, -1, -1
 	for index, line := range lines {
@@ -866,7 +866,7 @@ func TestRootCommentsHaveTwoBlankRowsBetweenThem(t *testing.T) {
 				items:  []feedComment{test.first, {id: "200", author: "B", content: "第二条"}},
 				loaded: true,
 			}
-			view, _ := formatCommentView(feedItem{}, state, 0)
+			view, _ := formatCommentView(feedItem{}, state, 0, 80)
 			lines := layoutBodyLines(view, 80)
 			second := firstLineWithCommentID(lines, "200")
 			lastFirst := second - 1
@@ -895,7 +895,7 @@ func TestCommentContentKeepsAtMostOneBlankLine(t *testing.T) {
 	if comment.content != "第一行\n\n第二行\n\n第三行" {
 		t.Fatalf("comment content=%q", comment.content)
 	}
-	view, _ := formatCommentView(feedItem{}, &commentState{items: []feedComment{comment}, loaded: true}, 0)
+	view, _ := formatCommentView(feedItem{}, &commentState{items: []feedComment{comment}, loaded: true}, 0, 80)
 	lines := layoutBodyLines(view, 80)
 	requireBlankRowsBetweenText(t, lines, "第一行", "第二行", 1)
 	requireBlankRowsBetweenText(t, lines, "第二行", "第三行", 1)
@@ -913,7 +913,7 @@ func TestCommentContentUsesOneBlankLineAcrossLayoutPaths(t *testing.T) {
 		"content": `<p><a href="https://example.com">链接段落</a></p><p>普通段落</p>` +
 			`<pre><code>code</code></pre><p>末段</p>`,
 	})
-	view, _ := formatCommentView(feedItem{}, &commentState{items: []feedComment{comment}, loaded: true}, 0)
+	view, _ := formatCommentView(feedItem{}, &commentState{items: []feedComment{comment}, loaded: true}, 0, 80)
 	lines := layoutBodyLines(view, 80)
 	requireBlankRowsBetweenText(t, lines, "链接段落", "普通段落", 1)
 	requireBlankRowsBetweenText(t, lines, "普通段落", "┌─ 代码", 1)
@@ -945,7 +945,7 @@ func TestCommentLabelDistinguishesRootEndFromPendingReplies(t *testing.T) {
 		loaded: true,
 		end:    true,
 	}
-	_, label := formatCommentView(feedItem{commentCount: 3}, state, 0)
+	_, label := formatCommentView(feedItem{commentCount: 3}, state, 0, 80)
 	if !strings.Contains(label, "已加载 1 条 · 2 条子回复未返回") || strings.Contains(label, "已到底") {
 		t.Fatalf("comment label=%q", label)
 	}
@@ -957,7 +957,7 @@ func TestCommentLabelExplainsWhereToRetryFailedPage(t *testing.T) {
 		loaded:  true,
 		moreErr: errors.New("请求失败"),
 	}
-	_, label := formatCommentView(feedItem{commentCount: 2}, state, 0)
+	_, label := formatCommentView(feedItem{commentCount: 2}, state, 0, 80)
 	want := "评论区 · 共 2 条 · 已加载 1 条 · 加载更多失败，滚至评论区底部后按 space 重试"
 	if label != want {
 		t.Fatalf("comment label=%q, want %q", label, want)
@@ -970,7 +970,7 @@ func TestCommentLabelReportsCountMismatchAtRootEnd(t *testing.T) {
 		loaded: true,
 		end:    true,
 	}
-	_, label := formatCommentView(feedItem{commentCount: 2}, state, 0)
+	_, label := formatCommentView(feedItem{commentCount: 2}, state, 0, 80)
 	if !strings.Contains(label, "分页已结束，统计数多 1 条") || strings.Contains(label, "可见评论已全部加载") {
 		t.Fatalf("comment label=%q", label)
 	}
@@ -982,7 +982,7 @@ func TestCommentLabelOmitsRedundantFullyLoadedStatus(t *testing.T) {
 		loaded: true,
 		end:    true,
 	}
-	_, label := formatCommentView(feedItem{commentCount: 1}, state, 0)
+	_, label := formatCommentView(feedItem{commentCount: 1}, state, 0, 80)
 	if label != "评论区 · 共 1 条 · 已加载 1 条" {
 		t.Fatalf("comment label=%q", label)
 	}
@@ -1005,7 +1005,7 @@ func TestParentAndFirstChildHaveConnectedBreathingRoom(t *testing.T) {
 		expandedChildren: map[string]bool{"100": true},
 		loaded:           true,
 	}
-	view, _ := formatCommentView(feedItem{}, state, 0)
+	view, _ := formatCommentView(feedItem{}, state, 0, 80)
 	lines := layoutBodyLines(view, 80)
 	firstChild := firstLineWithCommentID(lines, "101")
 	grandchild := firstLineWithCommentID(lines, "102")

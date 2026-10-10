@@ -233,7 +233,7 @@ func TestParseCommentReadsLikeRelationship(t *testing.T) {
 
 func TestRenderLikedCommentState(t *testing.T) {
 	state := &commentState{items: []feedComment{{id: "100", author: "用户", content: "评论", voteCount: 8, voted: true}}, loaded: true}
-	view, _ := formatCommentView(feedItem{}, state, 0)
+	view, _ := formatCommentView(feedItem{}, state, 0, 80)
 	if !strings.Contains(view, "✓ 赞同 8") {
 		t.Fatalf("comment view=%q", view)
 	}

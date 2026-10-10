@@ -13,6 +13,8 @@ import (
 const commentPageSize = 20
 const commentRelationshipWorkers = 4
 const commentChildWorkers = 4
+const maxCommentTreeDepth = 6
+const commentIndentWidth = 3
 const commentStartMarker = "\ue000comment-start:"
 const commentMarkerEnd = "\ue001"
 const commentTreeMarker = "\ue002comment-tree:"
@@ -128,7 +130,7 @@ func normalizeCommentContent(content string) string {
 	return repeatedBlankLinesPattern.ReplaceAllString(content, "\n\n")
 }
 
-func formatCommentView(item feedItem, state *commentState, spinner int) (string, string) {
+func formatCommentView(item feedItem, state *commentState, spinner, width int) (string, string) {
 	label := "评论区"
 	if item.commentCount > 0 {
 		label += fmt.Sprintf(" · 共 %s 条", display.FormatCount(item.commentCount))
@@ -191,7 +193,7 @@ func formatCommentView(item feedItem, state *commentState, spinner int) (string,
 		if len(comment.children) > 0 {
 			writeCommentTreeGap(&builder, "   │  ")
 		}
-		formatCommentTree(&builder, comment.children, "   ", remaining > 0, item.authorToken)
+		formatCommentTree(&builder, comment.children, "   ", remaining > 0, item.authorToken, 1, commentTreeDepthLimit(width))
 		if remaining > 0 {
 			builder.WriteString("\n")
 			writeCommentMarker(&builder, comment.id)
@@ -212,7 +214,12 @@ func writeCommentRootGap(builder *strings.Builder) {
 	builder.WriteString("\n")
 }
 
-func formatCommentTree(builder *strings.Builder, comments []feedComment, prefix string, hasFollowing bool, contentAuthorToken string) {
+func commentTreeDepthLimit(width int) int {
+	// Include the root offset and branch marker in the indentation budget.
+	return minInt(maxCommentTreeDepth, maxInt(1, width/(4*commentIndentWidth)-1))
+}
+
+func formatCommentTree(builder *strings.Builder, comments []feedComment, prefix string, hasFollowing bool, contentAuthorToken string, depth, depthLimit int) {
 	for index, comment := range comments {
 		builder.WriteString("\n")
 		writeCommentMarker(builder, comment.id)
@@ -225,11 +232,35 @@ func formatCommentTree(builder *strings.Builder, comments []feedComment, prefix 
 		}
 		formatComment(builder, comment, prefix+branch, childPrefix, true, "", contentAuthorToken)
 		if len(comment.children) > 0 {
-			writeCommentTreeGap(builder, childPrefix+"│  ")
+			if depth < depthLimit {
+				writeCommentTreeGap(builder, childPrefix+"│  ")
+				formatCommentTree(builder, comment.children, childPrefix, false, contentAuthorToken, depth+1, depthLimit)
+			} else {
+				writeCommentTreeGap(builder, childPrefix)
+				formatFlatCommentReplies(builder, comment.children, childPrefix, depth+1, comment.author, contentAuthorToken)
+			}
 		}
-		formatCommentTree(builder, comment.children, childPrefix, false, contentAuthorToken)
 		if index < len(comments)-1 || hasFollowing {
 			writeCommentTreeGap(builder, prefix+"│  ")
+		}
+	}
+}
+
+func formatFlatCommentReplies(builder *strings.Builder, comments []feedComment, prefix string, depth int, parentAuthor, contentAuthorToken string) {
+	for index, comment := range comments {
+		builder.WriteString("\n")
+		writeCommentMarker(builder, comment.id)
+		comment.nestedReply = false
+		if comment.replyTo == "" {
+			comment.replyTo = parentAuthor
+		}
+		formatComment(builder, comment, prefix, prefix, true, fmt.Sprintf("第 %d 层", depth), contentAuthorToken)
+		if len(comment.children) > 0 {
+			writeCommentTreeGap(builder, prefix)
+			formatFlatCommentReplies(builder, comment.children, prefix, depth+1, comment.author, contentAuthorToken)
+		}
+		if index < len(comments)-1 {
+			writeCommentTreeGap(builder, prefix)
 		}
 	}
 }
@@ -287,7 +318,7 @@ func countPendingReplies(comments []feedComment) int {
 	return count
 }
 
-func formatComment(builder *strings.Builder, comment feedComment, prefix, contentPrefix string, tree bool, replyMarker, contentAuthorToken string) {
+func formatComment(builder *strings.Builder, comment feedComment, prefix, contentPrefix string, tree bool, depthLabel, contentAuthorToken string) {
 	var header strings.Builder
 	header.WriteString(comment.author)
 	if labels := commentLabels(comment, contentAuthorToken); len(labels) > 0 {
@@ -300,13 +331,13 @@ func formatComment(builder *strings.Builder, comment feedComment, prefix, conten
 		header.WriteString(comment.replyTo)
 	}
 	meta := make([]string, 0, 3)
+	if depthLabel != "" {
+		meta = append(meta, depthLabel)
+	}
 	if comment.voted {
 		meta = append(meta, fmt.Sprintf("✓ 赞同 %d", comment.voteCount))
 	} else if comment.voteCount > 0 {
 		meta = append(meta, fmt.Sprintf("赞同 %d", comment.voteCount))
-	}
-	if comment.childComments > 0 && replyMarker != "" {
-		meta = append(meta, fmt.Sprintf("%s回复 %d", replyMarker, comment.childComments))
 	}
 	if relative := formatRelativeTime(comment.createdAt, time.Now()); relative != "" {
 		meta = append(meta, relative)

@@ -31,7 +31,7 @@ func (model *app) startCommentComposer() {
 		target = commentComposeTarget{
 			commentID: comment.id,
 			label:     "回复 " + comment.author,
-			indent:    commentDepthByID(model.currentCommentState(), comment.id) * 3,
+			indent:    commentDepthByID(model.currentCommentState(), comment.id) * commentIndentWidth,
 		}
 		model.composeInsertLine = focusLine
 		for model.composeInsertLine+1 < len(model.metrics.commentIDs) && model.metrics.commentIDs[model.composeInsertLine+1] == commentID {

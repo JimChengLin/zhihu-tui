@@ -146,7 +146,7 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 	body := item.body
 	if model.commentMode {
 		var commentLabel string
-		body, commentLabel = formatCommentView(item, model.currentCommentState(), model.spinner)
+		body, commentLabel = formatCommentView(item, model.currentCommentState(), model.spinner, contentWidth)
 		lines = append(lines, line(truncateCells(commentLabel, contentWidth), ansiBold+ansiCyan))
 	}
 	lines = append(lines, line(strings.Repeat("─", contentWidth), ansiDim))
@@ -810,12 +810,13 @@ func insertCommentComposer(bodyLines []styledLine, model *app, width int) []styl
 }
 
 func inlineCommentComposerLines(model *app, target commentComposeTarget, width int) []styledLine {
-	indent := strings.Repeat(" ", target.indent)
-	innerWidth := maxInt(1, width-target.indent-4)
+	indentWidth := minInt(target.indent, commentTreeDepthLimit(width)*commentIndentWidth)
+	indent := strings.Repeat(" ", indentWidth)
+	innerWidth := maxInt(1, width-indentWidth-4)
 	lines := []styledLine{{
 		text:        indent + "╭─ ",
 		style:       ansiDim,
-		middle:      truncateCells(target.label, maxInt(1, width-3)),
+		middle:      truncateCells(target.label, maxInt(1, width-indentWidth-3)),
 		middleStyle: ansiDim,
 		commentID:   target.commentID,
 	}}
@@ -837,7 +838,7 @@ func inlineCommentComposerLines(model *app, target commentComposeTarget, width i
 		lines = append(lines, styledLine{
 			text:        indent + "│  ",
 			style:       ansiDim,
-			middle:      truncateCells(model.composeError, maxInt(1, width-3)),
+			middle:      truncateCells(model.composeError, maxInt(1, width-indentWidth-3)),
 			middleStyle: ansiRed,
 			commentID:   target.commentID,
 		})

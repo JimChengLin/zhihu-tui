@@ -67,7 +67,7 @@ func TestReenterCommentsRefreshesFirstPageAndKeepsCachedItemsReadable(t *testing
 	if request.cursor != "" || !state.loading || !state.refreshing || len(state.items) != 1 {
 		t.Fatalf("refresh request cursor=%q state=%#v", request.cursor, state)
 	}
-	view, label := formatCommentView(model.items[0], state, 0)
+	view, label := formatCommentView(model.items[0], state, 0, 80)
 	if !strings.Contains(view, "评论 1") || !strings.Contains(label, "正在刷新评论") || strings.Contains(label, "正在加载更多") {
 		t.Fatalf("refresh view=%q label=%q", view, label)
 	}
@@ -112,7 +112,7 @@ func TestCachedEmptyCommentsCanBeRequestedAgain(t *testing.T) {
 			if !model.commentMode || request.cursor != "" || !state.refreshing {
 				t.Fatalf("cached empty comments were not refreshed: mode=%v cursor=%q state=%#v", model.commentMode, request.cursor, state)
 			}
-			view, _ := formatCommentView(model.items[0], state, 0)
+			view, _ := formatCommentView(model.items[0], state, 0, 80)
 			if !strings.Contains(view, "正在刷新评论") {
 				t.Fatalf("cached empty refresh view=%q", view)
 			}
@@ -148,7 +148,7 @@ func TestFailedCommentRefreshKeepsCachedItemsAndWaitsForReentry(t *testing.T) {
 	if state.loading || state.refreshing || state.err == nil || len(state.items) != 1 || state.nextCursor != testCommentCursor {
 		t.Fatalf("failed refresh discarded cached comments or paging: %#v", state)
 	}
-	view, label := formatCommentView(model.items[0], state, 0)
+	view, label := formatCommentView(model.items[0], state, 0, 80)
 	if !strings.Contains(view, "缓存评论") || !strings.Contains(label, "刷新评论失败，按 c 返回后再进入重试") {
 		t.Fatalf("failed refresh view=%q label=%q", view, label)
 	}
