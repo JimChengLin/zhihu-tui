@@ -143,6 +143,57 @@ func TestImagesAndInlineLinksKeepDocumentOrder(t *testing.T) {
 	}
 }
 
+func TestLazyImageDoesNotCountNoscriptFallback(t *testing.T) {
+	const content = `<p>前文。</p><figure data-size="normal"><noscript><img src="https://picx.zhimg.com/v2-first_r.jpg" data-size="normal" /></noscript><img src="data:image/svg+xml;utf8,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 690 1000'&gt;&lt;/svg&gt;" data-actualsrc="https://picx.zhimg.com/v2-first_r.jpg" class="origin_image zh-lightbox-thumb lazy" /></figure><p>后文。</p>`
+	const want = "前文。\n\n▣ 图片 1\n\n后文。"
+	body, images := contentText(content)
+	if images != 1 {
+		t.Fatalf("image count=%d, want 1", images)
+	}
+	if body != want {
+		t.Fatalf("body=%q, want %q", body, want)
+	}
+	item, ok := parseFeedItem(map[string]any{
+		"target": map[string]any{
+			"id":          "123",
+			"type":        "answer",
+			"content":     content,
+			"content_img": []any{"https://picx.zhimg.com/v2-first_r.jpg"},
+			"question":    map[string]any{"title": "测试问题"},
+		},
+	})
+	if !ok {
+		t.Fatal("parseFeedItem returned false")
+	}
+	if item.imageCount != 1 || item.body != want {
+		t.Fatalf("feed image count=%d, body=%q; want 1 and %q", item.imageCount, item.body, want)
+	}
+}
+
+func TestLazyImagesAndImageLinksKeepOrderWithPreviousImages(t *testing.T) {
+	body, images := contentTextFrom(`<figure><NOSCRIPT data-fallback="image">
+<img src="https://picx.zhimg.com/first.jpg">
+</NOSCRIPT><img src="https://picx.zhimg.com/first.jpg" class="lazy"></figure>
+<p><a href="https://picx.zhimg.com/second.jpg">查看图片</a></p>
+<figure><noscript><img src="https://picx.zhimg.com/third.jpg"></noscript><img src="https://picx.zhimg.com/third.jpg" class="lazy"></figure>`, 4)
+	if images != 3 {
+		t.Fatalf("image count=%d, want 3", images)
+	}
+	if want := "▣ 图片 5\n\n▣ 图片 6\n\n▣ 图片 7"; body != want {
+		t.Fatalf("body=%q, want %q", body, want)
+	}
+}
+
+func TestRepeatedVisibleImageIsCountedAtEachPosition(t *testing.T) {
+	body, images := contentText(`<img src="https://picx.zhimg.com/same.jpg"><p>中间正文。</p><img src="https://picx.zhimg.com/same.jpg">`)
+	if images != 2 {
+		t.Fatalf("image count=%d, want 2", images)
+	}
+	if want := "▣ 图片 1\n\n中间正文。\n\n▣ 图片 2"; body != want {
+		t.Fatalf("body=%q, want %q", body, want)
+	}
+}
+
 func TestWrapTextKeepsClosingPunctuationOnPreviousLine(t *testing.T) {
 	lines := wrapText("中文中文。下一句", 8)
 	if len(lines) < 2 {

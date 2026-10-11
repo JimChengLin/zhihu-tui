@@ -17,6 +17,7 @@ import (
 
 var htmlBreakPattern = regexp.MustCompile(`(?i)<(?:br\s*/?|/?(?:p|div|li|blockquote|h[1-6]))[^>]*>`)
 var repeatedBlankLinesPattern = regexp.MustCompile(`\n[\t ]*\n(?:[\t ]*\n)+`)
+var noscriptBlockPattern = regexp.MustCompile(`(?is)<noscript\b[^>]*>.*?</noscript\s*>`)
 var imageTagPattern = regexp.MustCompile(`(?is)<img\b[^>]*>`)
 var imagePlaceholderPattern = regexp.MustCompile(`▣ 图片 \d+`)
 var codeBlockPattern = regexp.MustCompile(`(?is)<pre\b[^>]*>(.*?)</pre\s*>`)
@@ -320,6 +321,8 @@ func contentTextFrom(value string, previousImages int) (string, int) {
 			return "\n" + codeBlockStartMarker + "\n" + code + "\n" + codeBlockEndMarker + "\n"
 		})
 	}
+	// Zhihu includes a noscript fallback alongside each lazy-loaded image.
+	value = noscriptBlockPattern.ReplaceAllString(value, "")
 	value = mediaElementPattern.ReplaceAllStringFunc(value, func(element string) string {
 		if !strings.HasPrefix(strings.ToLower(element), "<img") && !isImageAnchor(element) {
 			return element
