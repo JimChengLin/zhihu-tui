@@ -156,13 +156,13 @@ func renderSingleApp(model *app) ([]styledLine, layoutMetrics) {
 		bodyLines = layoutFoldedGroupPreview(item.foldedItems, contentWidth)
 	}
 	if !model.commentMode {
-		if published := formatPublishedTime(item.publishedAt); published != "" {
+		if timestamp := formatContentTime(item.publishedAt, item.updatedAt); timestamp != "" {
 			if len(bodyLines) == 1 && styledLineText(bodyLines[0]) == "" {
 				bodyLines = bodyLines[:0]
 			} else {
 				bodyLines = append(bodyLines, styledLine{noPageAnchor: true})
 			}
-			bodyLines = append(bodyLines, styledLine{text: "发布于 " + published, style: ansiDim, noPageAnchor: true})
+			bodyLines = append(bodyLines, styledLine{text: timestamp, style: ansiDim, noPageAnchor: true})
 		}
 	}
 	if model.composing {
