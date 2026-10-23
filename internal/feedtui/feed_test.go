@@ -259,6 +259,47 @@ func TestParseFollowedQuestionPrefersFullDetailOverExcerpt(t *testing.T) {
 	}
 }
 
+func TestParseQuestionBodyPreservesImages(t *testing.T) {
+	for _, field := range []string{"detail", "excerpt_new", "excerpt"} {
+		for _, test := range []struct {
+			name    string
+			content string
+			want    string
+			images  int
+		}{
+			{
+				name:    "text and images",
+				content: `<p>大的要来哩！</p><figure><noscript><img src="first.jpg"></noscript><img data-actualsrc="first.jpg" class="lazy"></figure><p>后文。</p><p><a href="second.jpg">查看图片</a></p>`,
+				want:    "大的要来哩！\n\n▣ 图片 1\n\n后文。\n\n▣ 图片 2",
+				images:  2,
+			},
+			{
+				name:    "image only",
+				content: `<img src="first.jpg">`,
+				want:    "▣ 图片 1",
+				images:  1,
+			},
+		} {
+			t.Run(field+"/"+test.name, func(t *testing.T) {
+				item, ok := parseFeedItem(map[string]any{
+					"target": map[string]any{
+						"id":    "123",
+						"type":  "question",
+						"title": "测试问题",
+						field:   test.content,
+					},
+				})
+				if !ok {
+					t.Fatal("parseFeedItem returned false")
+				}
+				if item.body != test.want || item.imageCount != test.images {
+					t.Fatalf("body=%q, images=%d; want %q, %d", item.body, item.imageCount, test.want, test.images)
+				}
+			})
+		}
+	}
+}
+
 func TestParseFeedItemFormatsStructuredPinContent(t *testing.T) {
 	raw := map[string]any{
 		"id":          "activity-pin",

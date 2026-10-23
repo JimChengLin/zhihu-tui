@@ -180,7 +180,7 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 	rootRef, _ := feedTargetReference(target)
 	body, imageCount := feedContentTextWithRoot(target["content"], rootRef)
 	if body == "" {
-		body = feedBodyFallback(kind, target)
+		body, imageCount = feedBodyFallback(kind, target)
 	}
 	if referenced := referencedImageCount(raw, target); referenced > imageCount {
 		body = appendImagePlaceholders(body, imageCount+1, referenced)
@@ -273,15 +273,15 @@ func parseFeedItem(raw map[string]any) (feedItem, bool) {
 	}, true
 }
 
-func feedBodyFallback(kind string, target map[string]any) string {
+func feedBodyFallback(kind string, target map[string]any) (string, int) {
 	if kind == "question" {
-		return bodyText(firstNonEmpty(
+		return contentText(firstNonEmpty(
 			toString(target["detail"]),
 			toString(target["excerpt_new"]),
 			toString(target["excerpt"]),
 		))
 	}
-	return bodyText(firstNonEmpty(
+	return contentText(firstNonEmpty(
 		toString(target["excerpt_new"]),
 		toString(target["excerpt"]),
 		toString(target["detail"]),
