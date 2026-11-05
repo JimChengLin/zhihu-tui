@@ -3,9 +3,11 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1073,16 +1075,164 @@ func TestNotificationUpdatesKeepTargetsAndActionsSeparate(t *testing.T) {
 	}
 }
 
+func TestNotificationUpdatesTrackIDWhenTargetFieldsChange(t *testing.T) {
+	now := time.Now()
+	seen := map[string]notificationSeenState{}
+	incomplete := testMergedVoteNotification("Alice")
+	incomplete["id"] = "notification-1"
+	delete(incomplete, "target")
+	delete(mapValue(incomplete["content"]), "target")
+	rememberNotificationState(seen, incomplete, now)
+
+	complete := testMergedVoteNotification("Alice")
+	complete["id"] = "notification-1"
+	newID := testMergedVoteNotification("Alice")
+	newID["id"] = "notification-2"
+	changedTarget := testMergedVoteNotification("Alice")
+	changedTarget["id"] = "notification-2"
+	delete(mapValue(changedTarget["content"]), "target")
+	mapValue(changedTarget["target"])["id"] = "volatile-id"
+	withNewActor := testMergedVoteNotification("Alice", "Bob")
+	withNewActor["id"] = "notification-2"
+
+	for i, n := range []map[string]any{complete, newID, changedTarget, withNewActor, withNewActor} {
+		updates, pending, err := collectNotificationUpdates([]any{n}, seen, now, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantUpdates := 0
+		if i == 3 {
+			wantUpdates = 1
+		}
+		if len(updates) != wantUpdates {
+			t.Fatalf("refresh %d: got %d updates, want %d", i, len(updates), wantUpdates)
+		}
+		if len(updates) > 0 && (len(updates[0].actors) != 1 || toString(mapValue(updates[0].actors[0])["name"]) != "Bob") {
+			t.Fatalf("new actor should be Bob: %+v", updates)
+		}
+		for key, state := range pending {
+			seen[key] = mergeNotificationSeenState(seen[key], state)
+		}
+	}
+}
+
+func TestNotificationUpdatesDeduplicateIDAcrossTargetFieldsWithinRefresh(t *testing.T) {
+	complete := testMergedVoteNotification("Alice")
+	complete["id"] = "notification-1"
+	incomplete := testMergedVoteNotification("Alice")
+	incomplete["id"] = "notification-1"
+	delete(incomplete, "target")
+	delete(mapValue(incomplete["content"]), "target")
+
+	for _, data := range [][]any{{complete, incomplete}, {incomplete, complete}} {
+		updates, _, err := collectNotificationUpdates(data, map[string]notificationSeenState{}, time.Now(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(updates) != 1 {
+			t.Fatalf("got %d updates for the same notification ID, want 1", len(updates))
+		}
+	}
+}
+
+type notificationTestWriter func([]byte) (int, error)
+
+func (write notificationTestWriter) Write(p []byte) (int, error) {
+	return write(p)
+}
+
+func TestNotificationsMonitorCommitsSeenRefreshes(t *testing.T) {
+	incomplete := testMergedVoteNotification("Alice")
+	incomplete["id"] = "notification-1"
+	delete(incomplete, "target")
+	delete(mapValue(incomplete["content"]), "target")
+	complete := testMergedVoteNotification("Alice")
+	complete["id"] = "notification-1"
+	newID := testMergedVoteNotification("Alice")
+	newID["id"] = "notification-2"
+	var requests atomic.Int32
+	formatter, closeServer := testNotificationFormatter(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v4/notifications/v2/recent" {
+			t.Errorf("known notifications should not fetch profiles, target details or mark read: %s", r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		n := newID
+		switch requests.Add(1) {
+		case 1:
+			n = incomplete
+		case 2:
+			n = complete
+		}
+		writeNotificationTestJSON(t, w, http.StatusOK, map[string]any{"data": []any{n}})
+	})
+	defer closeServer()
+	formatter.actorCache["Alice"] = notificationActorCacheEntry{text: "Alice", cachedAt: time.Now()}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var out strings.Builder
+	refreshes := 0
+	writer := notificationTestWriter(func(p []byte) (int, error) {
+		n, err := out.Write(p)
+		line := string(p)
+		if strings.Contains(line, "no new notifications") || strings.Contains(line, "error:") {
+			refreshes++
+			if refreshes == 2 {
+				cancel()
+			}
+		}
+		return n, err
+	})
+	err := runNotificationsMonitor(ctx, formatter.client, formatter, writer, 1, 10*time.Millisecond, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("monitor error=%v, want cancellation after two refreshes", err)
+	}
+	if strings.Count(out.String(), "no new notifications") != 2 || strings.Contains(out.String(), "New notifications") {
+		t.Fatalf("known notifications were reported again: %q", out.String())
+	}
+}
+
+func TestNotificationUpdatesRetainOldNotificationsWhilePresent(t *testing.T) {
+	now := time.Now()
+	n := testMergedVoteNotification("Alice")
+	n["id"] = "old-notification"
+	n["create_time"] = now.Add(-notificationHistoryRetention - time.Hour).Unix()
+	seen := map[string]notificationSeenState{}
+	rememberNotificationState(seen, n, now)
+
+	for _, elapsed := range []time.Duration{time.Minute, 89 * 24 * time.Hour, 91 * 24 * time.Hour} {
+		checkedAt := now.Add(elapsed)
+		if pruned := pruneNotificationHistory(seen, checkedAt); pruned != 0 {
+			t.Fatalf("pruned %d states for a notification still being returned", pruned)
+		}
+		updates, pending, err := collectNotificationUpdates([]any{n}, seen, checkedAt, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(updates) != 0 {
+			t.Fatalf("old notification produced %d updates", len(updates))
+		}
+		for key, state := range pending {
+			seen[key] = mergeNotificationSeenState(seen[key], state)
+		}
+	}
+	if pruned := pruneNotificationHistory(seen, now.Add(91*24*time.Hour+notificationHistoryRetention+time.Second)); pruned != 2 {
+		t.Fatalf("pruned=%d after notification disappeared, want 2 (group and ID)", pruned)
+	}
+}
+
 func TestPruneNotificationHistory(t *testing.T) {
 	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.Local)
 	seen := map[string]notificationSeenState{
 		"recent": {
 			signature:  "a",
-			createTime: now.Add(-89 * 24 * time.Hour).Unix(),
+			createTime: now.Add(-100 * 24 * time.Hour).Unix(),
+			lastSeenAt: now.Add(-89 * 24 * time.Hour).Unix(),
 		},
 		"old": {
 			signature:  "b",
 			createTime: now.Add(-91 * 24 * time.Hour).Unix(),
+			lastSeenAt: now.Add(-91 * 24 * time.Hour).Unix(),
 		},
 	}
 	if pruned := pruneNotificationHistory(seen, now); pruned != 1 {

@@ -48,6 +48,7 @@ type notificationSeenState struct {
 	actors     map[string]struct{}
 	mergeCount int
 	createTime int64
+	lastSeenAt int64
 }
 
 type notificationUpdate struct {
@@ -1025,6 +1026,9 @@ func runNotificationsMonitor(ctx context.Context, c *client.Client, formatter *n
 				return err
 			}
 			if len(newItems) == 0 {
+				for key, state := range newStates {
+					seen[key] = mergeNotificationSeenState(seen[key], state)
+				}
 				if err := monitorOut.Status(checkedAt, "no new notifications", monitorRefreshStatus(time.Now(), nextRefreshAt, false)); err != nil {
 					return err
 				}
@@ -1181,6 +1185,7 @@ func (l *notificationDebugLogger) LogNotification(ts time.Time, phase string, in
 		"seen_state_merge_count":   0,
 		"seen_state_create_time":   int64(0),
 		"seen_state_create_time_s": "",
+		"seen_state_last_seen_at":  int64(0),
 	}
 	if hadSeenState {
 		fields["seen_state_signature"] = seenState.signature
@@ -1188,6 +1193,7 @@ func (l *notificationDebugLogger) LogNotification(ts time.Time, phase string, in
 		fields["seen_state_actors"] = sortedStringSet(seenState.actors)
 		fields["seen_state_merge_count"] = seenState.mergeCount
 		fields["seen_state_create_time"] = seenState.createTime
+		fields["seen_state_last_seen_at"] = seenState.lastSeenAt
 		if seenState.createTime > 0 {
 			fields["seen_state_create_time_s"] = time.Unix(seenState.createTime, 0).Format(time.RFC3339)
 		}
@@ -1261,7 +1267,8 @@ func collectNotificationUpdates(data []any, seen map[string]notificationSeenStat
 	for i, raw := range data {
 		n := mapValue(raw)
 		key, signature := notificationState(n)
-		state, ok := notificationKnownState(seen, pending, key)
+		keys := notificationStateKeys(n, key)
+		state, ok := notificationKnownState(seen, pending, keys...)
 		decision, reason := "new", "missing_key"
 		if key == "" {
 			decision, reason = "skip", "empty_key"
@@ -1275,20 +1282,25 @@ func collectNotificationUpdates(data []any, seen map[string]notificationSeenStat
 		if err := debugLog.LogNotification(now, "refresh", i, n, key, signature, decision, reason, state, ok); err != nil {
 			return nil, nil, err
 		}
-		if decision != "new" {
+		if decision == "skip" {
 			continue
 		}
-		actors := notificationActors(n)
-		update := notificationUpdate{notification: n}
-		for _, raw := range actors {
-			if _, known := state.actors[notificationActorKey(mapValue(raw))]; !known {
-				update.actors = append(update.actors, raw)
+		if decision == "new" {
+			actors := notificationActors(n)
+			update := notificationUpdate{notification: n}
+			for _, raw := range actors {
+				if _, known := state.actors[notificationActorKey(mapValue(raw))]; !known {
+					update.actors = append(update.actors, raw)
+				}
 			}
+			update.unnamedActors = max(0, notificationMergeCountValue(n, len(actors))-state.mergeCount-len(update.actors))
+			updates = append(updates, update)
 		}
-		update.unnamedActors = max(0, notificationMergeCountValue(n, len(actors))-state.mergeCount-len(update.actors))
-		updates = append(updates, update)
 		// Keep the full API state; the actor subset is only for display.
-		rememberNotificationState(pending, n, now)
+		state = mergeNotificationSeenState(state, newNotificationSeenState(n, signature, now))
+		for _, stateKey := range keys {
+			pending[stateKey] = mergeNotificationSeenState(pending[stateKey], state)
+		}
 	}
 	return updates, pending, nil
 }
@@ -2274,6 +2286,7 @@ func newNotificationSeenState(n map[string]any, signature string, now time.Time)
 		actors:     map[string]struct{}{},
 		mergeCount: notificationMergeCountValue(n, len(actorKeys)),
 		createTime: createTime,
+		lastSeenAt: now.Unix(),
 	}
 	if signature != "" {
 		state.signatures[signature] = struct{}{}
@@ -2325,14 +2338,24 @@ func mergeNotificationSeenState(current, incoming notificationSeenState) notific
 	if incoming.createTime > current.createTime {
 		current.createTime = incoming.createTime
 	}
+	if incoming.lastSeenAt > current.lastSeenAt {
+		current.lastSeenAt = incoming.lastSeenAt
+	}
 	return current
 }
 
-func notificationKnownState(seen, pending map[string]notificationSeenState, key string) (notificationSeenState, bool) {
-	state, ok := seen[key]
-	if pendingState, pendingOK := pending[key]; pendingOK {
-		state = mergeNotificationSeenState(state, pendingState)
-		ok = true
+func notificationKnownState(seen, pending map[string]notificationSeenState, keys ...string) (notificationSeenState, bool) {
+	var state notificationSeenState
+	ok := false
+	for _, key := range keys {
+		if seenState, seenOK := seen[key]; seenOK {
+			state = mergeNotificationSeenState(state, seenState)
+			ok = true
+		}
+		if pendingState, pendingOK := pending[key]; pendingOK {
+			state = mergeNotificationSeenState(state, pendingState)
+			ok = true
+		}
 	}
 	return state, ok
 }
@@ -2360,7 +2383,7 @@ func pruneNotificationHistory(seen map[string]notificationSeenState, now time.Ti
 	cutoff := now.Add(-notificationHistoryRetention).Unix()
 	pruned := 0
 	for key, state := range seen {
-		if state.createTime < cutoff {
+		if state.lastSeenAt < cutoff {
 			delete(seen, key)
 			pruned++
 		}
