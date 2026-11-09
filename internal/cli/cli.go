@@ -2364,6 +2364,12 @@ func notificationSeenStateContains(state notificationSeenState, n map[string]any
 	if _, ok := state.signatures[signature]; ok {
 		return true, "same_signature"
 	}
+	target := mapValue(n["target"])
+	verb := toString(mapValue(n["content"])["verb"])
+	// A comment has one author; profile changes do not create another comment.
+	if toString(target["type"]) == "comment" && toString(target["id"]) != "" && shouldShowIncomingComment(verb) {
+		return true, "same_comment"
+	}
 	actorKeys := notificationActorKeys(n)
 	if len(actorKeys) == 0 {
 		return false, "signature_changed"

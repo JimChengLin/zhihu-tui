@@ -1075,6 +1075,93 @@ func TestNotificationUpdatesKeepTargetsAndActionsSeparate(t *testing.T) {
 	}
 }
 
+func testIncomingCommentNotification(commentID, notificationID, verb string, actors any) map[string]any {
+	return map[string]any{
+		"id":          notificationID,
+		"create_time": 1794147105,
+		"merge_count": 1,
+		"content": map[string]any{
+			"actors": actors,
+			"verb":   verb,
+			"target": map[string]any{
+				"link": "https://www.zhihu.com/answer/2102785037511009643",
+				"text": "问题标题",
+			},
+		},
+		"target": map[string]any{
+			"type":    "comment",
+			"id":      commentID,
+			"content": "审计hook吗",
+		},
+	}
+}
+
+func TestNotificationUpdatesDoNotRepeatCommentsWhenActorsChange(t *testing.T) {
+	named := []any{map[string]any{"name": "林立", "url_token": "mao-mao-chong-95-1-65"}}
+	anonymous := []any{map[string]any{"name": "知乎用户"}}
+	tests := []struct {
+		name   string
+		before any
+		after  any
+	}{
+		{name: "named to anonymous", before: named, after: anonymous},
+		{name: "anonymous to named", before: anonymous, after: named},
+		{name: "actors temporarily missing", before: named},
+		{name: "profile token missing", before: named, after: []any{map[string]any{"name": "林立"}}},
+	}
+	for _, verb := range []string{"评论了你的回答", "回复了你的评论", "在评论中提到了你"} {
+		for _, tt := range tests {
+			t.Run(verb+"/"+tt.name, func(t *testing.T) {
+				now := time.Now()
+				seen := map[string]notificationSeenState{}
+				seed := testIncomingCommentNotification("11613898098", "2102886055787631439", verb, tt.before)
+				rememberNotificationState(seen, seed, now)
+				for _, id := range []string{"2102886055787631439", "new-notification-id"} {
+					n := testIncomingCommentNotification("11613898098", id, verb, tt.after)
+					updates, _, err := collectNotificationUpdates([]any{n}, seen, now, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(updates) != 0 {
+						t.Fatalf("the same comment produced %d updates after its author changed", len(updates))
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestNotificationUpdatesKeepSeparateCommentsFromSameAuthor(t *testing.T) {
+	now := time.Now()
+	actors := []any{map[string]any{"name": "知乎用户"}}
+	seed := testIncomingCommentNotification("comment-1", "notification-1", "评论了你的回答", actors)
+	next := testIncomingCommentNotification("comment-2", "notification-2", "评论了你的回答", actors)
+	for _, data := range [][]any{{seed, next}, {next, seed}} {
+		updates, _, err := collectNotificationUpdates(data, map[string]notificationSeenState{}, now, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(updates) != 2 {
+			t.Fatalf("different comment IDs with the same author and text produced %d updates, want 2", len(updates))
+		}
+	}
+}
+
+func TestNotificationUpdatesStillDetectNewCommentLikes(t *testing.T) {
+	now := time.Now()
+	seed := testIncomingCommentNotification("comment-1", "notification-1", "喜欢了你的评论", []any{map[string]any{"name": "Alice", "url_token": "alice"}})
+	next := testIncomingCommentNotification("comment-1", "notification-2", "喜欢了你的评论", []any{map[string]any{"name": "Bob", "url_token": "bob"}})
+	seen := map[string]notificationSeenState{}
+	rememberNotificationState(seen, seed, now)
+	updates, _, err := collectNotificationUpdates([]any{next}, seen, now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updates) != 1 || len(updates[0].actors) != 1 || toString(mapValue(updates[0].actors[0])["name"]) != "Bob" {
+		t.Fatalf("new like by Bob should still be reported: %+v", updates)
+	}
+}
+
 func TestNotificationUpdatesTrackIDWhenTargetFieldsChange(t *testing.T) {
 	now := time.Now()
 	seen := map[string]notificationSeenState{}
