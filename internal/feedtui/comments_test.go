@@ -11,8 +11,9 @@ import (
 const testCommentCursor = "601800174_11417294455_0"
 
 type commentTestSource struct {
-	calls chan string
-	posts chan string
+	calls      chan string
+	childCalls chan string
+	posts      chan string
 }
 
 type commentPagingTestSource struct {
@@ -149,7 +150,10 @@ func (source *commentTestSource) GetCommentsPage(_ context.Context, resourceType
 	}, nil
 }
 
-func (source *commentTestSource) GetChildCommentsPage(context.Context, string, string, int) (map[string]any, error) {
+func (source *commentTestSource) GetChildCommentsPage(_ context.Context, rootID, _ string, _ int) (map[string]any, error) {
+	if source.childCalls != nil {
+		source.childCalls <- rootID
+	}
 	return map[string]any{"data": []any{map[string]any{
 		"id":      "101",
 		"author":  map[string]any{"name": "Bob", "url_token": "bob", "is_following": true, "is_followed": true},
@@ -231,13 +235,6 @@ func TestToggleCommentsLoadsAndReturnsToBody(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("comment result was not delivered")
 	}
-	model.startCommentChildFetch(context.Background(), "answer:42")
-	select {
-	case result := <-model.commentChildFetches:
-		model.applyCommentChildFetch(result)
-	case <-time.After(time.Second):
-		t.Fatal("child comment result was not delivered")
-	}
 	state := model.currentCommentState()
 	if state == nil || len(state.items) != 1 {
 		t.Fatalf("comment state=%#v", state)
@@ -254,7 +251,13 @@ func TestToggleCommentsLoadsAndReturnsToBody(t *testing.T) {
 	if collapsed := joinedBodyLines(view, 80); !strings.Contains(collapsed, "   ▸ 2 条回复") {
 		t.Fatalf("collapsed root is missing disclosure tree node:\n%s", collapsed)
 	}
-	state.expandedChildren = map[string]bool{"100": true}
+	if len(state.items[0].children) != 0 || model.startCommentChildFetch(context.Background(), "answer:42", "100") {
+		t.Fatal("collapsed root loaded child comments")
+	}
+	model.pageAnchorVisible = true
+	model.metrics.commentIDs = []string{"100", "100"}
+	model.handleKey(context.Background(), "e")
+	model.applyCommentChildFetch(waitForRefreshChildFetch(t, model.commentChildFetches))
 	view, label := formatCommentView(model.items[0], state, 0, 80)
 	var laidOut strings.Builder
 	for _, line := range layoutBodyLines(view, 80) {
@@ -393,6 +396,69 @@ func TestToggleFocusedCommentChildren(t *testing.T) {
 	}
 	if model.pageAnchorLine != 0 {
 		t.Fatalf("collapsed focus line=%d, want root line 0", model.pageAnchorLine)
+	}
+}
+
+func TestExpandCommentLoadsOnlyFocusedReplies(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		key      keyEvent
+		children []feedComment
+	}{
+		{name: "e with missing replies", key: "e"},
+		{name: "enter with missing replies", key: "\r"},
+		{name: "e with partial replies", key: "e", children: []feedComment{{id: "101", content: "已有回复"}}},
+		{name: "enter with partial replies", key: "\r", children: []feedComment{{id: "101", content: "已有回复"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			source := &commentTestSource{childCalls: make(chan string, 3)}
+			state := &commentState{
+				items: []feedComment{
+					{id: "100", content: "当前评论", childComments: 2, children: test.children},
+					{id: "200", content: "其他已展开评论", childComments: 1},
+					{id: "300", content: "折叠评论", childComments: 1},
+				},
+				expandedChildren: map[string]bool{"200": true},
+				loaded:           true,
+			}
+			model := &app{
+				source:            source,
+				items:             []feedItem{{key: "pin:42", id: "42", kind: "pin"}},
+				comments:          map[string]*commentState{"pin:42": state},
+				commentMode:       true,
+				pageAnchorVisible: true,
+				metrics:           layoutMetrics{commentIDs: []string{"100", "100", "200", "300"}},
+			}
+			model.handleKey(ctx, test.key)
+			if !state.expandedChildren["100"] || state.expandedChildren["300"] || model.message != "正在加载回复" {
+				t.Fatalf("focused replies did not expand and load: expansion=%v message=%q", state.expandedChildren, model.message)
+			}
+			model.handleKey(ctx, test.key)
+			model.handleKey(ctx, test.key)
+			if len(model.commentChildPending) != 1 {
+				t.Fatalf("expansion requested other roots: %#v", model.commentChildPending)
+			}
+			result := waitForRefreshChildFetch(t, model.commentChildFetches)
+			if len(result.rootIDs) != 1 || result.rootIDs[0] != "100" {
+				t.Fatalf("child lookup fetched other roots: %#v", result.rootIDs)
+			}
+			if rootID := <-source.childCalls; rootID != "100" {
+				t.Fatalf("child request root=%q, want 100", rootID)
+			}
+			model.applyCommentChildFetch(result)
+			model.handleKey(ctx, test.key)
+			model.handleKey(ctx, test.key)
+			if len(model.commentChildPending) != 0 || len(state.items[0].children) != 1 {
+				t.Fatalf("reopening replies did not reuse fetched children: pending=%v root=%#v", model.commentChildPending, state.items[0])
+			}
+			select {
+			case rootID := <-source.childCalls:
+				t.Fatalf("repeated expansion made an extra child request for %q", rootID)
+			default:
+			}
+		})
 	}
 }
 
@@ -672,12 +738,13 @@ func TestCommentChildrenLoadOutsidePaginationPath(t *testing.T) {
 		source: source,
 		comments: map[string]*commentState{
 			"answer:42": {
-				items:  []feedComment{{id: "100", author: "Alice", content: "根评论", childComments: 1}},
-				loaded: true,
+				items:            []feedComment{{id: "100", author: "Alice", content: "根评论", childComments: 1}},
+				expandedChildren: map[string]bool{"100": true},
+				loaded:           true,
 			},
 		},
 	}
-	model.startCommentChildFetch(context.Background(), "answer:42")
+	model.startCommentChildFetch(context.Background(), "answer:42", "100")
 	select {
 	case <-source.started:
 	case <-time.After(time.Second):

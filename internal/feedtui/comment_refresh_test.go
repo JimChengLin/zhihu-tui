@@ -85,6 +85,51 @@ func TestReenterCommentsRefreshesFirstPageAndKeepsCachedItemsReadable(t *testing
 	}
 }
 
+func TestReenterCommentsCollapsesRepliesAfterEachSuccessfulRefresh(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	const stateKey = "pin:42"
+	source := &commentRefreshTestSource{requests: make(chan commentRefreshPageRequest, 1)}
+	state := &commentState{
+		items: []feedComment{{id: "100", content: "根评论", childComments: 1,
+			children: []feedComment{{id: "101", content: "缓存子回复"}}}},
+		expandedChildren: map[string]bool{"100": true},
+		loaded:           true,
+	}
+	model := &app{
+		source:         source,
+		items:          []feedItem{{key: stateKey, id: "42", kind: "pin", commentCount: 2}},
+		comments:       map[string]*commentState{stateKey: state},
+		commentFetches: make(chan commentFetchResult, 1),
+		commentMode:    true,
+	}
+	response := refreshCommentResponse("100")
+	root := response["data"].([]any)[0].(map[string]any)
+	root["child_comment_count"] = 2
+	root["child_comments"] = []any{map[string]any{"id": "102", "content": "新子回复"}}
+	for range 3 {
+		state.expandedChildren = map[string]bool{"100": true, "removed": true}
+		model.handleKey(ctx, "c")
+		model.handleKey(ctx, "c")
+		request := waitForRefreshPageRequest(t, source.requests)
+		if !state.expandedChildren["100"] {
+			t.Fatal("pending refresh discarded cached expansion")
+		}
+		request.result <- commentRefreshPageResult{response: response}
+		model.applyCommentFetch(waitForCommentFetch(t, model.commentFetches))
+		if len(state.expandedChildren) != 0 {
+			t.Fatalf("refresh retained expanded replies: %#v", state.expandedChildren)
+		}
+		view, _ := formatCommentView(model.items[0], state, 0, 80)
+		if strings.Contains(view, "新子回复") || !strings.Contains(view, "▸") {
+			t.Fatalf("refreshed replies were not collapsed: %s", view)
+		}
+		if model.startCommentChildFetch(ctx, stateKey, "100") {
+			t.Fatal("refresh started loading collapsed replies")
+		}
+	}
+}
+
 func TestCachedEmptyCommentsCanBeRequestedAgain(t *testing.T) {
 	for _, test := range []struct {
 		name            string
@@ -130,9 +175,11 @@ func TestFailedCommentRefreshKeepsCachedItemsAndWaitsForReentry(t *testing.T) {
 	t.Cleanup(cancel)
 	source := &commentRefreshTestSource{requests: make(chan commentRefreshPageRequest, 2)}
 	state := &commentState{
-		items:      []feedComment{{id: "1", author: "A", content: "缓存评论"}},
-		loaded:     true,
-		nextCursor: testCommentCursor,
+		items: []feedComment{{id: "1", author: "A", content: "缓存评论", childComments: 1,
+			children: []feedComment{{id: "11", content: "缓存子回复"}}}},
+		expandedChildren: map[string]bool{"1": true},
+		loaded:           true,
+		nextCursor:       testCommentCursor,
 	}
 	model := &app{
 		source:         source,
@@ -149,7 +196,7 @@ func TestFailedCommentRefreshKeepsCachedItemsAndWaitsForReentry(t *testing.T) {
 		t.Fatalf("failed refresh discarded cached comments or paging: %#v", state)
 	}
 	view, label := formatCommentView(model.items[0], state, 0, 80)
-	if !strings.Contains(view, "缓存评论") || !strings.Contains(label, "刷新评论失败，按 c 返回后再进入重试") {
+	if !strings.Contains(view, "缓存评论") || !strings.Contains(view, "缓存子回复") || !state.expandedChildren["1"] || !strings.Contains(label, "刷新评论失败，按 c 返回后再进入重试") {
 		t.Fatalf("failed refresh view=%q label=%q", view, label)
 	}
 	model.maybePrefetchComments(ctx)
@@ -190,15 +237,37 @@ func TestCommentRefreshReplacesOldPagesAndResetsCursor(t *testing.T) {
 	}
 }
 
+func TestCommentAppendKeepsExpandedReplies(t *testing.T) {
+	state := &commentState{
+		items: []feedComment{{id: "1", content: "旧根评论", childComments: 1,
+			children: []feedComment{{id: "11", content: "已展开的子回复"}}}},
+		expandedChildren: map[string]bool{"1": true},
+		loaded:           true,
+		generation:       7,
+	}
+	model := &app{comments: map[string]*commentState{"pin:42": state}}
+	response := refreshCommentResponse("2")
+	response["data"].([]any)[0].(map[string]any)["child_comment_count"] = 1
+	model.applyCommentFetch(commentFetchResult{key: "pin:42", response: response, append: true, cursor: testCommentCursor})
+	if len(state.items) != 2 || state.generation != 7 || !state.expandedChildren["1"] || state.expandedChildren["2"] {
+		t.Fatalf("append changed existing expansion or expanded new replies: %#v", state)
+	}
+	view, _ := formatCommentView(feedItem{}, state, 0, 80)
+	if !strings.Contains(view, "已展开的子回复") {
+		t.Fatalf("append hid existing replies: %s", view)
+	}
+}
+
 func TestInvalidCommentRefreshCursorKeepsCachedPageAndGeneration(t *testing.T) {
 	state := &commentState{
-		items:      []feedComment{{id: "1", content: "缓存评论"}},
-		loaded:     true,
-		loading:    true,
-		refreshing: true,
-		end:        true,
-		nextCursor: testCommentCursor,
-		generation: 7,
+		items:            []feedComment{{id: "1", content: "缓存评论"}},
+		expandedChildren: map[string]bool{"1": true},
+		loaded:           true,
+		loading:          true,
+		refreshing:       true,
+		end:              true,
+		nextCursor:       testCommentCursor,
+		generation:       7,
 	}
 	model := &app{comments: map[string]*commentState{"pin:42": state}}
 	response := refreshCommentResponse("2")
@@ -207,7 +276,7 @@ func TestInvalidCommentRefreshCursorKeepsCachedPageAndGeneration(t *testing.T) {
 	if state.loading || state.refreshing || state.err == nil || state.moreErr != nil || !state.end || state.nextCursor != testCommentCursor || state.generation != 7 {
 		t.Fatalf("invalid refresh changed cached paging or generation: %#v", state)
 	}
-	if len(state.items) != 1 || state.items[0].id != "1" {
+	if len(state.items) != 1 || state.items[0].id != "1" || !state.expandedChildren["1"] {
 		t.Fatalf("invalid refresh replaced cached comments: %#v", state.items)
 	}
 }
@@ -296,12 +365,17 @@ func TestCommentRefreshAllowsCompletedChildrenToBeFetchedAgain(t *testing.T) {
 	state := &commentState{
 		items: []feedComment{{id: "100", content: "旧根评论", childComments: 1,
 			children: []feedComment{{id: "101", content: "旧子回复"}}}},
-		loaded:     true,
-		generation: 1,
+		expandedChildren: map[string]bool{"100": true},
+		loaded:           true,
+		generation:       1,
 	}
 	model := &app{
 		source:               &commentTestSource{},
+		items:                []feedItem{{key: stateKey, id: "42", kind: "pin"}},
 		comments:             map[string]*commentState{stateKey: state},
+		commentMode:          true,
+		pageAnchorVisible:    true,
+		metrics:              layoutMetrics{commentIDs: []string{"100"}},
 		commentChildComplete: map[string]struct{}{commentChildKey(stateKey, "100"): {}},
 	}
 	response := refreshCommentResponse("100")
@@ -313,7 +387,10 @@ func TestCommentRefreshAllowsCompletedChildrenToBeFetchedAgain(t *testing.T) {
 	if _, complete := model.commentChildComplete[commentChildKey(stateKey, "100")]; complete {
 		t.Fatal("refresh retained completed child-fetch cache")
 	}
-	model.startCommentChildFetch(context.Background(), stateKey)
+	if model.startCommentChildFetch(context.Background(), stateKey, "100") {
+		t.Fatal("refreshed replies loaded before expansion")
+	}
+	model.handleKey(context.Background(), "e")
 	result := waitForRefreshChildFetch(t, model.commentChildFetches)
 	if result.generation != state.generation {
 		t.Fatalf("child request generation=%d, want %d", result.generation, state.generation)
@@ -358,9 +435,10 @@ func TestOldCommentChildResultCannotOverwriteRefreshedChildren(t *testing.T) {
 func TestStaleChildResultLeavesMissingChildrenAvailableForRetry(t *testing.T) {
 	const stateKey = "pin:42"
 	state := &commentState{
-		items:      []feedComment{{id: "100", content: "新根评论", childComments: 1}},
-		loaded:     true,
-		generation: 2,
+		items:            []feedComment{{id: "100", content: "新根评论", childComments: 1}},
+		expandedChildren: map[string]bool{"100": true},
+		loaded:           true,
+		generation:       2,
 	}
 	key := commentChildKey(stateKey, "100")
 	model := &app{
@@ -373,7 +451,7 @@ func TestStaleChildResultLeavesMissingChildrenAvailableForRetry(t *testing.T) {
 		stateKey: stateKey, rootIDs: []string{"100"}, generation: 1,
 		children: map[string][]feedComment{"100": {{id: "101", content: "旧子回复"}}},
 	})
-	model.startCommentChildFetch(context.Background(), stateKey)
+	model.startCommentChildFetch(context.Background(), stateKey, "100")
 	result := waitForRefreshChildFetch(t, model.commentChildFetches)
 	if result.generation != state.generation {
 		t.Fatalf("retried child request generation=%d, want %d", result.generation, state.generation)
@@ -381,6 +459,31 @@ func TestStaleChildResultLeavesMissingChildrenAvailableForRetry(t *testing.T) {
 	model.applyCommentChildFetch(result)
 	if len(state.items[0].children) != 1 || state.items[0].children[0].content != "子评论" {
 		t.Fatalf("fresh child request did not recover missing children: %#v", state.items[0])
+	}
+}
+
+func TestStaleChildResultDoesNotReloadCollapsedReplies(t *testing.T) {
+	const stateKey = "pin:42"
+	state := &commentState{
+		items:      []feedComment{{id: "100", content: "新根评论", childComments: 1}},
+		loaded:     true,
+		generation: 2,
+	}
+	key := commentChildKey(stateKey, "100")
+	model := &app{
+		comments:             map[string]*commentState{stateKey: state},
+		commentChildPending:  map[string]struct{}{key: {}},
+		commentChildComplete: map[string]struct{}{},
+	}
+	model.applyCommentChildFetch(commentChildFetchResult{
+		stateKey: stateKey, rootIDs: []string{"100"}, generation: 1,
+		children: map[string][]feedComment{"100": {{id: "101", content: "旧子回复"}}},
+	})
+	if model.startCommentChildFetch(context.Background(), stateKey, "100") {
+		t.Fatal("stale result restarted loading collapsed replies")
+	}
+	if len(state.items[0].children) != 0 || len(model.commentChildPending) != 0 || len(model.commentChildComplete) != 0 {
+		t.Fatalf("stale result changed refreshed replies: state=%#v pending=%v complete=%v", state, model.commentChildPending, model.commentChildComplete)
 	}
 }
 

@@ -262,7 +262,6 @@ func Run(ctx context.Context, source feedSource, in, out *os.File) (runErr error
 			model.maybePrefetch(ctx)
 			state := model.comments[fetched.key]
 			if state != nil && !state.loading {
-				model.startCommentChildFetch(ctx, fetched.key)
 				model.startCommentRelationshipFetch(ctx, fetched.key)
 			}
 		case fetched := <-model.commentRelationFetches:
@@ -273,7 +272,9 @@ func Run(ctx context.Context, source feedSource, in, out *os.File) (runErr error
 		case fetched := <-model.commentChildFetches:
 			model.applyCommentChildFetch(fetched)
 			if state := model.comments[fetched.stateKey]; state != nil && fetched.generation != state.generation {
-				model.startCommentChildFetch(ctx, fetched.stateKey)
+				for _, rootID := range fetched.rootIDs {
+					model.startCommentChildFetch(ctx, fetched.stateKey, rootID)
+				}
 			}
 			model.startCommentRelationshipFetch(ctx, fetched.stateKey)
 			if err := model.render(out); err != nil {

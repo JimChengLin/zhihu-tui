@@ -109,6 +109,7 @@ func (model *app) applyCommentFetch(result commentFetchResult) {
 			delete(model.commentChildComplete, commentChildKey(result.key, root.id))
 		}
 		state.items = page
+		state.expandedChildren = nil
 	}
 	if total, ok := firstPresent(mapValue(result.response["counts"])["total_counts"]); ok {
 		updateCommentTotal(model.items, result.key, int(toInt64(total)))
@@ -203,46 +204,47 @@ func commentChildKey(stateKey, rootID string) string {
 	return stateKey + "\x00" + rootID
 }
 
-func (model *app) startCommentChildFetch(ctx context.Context, stateKey string) {
+func (model *app) startCommentChildFetch(ctx context.Context, stateKey, rootID string) bool {
 	state := model.comments[stateKey]
-	if state == nil || len(state.items) == 0 {
-		return
+	if state == nil || rootID == "" || !state.expandedChildren[rootID] {
+		return false
 	}
-	if model.commentChildComplete == nil {
-		model.commentChildComplete = map[string]struct{}{}
-	}
-	if model.commentChildPending == nil {
-		model.commentChildPending = map[string]struct{}{}
-	}
-	if model.commentChildFetches == nil {
-		model.commentChildFetches = make(chan commentChildFetchResult, 1)
-	}
-	var rootIDs []string
 	for _, root := range state.items {
-		if root.id == "" || root.childComments <= countLoadedComments(root.children) {
+		if root.id != rootID {
 			continue
+		}
+		if root.childComments <= countLoadedComments(root.children) {
+			return false
 		}
 		key := commentChildKey(stateKey, root.id)
 		if _, complete := model.commentChildComplete[key]; complete {
-			continue
+			return false
 		}
 		if _, pending := model.commentChildPending[key]; pending {
-			continue
+			return true
+		}
+		if model.commentChildComplete == nil {
+			model.commentChildComplete = map[string]struct{}{}
+		}
+		if model.commentChildPending == nil {
+			model.commentChildPending = map[string]struct{}{}
+		}
+		if model.commentChildFetches == nil {
+			model.commentChildFetches = make(chan commentChildFetchResult, 1)
 		}
 		model.commentChildPending[key] = struct{}{}
-		rootIDs = append(rootIDs, root.id)
+		generation := state.generation
+		go func() {
+			rootIDs := []string{rootID}
+			children := fetchCommentChildren(ctx, model.source, rootIDs)
+			select {
+			case model.commentChildFetches <- commentChildFetchResult{stateKey: stateKey, generation: generation, rootIDs: rootIDs, children: children}:
+			case <-ctx.Done():
+			}
+		}()
+		return true
 	}
-	if len(rootIDs) == 0 {
-		return
-	}
-	generation := state.generation
-	go func() {
-		children := fetchCommentChildren(ctx, model.source, rootIDs)
-		select {
-		case model.commentChildFetches <- commentChildFetchResult{stateKey: stateKey, generation: generation, rootIDs: rootIDs, children: children}:
-		case <-ctx.Done():
-		}
-	}()
+	return false
 }
 
 func (model *app) applyCommentChildFetch(result commentChildFetchResult) {
@@ -309,8 +311,7 @@ func (model *app) toggleFocusedCommentChildren(ctx context.Context) {
 		return
 	}
 	state.expandedChildren[root.id] = true
-	if len(root.children) == 0 && root.childComments > 0 {
-		model.startCommentChildFetch(ctx, model.items[model.index].key)
+	if model.startCommentChildFetch(ctx, model.items[model.index].key, root.id) {
 		model.setMessage("正在加载回复", 2*time.Second)
 		return
 	}
