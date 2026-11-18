@@ -30,6 +30,9 @@ func (model *app) toggleComments(ctx context.Context) {
 		model.setMessage("暂无评论", 3*time.Second)
 		return
 	}
+	if state != nil {
+		state.expandedChildren = nil
+	}
 	model.bodyScroll = model.scroll
 	model.bodyPageAnchorLine = model.pageAnchorLine
 	model.bodyPageAnchorVisible = model.pageAnchorVisible

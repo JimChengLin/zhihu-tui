@@ -85,7 +85,7 @@ func TestReenterCommentsRefreshesFirstPageAndKeepsCachedItemsReadable(t *testing
 	}
 }
 
-func TestReenterCommentsCollapsesRepliesAfterEachSuccessfulRefresh(t *testing.T) {
+func TestReenterCommentsCollapsesCachedRepliesBeforeRefreshCompletes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	const stateKey = "pin:42"
@@ -111,16 +111,24 @@ func TestReenterCommentsCollapsesRepliesAfterEachSuccessfulRefresh(t *testing.T)
 		state.expandedChildren = map[string]bool{"100": true, "removed": true}
 		model.handleKey(ctx, "c")
 		model.handleKey(ctx, "c")
+		view, _ := formatCommentView(model.items[0], state, 0, 80)
+		if len(state.expandedChildren) != 0 || strings.Contains(view, "缓存子回复") || strings.Contains(view, "新子回复") || !strings.Contains(view, "▸") {
+			t.Fatalf("reentry showed expanded cached replies before refresh: expansion=%v view=%s", state.expandedChildren, view)
+		}
 		request := waitForRefreshPageRequest(t, source.requests)
-		if !state.expandedChildren["100"] {
-			t.Fatal("pending refresh discarded cached expansion")
+		state.expandedChildren = map[string]bool{"100": true}
+		model.handleKey(ctx, "c")
+		model.handleKey(ctx, "c")
+		view, _ = formatCommentView(model.items[0], state, 0, 80)
+		if len(state.expandedChildren) != 0 || strings.Contains(view, "缓存子回复") || strings.Contains(view, "新子回复") {
+			t.Fatalf("reentry during pending refresh showed expanded cached replies: expansion=%v view=%s", state.expandedChildren, view)
 		}
 		request.result <- commentRefreshPageResult{response: response}
 		model.applyCommentFetch(waitForCommentFetch(t, model.commentFetches))
 		if len(state.expandedChildren) != 0 {
 			t.Fatalf("refresh retained expanded replies: %#v", state.expandedChildren)
 		}
-		view, _ := formatCommentView(model.items[0], state, 0, 80)
+		view, _ = formatCommentView(model.items[0], state, 0, 80)
 		if strings.Contains(view, "新子回复") || !strings.Contains(view, "▸") {
 			t.Fatalf("refreshed replies were not collapsed: %s", view)
 		}
@@ -196,8 +204,15 @@ func TestFailedCommentRefreshKeepsCachedItemsAndWaitsForReentry(t *testing.T) {
 		t.Fatalf("failed refresh discarded cached comments or paging: %#v", state)
 	}
 	view, label := formatCommentView(model.items[0], state, 0, 80)
-	if !strings.Contains(view, "缓存评论") || !strings.Contains(view, "缓存子回复") || !state.expandedChildren["1"] || !strings.Contains(label, "刷新评论失败，按 c 返回后再进入重试") {
+	if !strings.Contains(view, "缓存评论") || strings.Contains(view, "缓存子回复") || state.expandedChildren["1"] || !strings.Contains(label, "刷新评论失败，按 c 返回后再进入重试") {
 		t.Fatalf("failed refresh view=%q label=%q", view, label)
+	}
+	model.pageAnchorVisible = true
+	model.metrics.commentIDs = []string{"1", "1"}
+	model.handleKey(ctx, "e")
+	view, _ = formatCommentView(model.items[0], state, 0, 80)
+	if !strings.Contains(view, "缓存子回复") {
+		t.Fatalf("failed refresh discarded cached replies: %s", view)
 	}
 	model.maybePrefetchComments(ctx)
 	select {
